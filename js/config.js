@@ -94,7 +94,8 @@ export const CFG = {
 /** Speed at or under which a yield-hazard is a comic clear instead of a hit. */
 export const SAFE_SPEED = {
   pedestrian: 3.0,
-  bin: 6.2,
+  // A bin is a comic shove once the car has actually slowed. Cruise still hits it.
+  bin: 10.5,
   cutin: 3.6,
   stopped: 99,
   dog: 99,

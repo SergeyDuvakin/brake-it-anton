@@ -160,6 +160,14 @@ export function createAudio() {
       tone(340, 0.12, "square", 0.04);
       tone(280, 0.16, "square", 0.03);
     },
+    near() {
+      tone(720, 0.07, "square", 0.03);
+      tone(540, 0.09, "triangle", 0.02);
+    },
+    pop() {
+      tone(392, 0.08, "triangle", 0.028);
+      tone(523, 0.1, "triangle", 0.02);
+    },
     ui() {
       tone(520, 0.05, "square", 0.025);
     },

@@ -19,13 +19,38 @@ export function policyCareful(sim) {
   const h = nextHazard(sim);
   if (!h || h.trust) return false;
   const safe = safeSpeed(h.type);
-  let window = 58;
-  if (sim.inSlip) window = 100;
-  else if (h.type === "cutin") window = 74;
+  const slip =
+    sim.inSlip ||
+    (sim.slippery || []).some((z) => h.s > z.s0 - 8 && h.s < z.s1 + 4);
+  let window = 42;
+  if (slip) window = 78;
+  else if (h.type === "cutin") window = 56;
+  else if (h.type === "pedestrian") window = 46;
   if (h.dist > window || h.dist < -1) return false;
-  if (sim.v <= safe - 0.45) return false;
-  if (sim.cargoType && sim.brakeInput >= 0.78 && h.dist > 16 && sim.v < safe + 7) return false;
-  return true;
+  if ((h.type === "pedestrian" || h.type === "cutin") && h.crossDur && h.crossT >= h.crossDur) return false;
+
+  if (h.type === "pedestrian" || h.type === "cutin") {
+    if (h.crossT >= (h.crossDur || 9)) return false;
+    // Stay under the safe speed. At a crawl, full pedal is below the cargo
+    // decel threshold, so holding here does not mash the cake.
+    return sim.v > safe - (slip ? 0.7 : 0.2);
+  }
+  if (h.type === "bin") return sim.v > safe - 2.2;
+  return sim.v > safe - 0.4;
+}
+
+/**
+ * Brake to a stop for anything Anton will not handle, then wait.
+ * Trust hazards are left to him.
+ */
+export function policyYield(sim) {
+  const h = nextHazard(sim);
+  if (!h || h.trust) return false;
+  if (h.dist > 40 || h.dist < -1) return false;
+  if ((h.type === "pedestrian" || h.type === "cutin") && h.crossT >= (h.crossDur || 9)) return false;
+  if (h.type === "bin" && sim.v < safeSpeed("bin") - 1.2) return false;
+  if ((h.type === "pedestrian" || h.type === "cutin") && h.crossT < 0 && sim.v < 4 && h.dist > 13) return false;
+  return sim.v > 1.2;
 }
 
 /**
@@ -50,4 +75,5 @@ export const POLICIES = {
   careful: policyCareful,
   provoke: policyProvoke,
   panic: policyPanic,
+  yield: policyYield,
 };

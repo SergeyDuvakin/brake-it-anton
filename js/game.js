@@ -9,7 +9,7 @@ import { render } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
-import { createSim } from "./sim.js";
+import { createSim, nextHazard } from "./sim.js";
 import {
   createSession,
   keyDown,
@@ -27,6 +27,7 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const params = new URLSearchParams(location.search);
 const debug = params.has("debug") || params.has("e2e");
+const showDebug = params.has("debug");
 let timeScale = params.has("e2e") ? 6 : 1;
 
 const audio = createAudio();
@@ -35,19 +36,22 @@ let screen = "title";
 let session = null;
 let selected = "lesson1";
 let hotspots = [];
+let labels = [];
 let autopilot = null;
 let hint = true;
 let notice = save.notice;
 let lastHits = 0;
 let lastHonks = 0;
+let lastClears = 0;
+let lastNear = 0;
 let wasDown = false;
 let last = performance.now();
 let acc = 0;
 
 const preview = createSim(getMission("lesson1"), 11);
-preview.s = 150;
-preview.v = 8;
-preview.patience = 15;
+preview.s = 6;
+preview.v = 12;
+preview.patience = 12;
 
 function loadSave() {
   try {
@@ -91,6 +95,8 @@ function startMission(id) {
   hint = id === "lesson1";
   lastHits = 0;
   lastHonks = 0;
+  lastClears = 0;
+  lastNear = 0;
   wasDown = false;
   acc = 0;
   audio.unlock();
@@ -158,6 +164,8 @@ function activate(id) {
     hint = mission.id === "lesson1";
     lastHits = 0;
     lastHonks = 0;
+    lastClears = 0;
+    lastNear = 0;
     if (save.settings.sound) audio.startRadio();
     audio.ui();
     return;
@@ -202,6 +210,14 @@ function tick(dt) {
     lastHonks = sim.stats.honks;
     audio.honk();
   }
+  if (sim.stats.clears > lastClears) {
+    lastClears = sim.stats.clears;
+    audio.pop();
+  }
+  if (sim.stats.nearMisses > lastNear) {
+    lastNear = sim.stats.nearMisses;
+    audio.near();
+  }
   audio.duck(!!sim.bubble);
   if (session.phase === "result" && before !== "result") settle();
 }
@@ -217,19 +233,21 @@ function frame(now) {
     steps += 1;
     tick(1 / 60);
   }
-  hotspots = render(ctx, {
+  const drawn = render(ctx, {
     screen,
     session,
     save,
     now,
     hint,
-    debug,
+    debug: showDebug,
     notice,
     preview,
     missions: LESSONS,
     selected,
     pose: null,
   });
+  hotspots = drawn.spots;
+  labels = drawn.labels;
   requestAnimationFrame(frame);
 }
 
@@ -318,10 +336,16 @@ window.__anton = {
       unlocked: save.unlocked,
       infinite: save.infinite,
       pauseReason: session?.pauseReason ?? null,
+      collisions: session?.sim.stats.collisions ?? 0,
+      cargoType: session?.sim.cargoType ?? null,
+      hazard: hazardState(),
     };
   },
   hotspots() {
     return hotspots.map((spot) => ({ id: spot.id, x: spot.x, y: spot.y, w: spot.w, h: spot.h }));
+  },
+  labels() {
+    return labels.map((item) => ({ ...item }));
   },
   setAutopilot(name) {
     if (!debug) return;
@@ -340,10 +364,25 @@ window.__anton = {
     hint = false;
     lastHits = 0;
     lastHonks = 0;
+    lastClears = 0;
+    lastNear = 0;
     wasDown = false;
     acc = 0;
   },
 };
+
+function hazardState() {
+  if (!session) return null;
+  const hazard = nextHazard(session.sim);
+  if (!hazard) return null;
+  return {
+    id: hazard.id,
+    type: hazard.type,
+    dist: hazard.dist,
+    trust: hazard.trust === true,
+    cross: hazard.crossT,
+  };
+}
 
 async function boot() {
   try {
