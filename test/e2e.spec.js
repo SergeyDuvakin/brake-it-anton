@@ -1,7 +1,15 @@
 import { expect, test } from "@playwright/test";
 import fs from "node:fs";
 
-const shot = (name) => `artifacts/${name}.png`;
+const shotPrefix = process.env.SHOT_PREFIX ? `${process.env.SHOT_PREFIX}-` : "";
+const shot = (name) => `artifacts/${shotPrefix}${name}.png`;
+
+function gameURL(search = "") {
+  const base = process.env.BASE_URL || "http://127.0.0.1:4173/";
+  const url = new URL(base.endsWith("/") ? base : `${base}/`);
+  if (search) url.search = search;
+  return url.toString();
+}
 
 async function clickId(page, id) {
   const point = await page.evaluate((target) => {
@@ -31,9 +39,9 @@ test.beforeAll(() => {
   fs.mkdirSync("artifacts", { recursive: true });
 });
 
-test("click start, brake, pause and resume without console errors", async ({ page }) => {
+test("normal 1x: click start, brake, pause and resume without console errors", async ({ page }) => {
   const errors = watchErrors(page);
-  await page.goto("/");
+  await page.goto(gameURL());
   await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
   await page.screenshot({ path: shot("title") });
   await clickId(page, "start");
@@ -77,7 +85,7 @@ test("click start, brake, pause and resume without console errors", async ({ pag
 
 test("letterbox at 1280x720 and a mismatched landscape viewport", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await page.goto("/");
+  await page.goto(gameURL());
   await page.waitForFunction(() => window.__anton?.hotspots().length > 0);
   const exact = await page.locator("canvas").boundingBox();
   expect(exact.width / exact.height).toBeCloseTo(16 / 9, 1);
@@ -93,16 +101,16 @@ test("letterbox at 1280x720 and a mismatched landscape viewport", async ({ page 
 
 test("portrait asks to rotate and does not show the playfield", async ({ page }) => {
   await page.setViewportSize({ width: 500, height: 900 });
-  await page.goto("/");
+  await page.goto(gameURL());
   await expect(page.locator("#rotate")).toBeVisible();
   await expect(page.locator("#rotate")).toContainText("Поверни телефон");
   await expect(page.locator("#wrap")).toBeHidden();
   await page.screenshot({ path: shot("portrait") });
 });
 
-test("scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {
+test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {
   const errors = watchErrors(page);
-  await page.goto("/?e2e=1");
+  await page.goto(gameURL("e2e=1"));
   await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
   await page.evaluate(() => window.__anton.setAutopilot("careful"));
   await clickId(page, "start");

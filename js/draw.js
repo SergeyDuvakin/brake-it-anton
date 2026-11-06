@@ -636,10 +636,12 @@ function drawCar(ctx, sim, boil) {
   ctx.rotate(sim.brakeInput * 0.16);
   const squash = 1 - Math.min(0.28, sim.crashT);
   ctx.scale(1.05, squash);
-  ctx.fillStyle = "rgba(28,22,30,0.18)";
-  ctx.beginPath();
-  ctx.ellipse(0, 36, 34, 10, 0, 0, Math.PI * 2);
+  // Flat ink puddle. No translucent ellipse: that read as a soft shine under the roof.
+  roundRect(ctx, -26, 34, 58, 14, 4);
+  ctx.fillStyle = P.INK;
   ctx.fill();
+  ink(ctx, 4);
+  ctx.stroke();
   roundRect(ctx, -32, -48, 64, 92, 12);
   ctx.fillStyle = P.YEL;
   ctx.fill();
@@ -654,7 +656,7 @@ function drawCar(ctx, sim, boil) {
   ctx.stroke();
   label(ctx, "У", 0, -9, 16, P.PAPER, "center", true);
   const lamps = sim.brakeInput > 0.2 || sim.lastSelfBrake > 0.12;
-  ctx.fillStyle = lamps ? P.ORANGE : "#C8B48A";
+  ctx.fillStyle = lamps ? P.ORANGE : P.INK;
   ctx.fillRect(-22, -46, 12, 8);
   ctx.fillRect(10, -46, 12, 8);
   const spin = sim.s * 2.2 + (boil ? 0.3 : 0);
