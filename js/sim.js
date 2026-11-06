@@ -1,0 +1,506 @@
+/**
+ * Fixed-step yard simulation. The player never steers and never throttles.
+ * `held` is the brake pedal. Anton chooses throttle and lane.
+ *
+ * Integrator (see physics.js):
+ *   v += (throttle - drag * v - brake * a(v) * slip) * dt
+ */
+
+import { CFG } from "./config.js";
+import { mulberry32 } from "./rng.js";
+import {
+  brakeAccel,
+  cargoImpulse,
+  cargoSustain,
+  clamp,
+  collisionCargoLoss,
+  infiniteTargetSpeed,
+  irritationRate,
+  isGeometric,
+  netAccel,
+  safeSpeed,
+  steerParams,
+} from "./physics.js";
+
+export function createSim(mission, seed = 1) {
+  const hazards = (mission.hazards || []).map((h) => ({
+    telegraph: 84,
+    decision: 58,
+    commit: 40,
+    halfW: 0.62,
+    halfL: 1.35,
+    clearAfter: 8,
+    trust: false,
+    x: CFG.defaultX,
+    ...h,
+    resolved: null,
+    committed: null,
+    seenBrake: 0,
+    playerBraked: false,
+    rewarded: false,
+    commitAt: 0,
+  }));
+  return {
+    missionId: mission.id,
+    infinite: !!mission.infinite,
+    length: mission.length,
+    cruise: mission.cruise ?? 16,
+    cargoType: mission.cargo || null,
+    slippery: (mission.slippery || []).map((z) => ({ s0: z.s0, s1: z.s1 })),
+    hazards,
+    seed,
+    rng: mulberry32(seed),
+    s: 0,
+    v: 0,
+    x: CFG.defaultX,
+    brakeInput: 0,
+    holdTime: 0,
+    pressTime: 0,
+    wasHeld: false,
+    resumeDelay: 0,
+    calmTime: 0,
+    patience: mission.patienceStart ?? CFG.patienceStart,
+    cooldown: 0,
+    outburstT: 0,
+    surgeT: 0,
+    beltT: 0,
+    stun: 0,
+    comfort: 100,
+    comfortTarget: 100,
+    comfortLock: 0,
+    cargo: 100,
+    body: 100,
+    fullPressLatched: false,
+    spiked: false,
+    intent: "cruise",
+    bubble: null,
+    bubbleT: 0,
+    bubbleGap: 0,
+    saidSlip: false,
+    t: 0,
+    done: false,
+    success: false,
+    failReason: null,
+    shake: 0,
+    crashT: 0,
+    lastThrottle: 0,
+    lastSelfBrake: 0,
+    lastPlayerDecel: 0,
+    inSlip: false,
+    targetX: CFG.defaultX,
+    skids: [],
+    stats: {
+      collisions: 0,
+      trustClears: 0,
+      clears: 0,
+      lunges: 0,
+      playerBrakeTime: 0,
+      harshFull: 0,
+      honks: 0,
+      mirrors: 0,
+      outbursts: 0,
+      shortReleases: 0,
+      minV: Infinity,
+      maxV: 0,
+      maxThrottle: 0,
+      minX: CFG.defaultX,
+      maxX: CFG.defaultX,
+    },
+    events: [],
+  };
+}
+
+export function nextHazard(sim) {
+  let best = null;
+  for (const h of sim.hazards) {
+    if (h.resolved) continue;
+    const dist = h.s - sim.s;
+    if (dist < -6) continue;
+    if (!best || dist < best.dist) best = { ...h, dist };
+  }
+  return best;
+}
+
+/** Where the obstacle sits right now. Pedestrians and cut-ins enter late. */
+export function hazardWorldX(h, sim) {
+  const dist = h.s - sim.s;
+  if (h.type === "pedestrian" || h.type === "dog") {
+    const side = h.x >= 0 ? 4.75 : -4.75;
+    if (dist > 12) return side;
+    const t = clamp(1 - dist / 12, 0, 1);
+    return side + (h.x - side) * t;
+  }
+  if (h.type === "cutin") {
+    const side = 5.35;
+    if (dist > 14) return side;
+    const t = clamp(1 - Math.max(dist, 0) / 14, 0, 1);
+    return side + (h.x - side) * t;
+  }
+  return h.x;
+}
+
+function log(sim, entry) {
+  sim.events.push({ t: round3(sim.t), ...entry });
+  if (sim.events.length > 80) sim.events.shift();
+}
+
+function say(sim, text) {
+  if (sim.bubble && sim.bubbleGap > 0.4) return;
+  sim.bubble = text;
+  sim.bubbleT = 1.15;
+  sim.bubbleGap = 2.3;
+}
+
+function round3(n) {
+  return Math.round(n * 1000) / 1000;
+}
+
+function justified(sim) {
+  for (const h of sim.hazards) {
+    if (h.resolved || h.trust) continue;
+    const dist = h.s - sim.s;
+    if (dist < h.telegraph && dist > -4) return true;
+  }
+  return false;
+}
+
+function selfBrake(sim) {
+  const h = nextHazard(sim);
+  if (!h || h.trust || h.committed === "lunge") return 0;
+  if (sim.outburstT > 0 || sim.surgeT > 0) return 0;
+  if (h.dist > 30 || h.dist < -1) return 0;
+  const skill = sim.patience >= 70 ? 0.4 : sim.patience >= 40 ? 0.65 : 0.8;
+  const urgency = clamp((24 - h.dist) / 24, 0, 1);
+  return 0.24 * skill * urgency;
+}
+
+function desiredX(sim) {
+  const h = nextHazard(sim);
+  if (h && h.committed === "lunge" && h.dist > -4 && h.dist < 50) return h.x;
+  if (h && h.committed === "avoid" && h.dist > -8 && h.dist < 55) {
+    const params = steerParams(sim.patience, sim.outburstT > 0);
+    const sign = Math.sign(h.x || 1);
+    return clamp(-sign * CFG.defaultX - sign * params.overshoot, -CFG.roadEdge + 0.15, CFG.roadEdge - 0.15);
+  }
+  if (sim.outburstT > 0) {
+    return CFG.defaultX + Math.sin(sim.t * 2.4) * 0.35;
+  }
+  if (h && h.dist < 78) return CFG.defaultX;
+  if (sim.patience >= 70) return CFG.defaultX + Math.sin(sim.t * 1.3 + sim.seed) * 0.42;
+  if (sim.patience >= 40) return CFG.defaultX + Math.sin(sim.t * 1.15) * 0.16;
+  return CFG.defaultX;
+}
+
+function commitHazards(sim, held) {
+  for (const h of sim.hazards) {
+    if (h.resolved || h.committed) continue;
+    const dist = h.s - sim.s;
+    if (dist < h.decision && dist > h.commit && held && sim.brakeInput > CFG.irritationBrake) {
+      h.seenBrake = Math.max(h.seenBrake, sim.brakeInput);
+      h.playerBraked = true;
+    }
+    if (dist <= h.commit && dist > -5) {
+      h.commitAt = sim.t;
+      if (h.trust) {
+        h.committed = h.seenBrake > CFG.irritationBrake ? "lunge" : "avoid";
+        if (h.committed === "lunge") {
+          sim.stats.lunges += 1;
+          sim.surgeT = Math.max(sim.surgeT, 2.4);
+          sim.intent = "lunge";
+          say(sim, "НУ ЗАЧЕМ?!");
+          log(sim, { kind: "lunge", id: h.id });
+        } else {
+          sim.intent = "avoid";
+          say(sim, "Я САМ!");
+          log(sim, { kind: "avoid", id: h.id });
+        }
+      } else {
+        h.committed = "yield";
+        sim.intent = "yield";
+        if (sim.patience < 70) say(sim, "ДА Я ВИЖУ!");
+      }
+    }
+  }
+}
+
+function overlaps(sim, h) {
+  const hx = hazardWorldX(h, sim);
+  const xHit = Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW;
+  const sHit =
+    sim.s + CFG.carHalfFront > h.s - h.halfL && sim.s - CFG.carHalfBack < h.s + h.halfL;
+  return xHit && sHit;
+}
+
+function markClear(sim, h, how) {
+  h.resolved = "clear";
+  sim.stats.clears += 1;
+  if (h.trust && h.committed === "avoid") sim.stats.trustClears += 1;
+  if (!h.rewarded) {
+    h.rewarded = true;
+    if (h.trust && h.committed === "avoid") sim.patience = Math.max(0, sim.patience - CFG.trustReward);
+    else if (!h.trust && h.playerBraked) sim.patience = Math.max(0, sim.patience - CFG.saveReward);
+  }
+  if (how === "slow") say(sim, "ФУХ.");
+  log(sim, { kind: "clear", id: h.id, how });
+}
+
+function resolveHit(sim, h) {
+  const impact = sim.v;
+  const excess = Math.max(0, impact - 1.2);
+  let bodyLoss = (CFG.bodyPerMs[h.type] || 3) * excess;
+  if (bodyLoss < 1 && (h.type === "stopped" || h.type === "cutin") && impact > 0.45) bodyLoss = 6;
+  sim.body = clamp(sim.body - bodyLoss, 0, 100);
+  const cargoLoss = collisionCargoLoss(sim.cargoType, impact);
+  sim.cargo = clamp(sim.cargo - cargoLoss, 0, 100);
+  sim.comfortTarget = clamp(sim.comfortTarget - Math.min(30, cargoLoss * 0.35 + 8), 0, 100);
+  sim.stats.collisions += 1;
+  if (h.type === "stopped" || h.type === "cutin") sim.stats.mirrors += 1;
+  h.resolved = "hit";
+  sim.stun = 0.32;
+  sim.v = Math.max(2.2, sim.v * 0.25);
+  sim.shake = impact > 8 ? 7 : 4.5;
+  sim.crashT = 0.24;
+  sim.beltT = Math.max(sim.beltT, 0.28);
+  say(sim, "ОЙ!");
+  log(sim, { kind: "hit", id: h.id, type: h.type, impact: round3(impact), bodyLoss: round3(bodyLoss), cargoLoss });
+}
+
+function collide(sim) {
+  for (const h of sim.hazards) {
+    if (h.resolved) continue;
+    if (!overlaps(sim, h)) continue;
+    const geometric = isGeometric(h.type);
+    if (!geometric && sim.v <= safeSpeed(h.type) + 0.45) markClear(sim, h, "slow");
+    else if (!geometric && sim.v <= 1.25) markClear(sim, h, "scrape");
+    else resolveHit(sim, h);
+  }
+  for (const h of sim.hazards) {
+    if (h.resolved) continue;
+    if (sim.s <= h.s + h.clearAfter) continue;
+    markClear(sim, h, h.committed === "avoid" ? "avoid" : "pass");
+  }
+}
+
+function fail(sim, reason) {
+  sim.done = true;
+  sim.success = false;
+  sim.failReason = reason;
+  sim.body = clamp(sim.body, 0, 100);
+  sim.cargo = clamp(sim.cargo, 0, 100);
+}
+
+export function stepSim(sim, dt, input = {}) {
+  if (sim.done) return sim;
+  const held = !!input.held;
+
+  if (input.snapBrake && held) sim.brakeInput = 1;
+  else {
+    const ramp = held ? 1 / CFG.brakePressTime : 1 / CFG.brakeReleaseTime;
+    sim.brakeInput = clamp(sim.brakeInput + (held ? 1 : -1) * ramp * dt, 0, 1);
+  }
+
+  const releaseEdge = !held && sim.wasHeld;
+  const pressEdge = held && !sim.wasHeld;
+  if (pressEdge) {
+    sim.resumeDelay = 0;
+    sim.pressTime = 0;
+    sim.spiked = false;
+  }
+  if (releaseEdge) {
+    if (sim.pressTime > 0 && sim.pressTime < CFG.shortRelease) {
+      sim.patience = Math.max(0, sim.patience - CFG.shortReleaseRelief);
+      sim.stats.shortReleases += 1;
+    }
+    if (sim.pressTime >= 0.12) sim.comfortLock = Math.max(sim.comfortLock, CFG.comfortLock);
+    sim.resumeDelay = CFG.resumeDelay;
+    sim.pressTime = 0;
+    sim.holdTime = 0;
+  } else if (held) {
+    sim.pressTime += dt;
+    sim.holdTime += dt;
+    sim.stats.playerBrakeTime += dt;
+  } else {
+    sim.holdTime = 0;
+  }
+
+  sim.inSlip = sim.slippery.some((z) => sim.s >= z.s0 && sim.s <= z.s1);
+  if (sim.inSlip && !sim.saidSlip) {
+    sim.saidSlip = true;
+    say(sim, "СКОЛЬЗКО!");
+  }
+  const slip = sim.inSlip ? CFG.slipMul : 1;
+
+  commitHazards(sim, held);
+
+  const nearest = nextHazard(sim);
+  if (nearest && nearest.committed === "lunge") sim.intent = "lunge";
+  else if (nearest && nearest.committed === "avoid" && nearest.dist < 50) sim.intent = "avoid";
+  else if (nearest && !nearest.trust && nearest.dist < 34) sim.intent = "yield";
+  else if (sim.outburstT > 0) sim.intent = "lunge";
+  else if (!nearest || nearest.dist > 40) sim.intent = "cruise";
+
+  const cruiseBase = sim.infinite ? infiniteTargetSpeed(sim.s) : sim.cruise;
+  let cruise = cruiseBase;
+  if (sim.outburstT > 0) cruise = Math.min(CFG.infiniteSpeedCap, cruise + 6);
+  else if (sim.surgeT > 0) cruise = Math.min(CFG.storySpeedCap + 2, cruise + 7);
+  else if (sim.patience >= 40 && !held && sim.surgeT <= 0) {
+    const burst = Math.sin(sim.t * 4.2 + (sim.seed % 7)) > 0.55;
+    if (burst) cruise += 4.5;
+  }
+  // Catch-up gas only while the instructor is off the pedal. A held brake
+  // must be able to beat Anton's throttle or every press feels the same.
+  const pedal = sim.brakeInput;
+  const catchup = clamp(cruise - sim.v, 0, 8) * 0.55 * (1 - pedal);
+  let throttle = CFG.drag * cruise * (1 - 0.92 * pedal) + catchup;
+  if (sim.resumeDelay > 0 && sim.surgeT <= 0 && sim.outburstT <= 0) throttle *= 0.18;
+  if (sim.stun > 0) throttle *= 0.08;
+  sim.lastThrottle = throttle;
+  sim.stats.maxThrottle = Math.max(sim.stats.maxThrottle, throttle);
+
+  const auto = selfBrake(sim);
+  sim.lastSelfBrake = auto;
+  // Player pedal and Anton's own easing share the brakes, but only the
+  // player's pedal moves patience, cargo and the latch.
+  const physBrake = Math.max(sim.brakeInput, auto);
+  const playerDecel = brakeAccel(sim.v) * sim.brakeInput * slip;
+  sim.lastPlayerDecel = playerDecel;
+
+  if (!input.lockSpeed) {
+    const cap = sim.infinite ? CFG.infiniteSpeedCap : CFG.storySpeedCap;
+    const accel = netAccel(sim.v, throttle, physBrake, CFG.drag, slip);
+    sim.v = clamp(sim.v + accel * dt, 0, cap);
+  }
+  sim.stats.minV = Math.min(sim.stats.minV, sim.v);
+  sim.stats.maxV = Math.max(sim.stats.maxV, sim.v);
+  sim.s += sim.v * dt;
+
+  const steerH = nextHazard(sim);
+  const params = steerParams(sim.patience, sim.outburstT > 0);
+  let rate = params.rate;
+  if (
+    steerH &&
+    steerH.committed === "avoid" &&
+    sim.t < steerH.commitAt + params.delay &&
+    steerH.dist > 0
+  ) {
+    rate = Math.min(rate, 0.65);
+  }
+  const want = desiredX(sim);
+  sim.targetX = want;
+  sim.x += clamp(want - sim.x, -rate * dt, rate * dt);
+  sim.x = clamp(sim.x, -CFG.roadEdge, CFG.roadEdge);
+  sim.stats.minX = Math.min(sim.stats.minX, sim.x);
+  sim.stats.maxX = Math.max(sim.stats.maxX, sim.x);
+
+  if (held && sim.brakeInput > 0.55 && sim.v > 5) {
+    const last = sim.skids[sim.skids.length - 1];
+    if (!last || sim.s - last.s > 1.4) {
+      sim.skids.push({ s: sim.s, x: sim.x });
+      if (sim.skids.length > 12) sim.skids.shift();
+    }
+  }
+
+  collide(sim);
+
+  const fair = justified(sim);
+  const stoppedHard =
+    !input.lockSpeed &&
+    sim.v < 0.35 &&
+    held &&
+    sim.brakeInput > 0.5 &&
+    sim.holdTime > 0.5 &&
+    !fair;
+  const rateMood = irritationRate({
+    decel: playerDecel,
+    brakeInput: held ? sim.brakeInput : 0,
+    holdTime: sim.holdTime,
+    justified: fair,
+    stopped: stoppedHard,
+  });
+  sim.patience = clamp(sim.patience + rateMood * dt, 0, 100);
+  if (held && playerDecel > CFG.harshSpikeDecel && !sim.spiked) {
+    sim.spiked = true;
+    sim.patience = clamp(sim.patience + CFG.harshSpike, 0, 100);
+    sim.beltT = Math.max(sim.beltT, 0.48);
+    log(sim, { kind: "harsh-spike" });
+  }
+  if (held && sim.brakeInput > 0.92 && playerDecel > 6) sim.beltT = Math.max(sim.beltT, 0.42);
+
+  if (!held && sim.v > CFG.calmMinSpeed) sim.calmTime += dt;
+  else sim.calmTime = 0;
+  if (sim.calmTime > CFG.calmAfter) sim.patience = Math.max(0, sim.patience - CFG.calmRate * dt);
+
+  if (sim.cooldown > 0) sim.patience = Math.min(sim.patience, CFG.cooldownPatienceCap);
+  if (sim.patience >= 100 && sim.cooldown <= 0 && sim.outburstT <= 0) {
+    sim.patience = CFG.outburstReturn;
+    sim.outburstT = CFG.outburstTime;
+    sim.cooldown = CFG.outburstCooldown;
+    sim.stats.outbursts += 1;
+    sim.stats.honks += 1;
+    say(sim, "НУ ВСЁ!");
+    log(sim, { kind: "outburst" });
+  }
+
+  if (sim.cargoType && held && sim.brakeInput >= CFG.fullPress && playerDecel > CFG.cargoDecel) {
+    if (!sim.fullPressLatched) {
+      sim.fullPressLatched = true;
+      sim.cargo -= cargoImpulse(sim.cargoType);
+      sim.stats.harshFull += 1;
+      sim.comfortTarget = clamp(sim.comfortTarget - CFG.comfortDrop, 0, 100);
+      log(sim, { kind: "cargo-impulse", type: sim.cargoType, cargo: sim.cargo });
+    } else {
+      sim.cargo -= cargoSustain(sim.cargoType) * dt;
+      sim.comfortTarget = clamp(sim.comfortTarget - 6 * dt, 0, 100);
+    }
+  } else if (sim.brakeInput < 0.85) sim.fullPressLatched = false;
+
+  if (sim.comfortLock > 0) sim.comfortLock = Math.max(0, sim.comfortLock - dt);
+  else if (!held && sim.brakeInput < 0.25) {
+    sim.comfortTarget = clamp(sim.comfortTarget + CFG.comfortRecover * dt, 0, 100);
+  }
+  const blend = 1 - Math.exp(-CFG.comfortLerp * dt);
+  sim.comfort += (sim.comfortTarget - sim.comfort) * blend;
+  sim.comfort = clamp(sim.comfort, 0, 100);
+  sim.cargo = clamp(sim.cargo, 0, 100);
+
+  if (sim.body <= 0) fail(sim, "body");
+  else if (sim.cargoType && sim.cargo <= 0) fail(sim, "cargo");
+  else if (!sim.infinite && sim.s >= sim.length) {
+    sim.done = true;
+    sim.success = true;
+    sim.failReason = null;
+  }
+
+  sim.cooldown = Math.max(0, sim.cooldown - dt);
+  sim.outburstT = Math.max(0, sim.outburstT - dt);
+  sim.surgeT = Math.max(0, sim.surgeT - dt);
+  sim.beltT = Math.max(0, sim.beltT - dt);
+  sim.stun = Math.max(0, sim.stun - dt);
+  sim.resumeDelay = Math.max(0, sim.resumeDelay - dt);
+  sim.shake = Math.max(0, sim.shake - dt * 18);
+  sim.crashT = Math.max(0, sim.crashT - dt);
+  if (sim.bubbleT > 0) sim.bubbleT -= dt;
+  else sim.bubble = null;
+  if (sim.bubbleGap > 0) sim.bubbleGap -= dt;
+  sim.t += dt;
+  sim.wasHeld = held;
+  return sim;
+}
+
+export function runSim(mission, policy, opts = {}) {
+  const sim = createSim(mission, opts.seed ?? mission.seed ?? 1);
+  const dt = CFG.dt;
+  const max = opts.maxTime ?? 200;
+  let t = 0;
+  while (!sim.done && t < max) {
+    const held = !!policy(sim, t);
+    stepSim(sim, dt, { held });
+    t += dt;
+  }
+  if (!sim.done) {
+    sim.done = true;
+    sim.success = false;
+    sim.failReason = "timeout";
+  }
+  return sim;
+}

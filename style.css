@@ -1,0 +1,95 @@
+@font-face {
+  font-family: "Balsamiq Sans";
+  src: url("assets/fonts/BalsamiqSans-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Rubik Mono One";
+  src: url("assets/fonts/RubikMonoOne-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #F6ECD6;
+  color: #1C161E;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: "Balsamiq Sans", sans-serif;
+}
+
+#wrap {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  background: #F6ECD6;
+}
+
+canvas {
+  touch-action: none;
+  background: #F6ECD6;
+  width: min(100vw, calc(100vh * 16 / 9));
+  height: min(100vh, calc(100vw * 9 / 16));
+  max-width: 100vw;
+  max-height: 100vh;
+}
+
+#rotate {
+  display: none;
+  position: fixed;
+  inset: 0;
+  padding: 32px;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  background: #F6ECD6;
+}
+
+.rot-title {
+  margin: 0;
+  font-family: "Rubik Mono One", sans-serif;
+  font-size: 28px;
+}
+
+#rotate p {
+  margin: 0;
+  max-width: 18em;
+  font-size: 22px;
+}
+
+.phone {
+  width: 72px;
+  height: 120px;
+  border: 6px solid #1C161E;
+  border-radius: 12px;
+  margin-bottom: 8px;
+  animation: tilt 1.6s ease-in-out infinite;
+}
+
+@keyframes tilt {
+  50% { transform: rotate(90deg); }
+}
+
+body.is-portrait #wrap { display: none; }
+body.is-portrait #rotate { display: flex; }
+
+@media (orientation: portrait) {
+  #wrap { display: none; }
+  #rotate { display: flex; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phone { animation: none; transform: rotate(90deg); }
+}
