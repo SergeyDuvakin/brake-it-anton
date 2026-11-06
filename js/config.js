@@ -88,6 +88,7 @@ export const CFG = {
     bin: 2.4,
     stopped: 6.5,
     cutin: 6.0,
+    roller: 2.2,
   },
 };
 
@@ -96,6 +97,7 @@ export const SAFE_SPEED = {
   pedestrian: 3.0,
   // A bin is a comic shove once the car has actually slowed. Cruise still hits it.
   bin: 10.5,
+  roller: 8,
   cutin: 3.6,
   stopped: 99,
   dog: 99,

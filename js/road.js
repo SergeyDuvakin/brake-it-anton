@@ -15,14 +15,14 @@
 export const VIEW = {
   panel: { x: 24, y: 24, w: 1010, h: 852 },
   vanishX: 529,
-  vanishY: 96,
-  camBack: 64,
-  camLift: 38656,
-  focal: 4638,
-  roadHalf: 3.45,
-  sideHalf: 5.55,
-  look: 86,
-  near: -8,
+  vanishY: 64,
+  camBack: 34,
+  camLift: 21284,
+  focal: 3600,
+  roadHalf: 3.25,
+  sideHalf: 5.05,
+  look: 72,
+  near: -7,
 };
 
 export function project(ds, xm) {

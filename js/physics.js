@@ -89,11 +89,22 @@ export function moodGlyph(patience, outburst) {
  * Face id. Brake position does not pick the face; patience and events do.
  * `belted` is a short interrupt after a genuinely harsh stop.
  */
+function preening(sim) {
+  const list = sim.hazards || [];
+  for (const h of list) {
+    if (h.type !== "roller" || h.resolved) continue;
+    const dist = h.s - sim.s;
+    if (dist < 32 && dist > 1.2 && (sim.brakeInput || 0) < 0.28) return true;
+  }
+  return false;
+}
+
 export function expressionId(sim) {
-  if (sim.beltT > 0) return "belted";
+  if (sim.beltT > 0 || sim.cargoFlash > 0) return "belted";
   if (sim.outburstT > 0 || sim.patience >= 100) return "furious";
   if (sim.intent === "lunge") return "angry";
   if (sim.patience >= 70) return "angry";
+  if (preening(sim)) return "preen";
   if (sim.patience >= 40) return "annoyed";
   if (sim.intent === "avoid" || sim.intent === "yield") return "focused";
   return "calm";

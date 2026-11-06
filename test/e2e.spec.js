@@ -126,22 +126,22 @@ async function pedalPoint(page) {
 test("title and garage text is centered, present, and locked lessons are not starred", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(gameURL());
-  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "ИНСТРУКТОР"));
+  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "Brake It, Anton"));
   const titleLabels = await page.evaluate(() => window.__anton.labels());
   expect(titleLabels.map((item) => item.text)).toEqual(
-    expect.arrayContaining(["ИНСТРУКТОР", "Brake It, Anton", "Он газует сам.", "Тебе — одна педаль.", "В урок", "Гараж"]),
+    expect.arrayContaining(["Brake It, Anton", "Он газует. Ты жмёшь тормоз.", "В урок", "Гараж"]),
   );
   assertLabels(titleLabels);
   await page.screenshot({ path: shot("title") });
 
   await clickId(page, "garage");
-  await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "ГАРАЖ"));
+  await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "Антон газует сам."));
   const labels = await page.evaluate(() => window.__anton.labels());
   const texts = labels.map((item) => item.text);
-  expect(texts).toContain("ГАРАЖ");
-  expect(texts).toContain("Старый двор");
-  expect(texts).toContain("Старый двор. Пока ездит только Антон.");
-  expect(texts.filter((text) => text === "закрыт").length).toBe(4);
+  expect(texts).toContain("Гараж");
+  expect(texts).toContain("Антон газует сам.");
+  expect(texts.filter((text) => text === "Сначала пройди предыдущий урок").length).toBe(3);
+  expect(texts.some((text) => text.includes("закрыт"))).toBe(false);
   expect(texts.some((text) => text.includes("★"))).toBe(false);
   expect(texts.every((text) => text.trim().length > 0)).toBe(true);
   assertLabels(labels);
@@ -156,6 +156,16 @@ test("title and garage text is centered, present, and locked lessons are not sta
     expect(spot.y).toBeGreaterThanOrEqual(24);
   }
   await page.screenshot({ path: shot("garage") });
+
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto(gameURL());
+  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "Brake It, Anton"));
+  await page.screenshot({ path: shot("title-844") });
+  await clickId(page, "garage");
+  await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "Антон газует сам."));
+  const phoneLabels = await page.evaluate(() => window.__anton.labels());
+  assertLabels(phoneLabels);
+  await page.screenshot({ path: shot("garage-844") });
 });
 
 function assertLabels(labels) {
@@ -234,6 +244,7 @@ test("real pedal: miss the pedestrian, retry, then stop and finish lesson 1", as
   const finished = await driveWithPedal(page, lessonBrake, {
     rescue: shot("pedestrian-rescue"),
     busy: shot("busy-hazard"),
+    preen: shot("beat-preen"),
   });
   expect(finished.success).toBe(true);
   expect(finished.collisions).toBe(0);
@@ -256,7 +267,7 @@ test("real pedal carries the cake past distinct hazards", async ({ page }) => {
   expect(finished.collisions, JSON.stringify(finished)).toBe(0);
   expect(finished.cargoType).toBe("cake");
   expect(finished.stars).toBeGreaterThan(0);
-  expect(finished.cargo, JSON.stringify(finished)).toBeGreaterThan(15);
+  expect(finished.cargo, JSON.stringify(finished)).toBeGreaterThan(40);
   expect(errors).toEqual([]);
 });
 
@@ -267,7 +278,7 @@ function cakeBrake(state) {
   const holding = state.brake > 0.2;
   if (hazard.type === "pedestrian" || hazard.type === "cutin") {
     if (hazard.cross >= 3.2) return false;
-    return holding ? state.v > 2.3 : state.v > 8.5;
+    return holding ? state.v > 2.4 : state.v > 8;
   }
   if (hazard.type === "bin") return holding ? state.v > 7 : state.v > 11;
   return false;
@@ -282,6 +293,7 @@ function lessonBrake(state) {
     // Stay under the safe speed. A full press only hurts cargo while still fast.
     return state.v > 2.6;
   }
+  if (hazard.type === "roller") return state.v > 6.2;
   if (hazard.type === "bin") return state.brake > 0.2 ? state.v > 7.2 : state.v > 10.4;
   return false;
 }
@@ -328,6 +340,10 @@ async function driveWithPedal(page, decide, shots = {}) {
     ) {
       await page.screenshot({ path: shots.busy });
       sawBusy = true;
+    }
+    if (shots.preen && state.pose === "preen" && state.hazard?.type === "roller") {
+      await page.screenshot({ path: shots.preen });
+      shots.preen = null;
     }
     const want = state.phase === "drive" && decide(state);
     if (want && !down) {

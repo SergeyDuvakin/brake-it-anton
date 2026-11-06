@@ -4,6 +4,7 @@
  */
 
 import { createAudio } from "./audio.js";
+import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
 import { render } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
@@ -49,9 +50,10 @@ let last = performance.now();
 let acc = 0;
 
 const preview = createSim(getMission("lesson1"), 11);
-preview.s = 6;
-preview.v = 12;
-preview.patience = 12;
+preview.s = 30;
+preview.v = 11;
+preview.patience = 8;
+if (preview.hazards[0]) preview.hazards[0].crossT = 0.62;
 
 function loadSave() {
   try {
@@ -339,6 +341,7 @@ window.__anton = {
       collisions: session?.sim.stats.collisions ?? 0,
       cargoType: session?.sim.cargoType ?? null,
       hazard: hazardState(),
+      pose: session ? expressionId(session.sim) : expressionId(preview),
     };
   },
   hotspots() {

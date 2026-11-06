@@ -381,8 +381,8 @@ test("same seed repeats; authored hazards stay on the road and spaced", () => {
     let prev = 0;
     for (const h of lesson.hazards) {
       assert.ok(Math.abs(h.x) <= 2.2, lesson.id);
-      if (prev === 0) assert.ok(h.s >= 55 && h.s <= 90, `${lesson.id} opens in view at ${h.s}`);
-      else assert.ok(h.s - prev >= 120, `${lesson.id} gap ${h.s - prev}`);
+      if (prev === 0) assert.ok(h.s >= 40 && h.s <= 58, `${lesson.id} opens in view at ${h.s}`);
+      else assert.ok(h.s - prev >= 78, `${lesson.id} gap ${h.s - prev}`);
       assert.ok(h.s < lesson.length - 70, lesson.id);
       prev = h.s;
     }
@@ -605,15 +605,7 @@ test("early brake stops short of the pedestrian, then the lane clears", () => {
   let sawStop = false;
   for (let i = 0; i < 16000 && !sim.done; i++) {
     const ped = sim.hazards.find((h) => h.id === "ped");
-    const bin = sim.hazards.find((h) => h.id === "bin");
-    const dist = ped.resolved ? 999 : ped.s - sim.s;
-    let held = false;
-    if (!ped.resolved && dist < 44 && !(ped.crossT >= ped.crossDur)) held = sim.v > 2.5;
-    if (ped.resolved && bin && !bin.resolved) {
-      const gap = bin.s - sim.s;
-      if (gap < 38 && gap > -1) held = sim.v > 8;
-    }
-    stepSim(sim, dt, { held });
+    stepSim(sim, dt, { held: brakeOpen(sim) });
     if (!ped.resolved && ped.crossT > 0.25 && ped.crossT < ped.crossDur * 0.7) {
       if (sim.v < 0.35) sawStop = true;
       if (Math.abs(sim.x - hazardWorldX(ped, sim)) < CFG.carHalfW + ped.halfW) {
@@ -691,6 +683,54 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
     assert.ok(yml.includes(`assets/fonts/${font}`), font);
   }
   assert.ok(!yml.includes(".png"));
+});
+
+function brakeOpen(sim) {
+  const next = sim.hazards.find((h) => !h.resolved && !h.trust);
+  if (!next) return false;
+  const dist = next.s - sim.s;
+  if (dist > 36 || dist < -1) return false;
+  if ((next.type === "pedestrian" || next.type === "cutin") && next.crossT >= next.crossDur) return false;
+  if (next.type === "pedestrian" || next.type === "cutin") return sim.v > 2.4;
+  if (next.type === "roller") return sim.v > 6;
+  return sim.v > 8;
+}
+
+test("brake timing: early stop leaves a gap, late speed is a hit, crawl is not", () => {
+  const mission = getMission("lesson1");
+  const early = createSim(mission, mission.seed);
+  early.v = 10;
+  let minGap = Infinity;
+  let sawLane = false;
+  for (let i = 0; i < 8000 && !early.done; i++) {
+    const ped = early.hazards.find((h) => h.id === "ped");
+    stepSim(early, dt, { held: brakeOpen(early) });
+    if (!ped.resolved && ped.crossT > 0.4 && ped.crossT < ped.crossDur * 0.7) {
+      sawLane = true;
+      if (Math.abs(early.x - hazardWorldX(ped, early)) < CFG.carHalfW + ped.halfW + 0.2) {
+        minGap = Math.min(minGap, ped.s - ped.halfL - (early.s + CFG.carHalfFront));
+      }
+    }
+  }
+  assert.equal(early.stats.collisions, 0, dump(early));
+  assert.equal(early.success, true, dump(early));
+  assert.ok(sawLane, "pedestrian never occupied the lane");
+  assert.ok(minGap > 2, `gap ${minGap}`);
+  const pedDone = early.hazards.find((h) => h.id === "ped");
+  assert.equal(pedDone.resolved, "clear");
+  assert.ok(Math.abs(hazardWorldX(pedDone, early)) > 4, "pedestrian still in the lane");
+
+  const late = createSim(mission, mission.seed);
+  late.v = 12;
+  for (let i = 0; i < 4000 && late.stats.collisions === 0 && !late.done; i++) {
+    const ped = late.hazards.find((h) => h.id === "ped");
+    const dist = ped.s - late.s;
+    stepSim(late, dt, { held: dist < 6 && late.v > 8 });
+  }
+  assert.ok(late.stats.collisions >= 1, dump(late));
+
+  const kinds = new Set(early.events.map((e) => e.kind + ":" + (e.id || "")));
+  assert.ok([...kinds].some((name) => name.includes("lid") || name.includes("roller") || early.events.some((e) => e.id === "lid")));
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

@@ -92,6 +92,7 @@ export function sessionStep(session, dt) {
     if (session.countdownAcc >= 3) {
       session.phase = "drive";
       session.countdown = 0;
+      if (session.sim.v < 1) session.sim.v = session.mission.roll ?? 10;
       return;
     }
     session.countdown = Math.ceil(3 - session.countdownAcc);

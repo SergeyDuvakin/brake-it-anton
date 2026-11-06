@@ -40,7 +40,7 @@ export function createSim(mission, seed = 1) {
     rewarded: false,
     commitAt: 0,
     crossT: -1,
-    crossDur: h.crossDur ?? (h.type === "pedestrian" ? 3.35 : h.type === "cutin" ? 2.65 : 0),
+    crossDur: h.crossDur ?? (h.type === "pedestrian" ? 3.35 : h.type === "cutin" ? 2.65 : h.type === "roller" ? 2.35 : 0),
     yielded: false,
     hopped: false,
   }));
@@ -96,6 +96,7 @@ export function createSim(mission, seed = 1) {
     gags: (mission.gags || []).map((g) => ({ ...g, fired: false })),
     gagT: 0,
     nearT: 0,
+    cargoFlash: 0,
     stats: {
       collisions: 0,
       trustClears: 0,
@@ -148,11 +149,13 @@ export function hazardWorldX(h, sim) {
   if (h.type === "pedestrian") return actorX(h, sim, dist, 5.2, -Math.sign(h.x || 1) * 5.35);
   if (h.type === "cutin") return actorX(h, sim, dist, 5.6, -Math.sign(h.x || 1) * 5.5);
   if (h.type === "dog") {
-    const side = sideOf(h, 4.85);
-    if (dist > 14) return side;
-    const t = clamp(1 - dist / 14, 0, 1);
-    return side + (h.x - side) * t;
+    const side = sideOf(h, 4.9);
+    if (dist > 18) return side + Math.sin(h.s) * 0.15;
+    const t = clamp(1 - dist / 18, 0, 1);
+    const darted = side + (h.x - side) * t + Math.sin(t * Math.PI) * 0.85 * Math.sign(side || 1);
+    return darted;
   }
+  if (h.type === "roller") return actorX(h, sim, dist, 5.35, -Math.sign(h.x || 1) * 5.15);
   if (h.type === "bin") {
     const side = sideOf(h, 4.55);
     if (dist > 16) return side;
@@ -305,7 +308,8 @@ function markClear(sim, h, how) {
     if (h.trust && h.committed === "avoid") sim.patience = Math.max(0, sim.patience - CFG.trustReward);
     else if (!h.trust && h.playerBraked) sim.patience = Math.max(0, sim.patience - CFG.saveReward);
   }
-  if (how === "slow" || how === "scrape") say(sim, "ФУХ.");
+  if (h.type === "roller" && (how === "slow" || how === "scrape" || how === "pass" || how === "yield")) say(sim, "ЦЕЛЫ");
+  else if (how === "slow" || how === "scrape") say(sim, "ФУХ.");
   else if (how === "yield") say(sim, "НУ ПРОШЁЛ");
   log(sim, { kind: "clear", id: h.id, how });
 }
@@ -340,7 +344,7 @@ function resolveHit(sim, h) {
 function pinShort(sim, h) {
   // Leave enough world-space in front of the bumper that the drawn car
   // is not sitting on the body. The hitbox itself stays the real one.
-  const stopAt = h.s - h.halfL - CFG.carHalfFront - 4.6;
+  const stopAt = h.s - h.halfL - CFG.carHalfFront - 8.4;
   if (sim.s > stopAt) sim.s = stopAt;
   sim.v = 0;
   h.yielded = true;
@@ -428,16 +432,16 @@ function noteNear(sim, h) {
 function advanceActors(sim, dt) {
   for (const h of sim.hazards) {
     if (h.resolved) continue;
-    if (h.type !== "pedestrian" && h.type !== "cutin") continue;
+    if (h.type !== "pedestrian" && h.type !== "cutin" && h.type !== "roller") continue;
     const dist = h.s - sim.s;
     if (h.crossT < 0) {
-      const close = h.type === "cutin" ? 13 : 11.5;
+      const close = h.type === "cutin" ? 13 : h.type === "roller" ? 22 : 11.5;
       const arrive = dist < close && dist > 3.2;
       const waited = h.playerBraked && sim.v < 2.2 && dist < close + 3 && dist > 3.2;
       if (arrive || waited) {
         h.crossT = 0;
         if (sim.v < safeSpeed(h.type) + 0.4) h.yielded = true;
-        const line = h.type === "cutin" ? "ОТКУДА ОН" : "ОН В ТЕЛЕФОНЕ";
+        const line = h.type === "cutin" ? "ОТКУДА ОН" : h.type === "roller" ? "ВОЛОСЫ" : "ОН В ТЕЛЕФОНЕ";
         if (dist > 4) say(sim, line);
       }
     } else {
@@ -628,6 +632,8 @@ export function stepSim(sim, dt, input = {}) {
       sim.fullPressLatched = true;
       sim.cargo -= cargoImpulse(sim.cargoType);
       sim.stats.harshFull += 1;
+      sim.cargoFlash = 0.55;
+      say(sim, sim.cargoType === "fish" ? "РЫБКА" : "КРЕМ");
       sim.comfortTarget = clamp(sim.comfortTarget - CFG.comfortDrop, 0, 100);
       log(sim, { kind: "cargo-impulse", type: sim.cargoType, cargo: sim.cargo });
     } else {
@@ -662,6 +668,7 @@ export function stepSim(sim, dt, input = {}) {
   sim.shake = Math.max(0, sim.shake - dt * 18);
   sim.crashT = Math.max(0, sim.crashT - dt);
   sim.nearT = Math.max(0, sim.nearT - dt);
+  sim.cargoFlash = Math.max(0, sim.cargoFlash - dt);
   sim.gagT = Math.max(0, sim.gagT - dt);
   if (sim.bubbleT > 0) sim.bubbleT -= dt;
   else sim.bubble = null;

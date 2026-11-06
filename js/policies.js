@@ -22,10 +22,11 @@ export function policyCareful(sim) {
   const slip =
     sim.inSlip ||
     (sim.slippery || []).some((z) => h.s > z.s0 - 8 && h.s < z.s1 + 4);
-  let window = 42;
+  let window = 36;
   if (slip) window = 78;
-  else if (h.type === "cutin") window = 56;
-  else if (h.type === "pedestrian") window = 46;
+  else if (h.type === "cutin") window = 52;
+  else if (h.type === "pedestrian") window = 30;
+  else if (h.type === "roller") window = 34;
   if (h.dist > window || h.dist < -1) return false;
   if ((h.type === "pedestrian" || h.type === "cutin") && h.crossDur && h.crossT >= h.crossDur) return false;
 
@@ -35,7 +36,7 @@ export function policyCareful(sim) {
     // decel threshold, so holding here does not mash the cake.
     return sim.v > safe - (slip ? 0.7 : 0.2);
   }
-  if (h.type === "bin") return sim.v > safe - 2.2;
+  if (h.type === "bin" || h.type === "roller") return sim.v > safe - 1.6;
   return sim.v > safe - 0.4;
 }
 
