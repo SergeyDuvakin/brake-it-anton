@@ -6,10 +6,10 @@
   "description": "Brake It, Anton — playable landscape prototype. The instructor only brakes.",
   "scripts": {
     "start": "node tools/serve.js",
-    "test": "node --test test/sim.test.js",
+    "test": "node --test test/sim.test.js test/home-hint.test.js",
     "test:e2e": "playwright test",
-    "lint": "eslint js tools test/sim.test.js",
-    "check": "node tools/check-syntax.js"
+    "lint": "eslint js tools test/sim.test.js test/home-hint.test.js",
+    "check": "node tools/check-syntax.js && node tools/check-icons.js"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1",

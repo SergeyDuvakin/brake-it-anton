@@ -7,6 +7,7 @@ import { createAudio } from "./audio.js";
 import { SAVE_KEY } from "./config.js";
 import { render } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
+import { homeHintVisible } from "./home-hint.js";
 import { LESSONS, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
 import { createSim } from "./sim.js";
@@ -25,6 +26,8 @@ import { applyVictory, freshSave, noteInfiniteDistance, parseSave } from "./stor
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
+const homeHintEl = document.getElementById("home-hint");
+const openedAt = performance.now();
 const params = new URLSearchParams(location.search);
 const debug = params.has("debug") || params.has("e2e");
 let timeScale = params.has("e2e") ? 6 : 1;
@@ -217,6 +220,7 @@ function frame(now) {
     steps += 1;
     tick(1 / 60);
   }
+  syncHomeHint();
   hotspots = render(ctx, {
     screen,
     session,
@@ -291,6 +295,23 @@ window.addEventListener("blur", () => {
 document.addEventListener("visibilitychange", () => {
   if (session) onVisibility(session, document.hidden);
 });
+
+function displayMode() {
+  if (window.matchMedia("(display-mode: fullscreen)").matches) return "fullscreen";
+  if (window.matchMedia("(display-mode: standalone)").matches) return "standalone";
+  return "browser";
+}
+
+function syncHomeHint() {
+  if (!homeHintEl) return;
+  homeHintEl.hidden = !homeHintVisible({
+    screen,
+    standalone: window.navigator.standalone,
+    displayMode: displayMode(),
+    portrait: document.body.classList.contains("is-portrait"),
+    elapsedMs: performance.now() - openedAt,
+  });
+}
 
 function syncOrient() {
   document.body.classList.toggle("is-portrait", window.innerHeight > window.innerWidth);

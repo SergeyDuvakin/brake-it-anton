@@ -1,6 +1,6 @@
 export default [
   {
-    files: ["js/**/*.js", "tools/**/*.js", "test/sim.test.js"],
+    files: ["js/**/*.js", "tools/**/*.js", "test/sim.test.js", "test/home-hint.test.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
