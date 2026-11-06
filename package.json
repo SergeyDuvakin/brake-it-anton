@@ -1,0 +1,21 @@
+{
+  "name": "brake-it-anton",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Brake It, Anton — playable landscape prototype. The instructor only brakes.",
+  "scripts": {
+    "start": "node tools/serve.js",
+    "test": "node --test test/sim.test.js",
+    "test:e2e": "playwright test",
+    "lint": "eslint js tools test/sim.test.js",
+    "check": "node tools/check-syntax.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "eslint": "9.39.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
