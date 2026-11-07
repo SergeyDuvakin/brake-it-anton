@@ -354,6 +354,43 @@ function snapshotPose(sim) {
   }
 }
 
+/** Freeze the drawn pose on the authoritative state. Render must not be the one to write this. */
+export function snapRenderPose(sim) {
+  if (!sim) return;
+  snapshotPose(sim);
+}
+
+export function renderAlpha(accumulator, step = 1 / 60) {
+  if (!(step > 0) || !Number.isFinite(accumulator)) return 1;
+  const alpha = accumulator / step;
+  if (alpha <= 0) return 0;
+  if (alpha >= 1) return 1;
+  return alpha;
+}
+
+/**
+ * Picture between the previous sim step and the current one.
+ * Does not write the sim. Alpha 0 is the previous step, alpha 1 is the live step.
+ * UI and collision keep using the live sim, not this pose.
+ */
+export function renderPose(sim, alpha = 1) {
+  const t = renderAlpha(alpha, 1);
+  const prevS = sim.prevS ?? sim.s;
+  const prevX = sim.prevX ?? sim.x;
+  const hazardX = new Map();
+  for (const h of sim.hazards || []) {
+    const now = hazardWorldX(h, sim);
+    const prev = h.prevX ?? now;
+    hazardX.set(h.id, prev + (now - prev) * t);
+  }
+  return {
+    s: prevS + (sim.s - prevS) * t,
+    x: prevX + (sim.x - prevX) * t,
+    alpha: t,
+    hazardX,
+  };
+}
+
 function frontOf(s) {
   return s + CFG.carHalfFront;
 }

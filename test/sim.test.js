@@ -18,6 +18,8 @@ import {
   bumperFootGap,
   carDrawOrigin,
   pedestrianFootShift,
+  placedScene,
+  render,
 } from "../js/draw.js";
 import { VIEW, project } from "../js/road.js";
 import {
@@ -31,7 +33,7 @@ import {
   steerParams,
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
-import { contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -1185,6 +1187,246 @@ test("lane contact is the overlap of the two time windows, not the two endpoints
   assert.ok(Math.abs(wide.x - (-0.2)) > wideReach, dump(wide));
   assert.equal(wide.stats.collisions, 1, dump(wide));
   assert.equal(wide.events.filter((e) => e.hitId === "hit:ped").length, 1);
+});
+
+function mockCtx() {
+  const calls = [];
+  const target = { canvas: { width: 1600, height: 900 } };
+  const ctx = new Proxy(target, {
+    get(obj, prop) {
+      if (prop in obj) return obj[prop];
+      if (prop === "measureText") return () => ({ width: 40 });
+      return (...args) => {
+        const nums = args.filter((item) => typeof item === "number" && Number.isFinite(item));
+        if (nums.length) calls.push(nums);
+        return undefined;
+      };
+    },
+    set(obj, prop, value) {
+      obj[prop] = value;
+      return true;
+    },
+  });
+  return { ctx, calls };
+}
+
+function playState(session, alpha) {
+  return {
+    screen: "play",
+    session,
+    save: freshSave(),
+    now: 1000,
+    hint: false,
+    debug: false,
+    notice: null,
+    preview: null,
+    missions: LESSONS,
+    selected: session.mission.id,
+    pose: null,
+    alpha,
+  };
+}
+
+function simFingerprint(sim) {
+  return JSON.stringify({
+    s: sim.s,
+    x: sim.x,
+    v: sim.v,
+    t: sim.t,
+    prevS: sim.prevS,
+    prevX: sim.prevX,
+    collisions: sim.stats.collisions,
+    patience: sim.patience,
+    events: sim.events,
+    hazards: sim.hazards.map((h) => ({
+      id: h.id,
+      resolved: h.resolved,
+      crossT: h.crossT,
+      x: h.x,
+      prevX: h.prevX,
+    })),
+  });
+}
+
+test("render samples the last step only and does not touch the sim", () => {
+  const session = createSession(getMission("lesson1"), { seed: 11 });
+  session.phase = "drive";
+  session.countdownAcc = 3;
+  sessionStep(session, dt);
+  const sim = session.sim;
+  assert.ok(sim.s > sim.prevS);
+  const start = sim.prevS;
+  const end = sim.s;
+  const mid = (start + end) / 2;
+  const at0 = placedScene(sim, 0);
+  const at1 = placedScene(sim, 1);
+  const atHalf = placedScene(sim, 0.5);
+  assert.equal(at0.pose.s, start);
+  assert.equal(at1.pose.s, end);
+  assert.ok(Math.abs(atHalf.pose.s - mid) < 1e-9);
+  assert.equal(at0.pose.x, sim.prevX);
+  assert.equal(at1.pose.x, sim.x);
+  assert.ok(Math.abs(atHalf.pose.x - (sim.prevX + sim.x) / 2) < 1e-9);
+
+  const ped0 = at0.actors.find((actor) => actor.id === "ped");
+  const ped1 = at1.actors.find((actor) => actor.id === "ped");
+  const pedHalf = atHalf.actors.find((actor) => actor.id === "ped");
+  assert.ok(ped0.dist > ped1.dist);
+  assert.ok(Math.abs(pedHalf.dist - (ped0.dist + ped1.dist) / 2) < 1e-9);
+  assert.ok(Math.abs(pedHalf.hx - (ped0.hx + ped1.hx) / 2) < 1e-9);
+  assert.notEqual(ped0.spot.y, ped1.spot.y);
+  assert.notEqual(ped0.spot.x, ped1.spot.x);
+  // The camera sits on the car, so the bumper's screen x follows lateral pose only.
+  assert.equal(at0.car.x, project(CFG.carHalfFront, sim.prevX).x);
+  assert.equal(at1.car.x, project(CFG.carHalfFront, sim.x).x);
+  assert.ok(Math.abs(atHalf.car.x - project(CFG.carHalfFront, (sim.prevX + sim.x) / 2).x) < 1e-6);
+
+  const before = simFingerprint(sim);
+  const drawn0 = mockCtx();
+  const drawnHalf = mockCtx();
+  const drawn1 = mockCtx();
+  const spots0 = render(drawn0.ctx, playState(session, 0)).spots;
+  const spotsHalf = render(drawnHalf.ctx, playState(session, 0.5)).spots;
+  const spots1 = render(drawn1.ctx, playState(session, 1)).spots;
+  assert.deepEqual(spots0, spotsHalf);
+  assert.deepEqual(spots0, spots1);
+  assert.notDeepEqual(drawn0.calls, drawnHalf.calls);
+  assert.notDeepEqual(drawnHalf.calls, drawn1.calls);
+  assert.equal(simFingerprint(sim), before);
+  assert.equal(sim.stats.collisions, 0);
+
+  const afterFirst = sim.s;
+  stepSim(sim, dt, { held: false });
+  assert.equal(sim.prevS, afterFirst);
+  assert.equal(renderPose(sim, 0).s, afterFirst);
+  assert.notEqual(renderPose(sim, 0).s, start);
+
+  const frozenS = sim.s;
+  const frozenEvents = sim.events.length;
+  const low = renderPose(sim, 0.2).s;
+  const high = renderPose(sim, 0.8).s;
+  assert.ok(high > low);
+  assert.ok(low > sim.prevS && high < sim.s);
+  assert.equal(sim.s, frozenS);
+  assert.equal(sim.events.length, frozenEvents);
+});
+
+test("pause, blur, hide, retry, countdown and finish drop the stale pose", () => {
+  const session = createSession(getMission("lesson1"), { seed: 11 });
+  assert.equal(session.phase, "countdown");
+  assert.equal(session.sim.prevS, session.sim.s);
+  sessionStep(session, 1);
+  assert.equal(session.phase, "countdown");
+  assert.equal(session.sim.s, 0);
+  assert.equal(renderPose(session.sim, 0.4).s, 0);
+  sessionStep(session, 2.1);
+  assert.equal(session.phase, "drive");
+  assert.equal(session.sim.prevS, session.sim.s);
+
+  frames(session.sim, 20, false);
+  assert.notEqual(session.sim.prevS, session.sim.s);
+  const live = session.sim.s;
+  pauseSession(session, "button");
+  assert.equal(session.sim.prevS, live);
+  assert.equal(renderPose(session.sim, 0).s, live);
+  assert.equal(renderPose(session.sim, 0.3).s, live);
+  resumeSession(session);
+  assert.equal(session.phase, "drive");
+  assert.equal(renderPose(session.sim, 0.3).s, live);
+
+  frames(session.sim, 5, false);
+  onBlur(session);
+  assert.equal(session.pauseReason, "blur");
+  assert.equal(session.sim.prevS, session.sim.s);
+  resumeSession(session);
+  frames(session.sim, 5, false);
+  onVisibility(session, true);
+  assert.equal(session.pauseReason, "hidden");
+  assert.equal(session.sim.prevX, session.sim.x);
+  for (const hazard of session.sim.hazards) {
+    assert.equal(hazard.prevX, hazardWorldX(hazard, session.sim));
+  }
+
+  const moved = session.sim.s;
+  restartSession(session);
+  assert.equal(session.phase, "drive");
+  assert.notEqual(session.sim.s, moved);
+  assert.equal(session.sim.prevS, session.sim.s);
+  assert.equal(session.sim.prevX, session.sim.x);
+  assert.equal(renderPose(session.sim, 0).s, renderPose(session.sim, 1).s);
+
+  session.sim.s = session.mission.length;
+  session.sim.done = true;
+  session.phase = "drive";
+  session.sim.prevS = 0;
+  sessionStep(session, dt);
+  assert.equal(session.phase, "result");
+  assert.equal(session.sim.prevS, session.sim.s);
+  assert.equal(renderAlpha(Number.NaN, dt), 1);
+});
+
+test("drawing between frames does not change 30/60/90/120 or the stall cap", () => {
+  function ride(hz, seconds, draw) {
+    const session = createSession(getMission("lesson1"), { seed: 11 });
+    session.phase = "drive";
+    session.countdownAcc = 3;
+    let acc = 0;
+    let steps = 0;
+    const shown = [];
+    let between = 0;
+    for (let frame = 0; frame < hz * seconds; frame += 1) {
+      const drained = drainFrame(acc, 1 / hz, 1);
+      acc = drained.acc;
+      for (let n = 0; n < drained.steps; n += 1) {
+        sessionStep(session, 1 / 60);
+        steps += 1;
+      }
+      const alpha = session.phase === "drive" ? renderAlpha(acc, 1 / 60) : 1;
+      const scene = placedScene(session.sim, alpha);
+      if (draw) render(mockCtx().ctx, playState(session, alpha));
+      const prev = session.sim.prevS;
+      const curr = session.sim.s;
+      const lo = Math.min(prev, curr);
+      const hi = Math.max(prev, curr);
+      assert.ok(scene.pose.s >= lo - 1e-9 && scene.pose.s <= hi + 1e-9);
+      if (session.phase === "drive" && scene.pose.s > lo + 1e-6 && scene.pose.s < hi - 1e-6) between += 1;
+      shown.push(scene.pose.s);
+    }
+    return { fp: simFingerprint(session.sim), steps, shown, between, collisions: session.sim.stats.collisions };
+  }
+
+  for (const hz of [30, 60, 90, 120]) {
+    const plain = ride(hz, 2, false);
+    const drawn = ride(hz, 2, true);
+    assert.equal(drawn.fp, plain.fp, `${hz} Hz render changed the sim`);
+    assert.equal(drawn.collisions, plain.collisions);
+    let rewound = 0;
+    for (let i = 1; i < drawn.shown.length; i += 1) {
+      if (drawn.shown[i] + 1e-6 < drawn.shown[i - 1]) rewound += 1;
+    }
+    assert.equal(rewound, 0, `${hz} Hz rewound the picture`);
+  }
+  const smooth = ride(120, 3, false);
+  assert.ok(smooth.between > 20, `120 Hz intermediates ${smooth.between}`);
+  const odd = ride(90, 3, false);
+  assert.ok(odd.between > 10, `90 Hz intermediates ${odd.between}`);
+
+  const stalled = createSession(getMission("lesson1"), { seed: 11 });
+  stalled.phase = "drive";
+  stalled.countdownAcc = 3;
+  const twin = createSession(getMission("lesson1"), { seed: 11 });
+  twin.phase = "drive";
+  twin.countdownAcc = 3;
+  const burst = drainFrame(0, 0.5, 1);
+  assert.equal(burst.steps, 6);
+  assert.equal(burst.raw, 0.1);
+  for (let n = 0; n < burst.steps; n += 1) {
+    sessionStep(stalled, 1 / 60);
+    sessionStep(twin, 1 / 60);
+    placedScene(stalled.sim, renderAlpha(burst.acc, 1 / 60));
+  }
+  assert.equal(simFingerprint(stalled.sim), simFingerprint(twin.sim));
+  assert.equal(stalled.sim.events.length, twin.sim.events.length);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

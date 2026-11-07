@@ -6,7 +6,7 @@
 import { CFG, PALETTE as P } from "./config.js";
 import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
 import { VIEW, project } from "./road.js";
-import { hazardWorldX } from "./sim.js";
+import { hazardWorldX, renderPose } from "./sim.js";
 
 /** World car scale. Do not shrink this to fake a gap in front of a pedestrian. */
 export const CAR_SPRITE_SCALE = 1.42;
@@ -140,7 +140,7 @@ export function render(ctx, state) {
 
 function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
-  drawWorld(ctx, state.preview, boil, false);
+  drawWorld(ctx, state.preview, boil, false, 1);
   panel(ctx, 1056, 24, 520, 852, P.CABIN);
   ctx.fillStyle = P.GLASS;
   ctx.fillRect(1056, 24, 520, 168);
@@ -284,7 +284,7 @@ function drawPlay(ctx, state) {
 
   ctx.save();
   if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
-  drawWorld(ctx, sim, boil, motion);
+  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1);
   ctx.restore();
   drawCabin(ctx, sim, state, boil, visual);
   drawPatience(ctx, sim, paused);
@@ -346,7 +346,27 @@ function drawHud(ctx, state, sim) {
   spots.push({ id: "pause", x: 928, y: 26, w: 96, h: 90 });
 }
 
-function drawWorld(ctx, sim, boil, motion) {
+/**
+ * One camera sample for the road, the car, and every actor.
+ * Screen positions are not linear in alpha; the meters are.
+ * Pointers and collision do not read this.
+ */
+export function placedScene(sim, alpha = 1) {
+  const pose = renderPose(sim, alpha);
+  const car = project(CFG.carHalfFront, pose.x);
+  const actors = [];
+  for (const h of sim.hazards || []) {
+    const dist = h.s - pose.s;
+    const hx = pose.hazardX.has(h.id) ? pose.hazardX.get(h.id) : hazardWorldX(h, sim);
+    actors.push({ id: h.id, dist, hx, spot: project(dist, hx) });
+  }
+  return { pose, car, actors };
+}
+
+function drawWorld(ctx, sim, boil, motion, alpha = 1) {
+  const scene = placedScene(sim, alpha);
+  const cam = scene.pose.s;
+  const actorAt = new Map(scene.actors.map((actor) => [actor.id, actor]));
   const box = VIEW.panel;
   const far = 1600;
   ctx.save();
@@ -365,9 +385,9 @@ function drawWorld(ctx, sim, boil, motion) {
   strokeRay(ctx, VIEW.roadHalf, far, P.INK, 7);
 
   const curb = 5;
-  for (let s = Math.floor((sim.s + VIEW.near) / curb) * curb; s < sim.s + VIEW.look; s += curb) {
+  for (let s = Math.floor((cam + VIEW.near) / curb) * curb; s < cam + VIEW.look; s += curb) {
     for (const side of [-1, 1]) {
-      const spot = project(s - sim.s, side * (VIEW.roadHalf + 0.08));
+      const spot = project(s - cam, side * (VIEW.roadHalf + 0.08));
       if (spot.y < 40 || spot.y > 900) continue;
       ctx.fillStyle = P.PAPER;
       ctx.fillRect(spot.x - 5 * spot.scale, spot.y, 10 * spot.scale, 7 * spot.scale);
@@ -375,8 +395,8 @@ function drawWorld(ctx, sim, boil, motion) {
   }
 
   for (const zone of sim.slippery || []) {
-    const ds0 = zone.s0 - sim.s;
-    const ds1 = zone.s1 - sim.s;
+    const ds0 = zone.s0 - cam;
+    const ds1 = zone.s1 - cam;
     if (ds1 < VIEW.near || ds0 > VIEW.look) continue;
     fillQuad(ctx, Math.max(ds0, VIEW.near), Math.min(ds1, VIEW.look), -VIEW.roadHalf * 0.92, VIEW.roadHalf * 0.92, "rgba(120,170,190,0.45)");
     if (ds0 > 2 && ds0 < VIEW.look - 6) {
@@ -390,11 +410,11 @@ function drawWorld(ctx, sim, boil, motion) {
     }
   }
 
-  for (let s = Math.floor((sim.s + VIEW.near) / 9) * 9; s < sim.s + VIEW.look; s += 9) {
-    fillQuad(ctx, s - sim.s, s - sim.s + 3.4, -0.18, 0.18, P.PAPER);
+  for (let s = Math.floor((cam + VIEW.near) / 9) * 9; s < cam + VIEW.look; s += 9) {
+    fillQuad(ctx, s - cam, s - cam + 3.4, -0.18, 0.18, P.PAPER);
   }
-  for (let s = Math.floor((sim.s - 6) / 17) * 17; s < sim.s + VIEW.look; s += 17) {
-    const ds = s - sim.s;
+  for (let s = Math.floor((cam - 6) / 17) * 17; s < cam + VIEW.look; s += 17) {
+    const ds = s - cam;
     const a = project(ds, -0.9);
     const b = project(ds + 1.4, 0.4);
     ctx.strokeStyle = "rgba(28,22,30,0.35)";
@@ -404,8 +424,8 @@ function drawWorld(ctx, sim, boil, motion) {
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
   }
-  for (let s = Math.floor((sim.s - 4) / 36) * 36; s < sim.s + VIEW.look; s += 36) {
-    const spot = project(s - sim.s, 0.55);
+  for (let s = Math.floor((cam - 4) / 36) * 36; s < cam + VIEW.look; s += 36) {
+    const spot = project(s - cam, 0.55);
     if (spot.y < 50 || spot.y > 880) continue;
     ctx.beginPath();
     ctx.ellipse(spot.x, spot.y, 16 * spot.scale, 8 * spot.scale, 0, 0, Math.PI * 2);
@@ -416,26 +436,27 @@ function drawWorld(ctx, sim, boil, motion) {
   }
 
   const props = [];
-  for (let s = Math.floor((sim.s - 8) / 14) * 14; s < sim.s + VIEW.look; s += 14) {
+  for (let s = Math.floor((cam - 8) / 14) * 14; s < cam + VIEW.look; s += 14) {
     const n = Math.round(s / 14);
     for (const side of [-1, 1]) {
-      props.push({ ds: s - sim.s, xm: side * 4.55, n, side, band: districtAt(s), kind: "prop" });
+      props.push({ ds: s - cam, xm: side * 4.55, n, side, band: districtAt(s), kind: "prop" });
     }
   }
   for (const h of sim.hazards) {
-    const dist = h.s - sim.s;
+    const placed = actorAt.get(h.id);
+    const dist = placed.dist;
     if (h.resolved && dist < -10) continue;
     if (dist < VIEW.near || dist > VIEW.look) continue;
-    props.push({ ds: dist, xm: hazardWorldX(h, sim), kind: "hazard", h });
+    props.push({ ds: dist, xm: placed.hx, kind: "hazard", h, placed });
   }
   props.sort((a, b) => b.ds - a.ds);
   for (const item of props) {
     if (item.kind === "prop") drawProp(ctx, item, boil);
-    else drawHazard(ctx, sim, item.h, boil);
+    else drawHazard(ctx, sim, item.h, boil, item.placed);
   }
 
   for (const skid of sim.skids || []) {
-    const spot = project(skid.s - sim.s, skid.x);
+    const spot = project(skid.s - cam, skid.x);
     if (spot.y < 40 || spot.y > 880) continue;
     ctx.strokeStyle = "rgba(28,22,30,0.45)";
     ctx.lineWidth = 5 * spot.scale;
@@ -448,7 +469,7 @@ function drawWorld(ctx, sim, boil, motion) {
   }
 
   if (motion && sim.v > 11) {
-    const shift = (sim.s * 28) % 70;
+    const shift = (cam * 28) % 70;
     ctx.strokeStyle = "rgba(28,22,30,0.22)";
     ctx.lineWidth = 3;
     for (let i = 0; i < 3; i++) {
@@ -461,7 +482,7 @@ function drawWorld(ctx, sim, boil, motion) {
       ctx.stroke();
     }
   }
-  drawCar(ctx, sim, boil);
+  drawCar(ctx, sim, boil, scene.pose);
   ctx.restore();
   roundRect(ctx, box.x, box.y, box.w, box.h, 8);
   ink(ctx, 8);
@@ -658,10 +679,10 @@ function drawTree(ctx, x, y, sc, boil, seed) {
   ctx.restore();
 }
 
-function drawHazard(ctx, sim, h, boil) {
-  const dist = h.s - sim.s;
-  const hx = hazardWorldX(h, sim);
-  const spot = project(dist, hx);
+function drawHazard(ctx, sim, h, boil, placed) {
+  const dist = placed ? placed.dist : h.s - sim.s;
+  const hx = placed ? placed.hx : hazardWorldX(h, sim);
+  const spot = placed ? placed.spot : project(dist, hx);
   if (spot.y < -40 || spot.y > 940) return;
   const sc = Math.max(0.62, Math.min(1.45, spot.scale * 1.55));
   const hop = h.hopped ? -22 * sc : 0;
@@ -857,13 +878,13 @@ function drawNpc(ctx, x, y, sc, h, dist, boil) {
   ctx.restore();
 }
 
-function drawCar(ctx, sim, boil) {
-  const bumper = project(CFG.carHalfFront, sim.x);
+function drawCar(ctx, sim, boil, pose) {
+  const bumper = project(CFG.carHalfFront, pose ? pose.x : sim.x);
   const origin = carDrawOrigin(bumper.x, bumper.y, sim.brakeInput, sim.crashT);
-  drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil);
+  drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil, pose ? pose.s : sim.s);
 }
 
-function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0) {
+function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0, travelS = null) {
   ctx.save();
   ctx.translate(x, y);
   const live = sim || { s: 0, cargoType: null, cargo: 100, body: 100, t: 0, cargoFlash: 0, nearT: 0, crashT: 0, lastSelfBrake: 0 };
@@ -896,7 +917,7 @@ function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0) {
   ctx.fillRect(12, 32, 16, 10);
   // Distance turns the wheels. The 110 ms boil used to add half a radian
   // even while the title car was standing still.
-  const spin = live.s * 2.6;
+  const spin = (travelS ?? live.s) * 2.6;
   drawWheel(ctx, -28, -30, spin);
   drawWheel(ctx, 28, -30, spin);
   drawWheel(ctx, -28, 26, spin);

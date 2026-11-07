@@ -1,5 +1,5 @@
 import { grade } from "./physics.js";
-import { createSim, stepSim } from "./sim.js";
+import { createSim, snapRenderPose, stepSim } from "./sim.js";
 
 /**
  * Countdown, pause and the single brake pointer live outside the integrator
@@ -45,6 +45,7 @@ export function pauseSession(session, reason = "pause") {
   session.pauseReason = reason;
   session.armBrake = true;
   clearControls(session);
+  snapRenderPose(session.sim);
 }
 
 export function resumeSession(session) {
@@ -52,6 +53,7 @@ export function resumeSession(session) {
   session.pauseReason = null;
   session.phase = session.countdownAcc >= 3 ? "drive" : "countdown";
   clearControls(session);
+  snapRenderPose(session.sim);
 }
 
 export function restartSession(session) {
@@ -69,6 +71,7 @@ export function restartSession(session) {
   session.armBrake = true;
   clearControls(session);
   if (session.sim.v < 1) session.sim.v = session.mission.roll ?? 10;
+  snapRenderPose(session.sim);
 }
 
 export function onBlur(session) {
@@ -106,6 +109,7 @@ export function sessionStep(session, dt) {
       session.phase = "drive";
       session.countdown = 0;
       if (session.sim.v < 1) session.sim.v = session.mission.roll ?? 10;
+      snapRenderPose(session.sim);
       return;
     }
     session.countdown = Math.ceil(3 - session.countdownAcc);
@@ -117,5 +121,6 @@ export function sessionStep(session, dt) {
     session.phase = "result";
     session.result = grade(session.sim);
     clearControls(session);
+    snapRenderPose(session.sim);
   }
 }

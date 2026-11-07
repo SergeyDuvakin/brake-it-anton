@@ -10,7 +10,7 @@ import { bumperFootGap, render } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
-import { createSim, nextHazard } from "./sim.js";
+import { createSim, nextHazard, renderAlpha, renderPose } from "./sim.js";
 import {
   createSession,
   keyDown,
@@ -50,6 +50,7 @@ let lastNear = 0;
 let wasDown = false;
 let last = performance.now();
 let acc = 0;
+let presentedAlpha = 1;
 
 const preview = createSim(getMission("lesson1"), 11);
 preview.s = 30;
@@ -242,6 +243,8 @@ function frame(now) {
   last = now;
   acc = drained.acc;
   for (let step = 0; step < drained.steps; step += 1) tick(1 / 60);
+  const driving = screen === "play" && session?.phase === "drive";
+  presentedAlpha = driving ? renderAlpha(acc, 1 / 60) : 1;
   const drawn = render(ctx, {
     screen,
     session,
@@ -254,6 +257,7 @@ function frame(now) {
     missions: LESSONS,
     selected,
     pose: null,
+    alpha: presentedAlpha,
   });
   hotspots = drawn.spots;
   labels = drawn.labels;
@@ -423,6 +427,20 @@ window.__anton = {
   },
   getTimeScale() {
     return timeScale;
+  },
+  getPresented() {
+    if (!debug || !session) return null;
+    const pose = renderPose(session.sim, presentedAlpha);
+    return {
+      alpha: presentedAlpha,
+      phase: session.phase,
+      s: session.sim.s,
+      prevS: session.sim.prevS,
+      x: session.sim.x,
+      prevX: session.sim.prevX,
+      poseS: pose.s,
+      poseX: pose.x,
+    };
   },
   debugStart(id) {
     if (!debug) return;

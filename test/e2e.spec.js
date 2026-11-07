@@ -756,6 +756,122 @@ test("normal speed: early brake leaves a visible gap on desktop and on 844×390"
   await captureEarlyStop(page, shot("after-pedestrian-gap-844"));
 });
 
+test("production draw interpolates the road between sim steps", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto(gameURL("debug=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive" && window.__anton.getState().v > 4);
+  // Half rate leaves a remainder between 1/60 steps, so the live frame pump
+  // has to draw inside the step. A locked 60 Hz clock often lands on the endpoint.
+  await page.evaluate(() => window.__anton.setTimeScale(0.5));
+  const live = [];
+  const started = Date.now();
+  while (Date.now() - started < 700) {
+    live.push(await page.evaluate(() => window.__anton.getPresented()));
+    await page.waitForTimeout(16);
+  }
+  await page.evaluate(() => window.__anton.setTimeScale(1));
+  const driving = live.filter((sample) => sample && sample.phase === "drive" && sample.s > sample.prevS + 1e-4);
+  expect(driving.length).toBeGreaterThan(5);
+  for (const sample of driving) {
+    const lo = Math.min(sample.prevS, sample.s);
+    const hi = Math.max(sample.prevS, sample.s);
+    expect(sample.alpha).toBeGreaterThanOrEqual(0);
+    expect(sample.alpha).toBeLessThanOrEqual(1);
+    expect(sample.poseS).toBeGreaterThanOrEqual(lo - 1e-6);
+    expect(sample.poseS).toBeLessThanOrEqual(hi + 1e-6);
+  }
+  const fractional = driving.filter((sample) => sample.alpha > 0.05 && sample.alpha < 0.95);
+  expect(fractional.length).toBeGreaterThan(0);
+
+  const drawn = await page.evaluate(async () => {
+    const { render, placedScene } = await import("./js/draw.js");
+    const { createSim, stepSim } = await import("./js/sim.js");
+    const { getMission, LESSONS } = await import("./js/missions.js");
+    const { freshSave } = await import("./js/storage.js");
+    const mission = getMission("lesson1");
+    const sim = createSim(mission, 11);
+    for (let i = 0; i < 45; i += 1) stepSim(sim, 1 / 60, { held: false });
+    const before = { s: sim.s, collisions: sim.stats.collisions, events: sim.events.length };
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 900;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const session = {
+      sim,
+      phase: "drive",
+      mission,
+      countdown: 0,
+      keysDown: new Set(),
+      brakeHeld: false,
+      result: null,
+    };
+    const save = freshSave();
+    const state = (alpha) => ({
+      screen: "play",
+      session,
+      save,
+      now: 1000,
+      hint: false,
+      debug: false,
+      notice: null,
+      preview: null,
+      missions: LESSONS,
+      selected: "lesson1",
+      pose: null,
+      alpha,
+    });
+    const images = {};
+    const samples = {};
+    let spots = null;
+    for (const alpha of [0, 0.5, 1]) {
+      const frame = render(ctx, state(alpha));
+      const next = JSON.stringify(frame.spots);
+      if (spots === null) spots = next;
+      else if (spots !== next) spots = "moved";
+      const data = ctx.getImageData(24, 200, 1010, 650).data;
+      let hash = 0;
+      for (let i = 0; i < data.length; i += 64) hash = (hash * 33 + data[i] + data[i + 1] * 3 + data[i + 2] * 7) >>> 0;
+      samples[alpha] = hash;
+      images[String(alpha)] = canvas.toDataURL("image/png");
+    }
+    const scene = [0, 0.5, 1].map((alpha) => placedScene(sim, alpha));
+    const ped = scene.map((item) => item.actors.find((actor) => actor.id === "ped"));
+    return {
+      before,
+      after: { s: sim.s, collisions: sim.stats.collisions, events: sim.events.length },
+      samples,
+      spots,
+      dist: ped.map((actor) => actor.dist),
+      cam: scene.map((item) => item.pose.s),
+      images,
+    };
+  });
+  expect(drawn.after).toEqual(drawn.before);
+  expect(drawn.spots).not.toBe("moved");
+  expect(drawn.samples["0.5"]).not.toBe(drawn.samples["0"]);
+  expect(drawn.samples["1"]).not.toBe(drawn.samples["0.5"]);
+  expect(drawn.dist[1]).toBeCloseTo((drawn.dist[0] + drawn.dist[2]) / 2, 6);
+  expect(drawn.cam[1]).toBeGreaterThan(drawn.cam[0]);
+  expect(drawn.cam[1]).toBeLessThan(drawn.cam[2]);
+  fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
+  for (const alpha of ["0", "0.5", "1"]) {
+    const png = Buffer.from(drawn.images[alpha].split(",")[1], "base64");
+    fs.writeFileSync(`/opt/cursor/artifacts/interp-alpha-${alpha}.png`, png);
+  }
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => {
+    const presented = window.__anton.getPresented();
+    return presented
+      && presented.phase === "pause"
+      && presented.alpha === 1
+      && presented.prevS === presented.s
+      && presented.poseS === presented.s;
+  });
+  expect(errors).toEqual([]);
+});
+
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto(gameURL("e2e=1"));
