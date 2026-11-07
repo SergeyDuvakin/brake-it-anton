@@ -18,6 +18,8 @@ import {
   onBlur,
   onVisibility,
   pauseSession,
+  pointerDown,
+  releasePointer,
   restartSession,
   resumeSession,
   sessionStep,
@@ -205,6 +207,8 @@ function tick(dt) {
   if (autopilot && debug && session.phase === "drive") {
     const policy = POLICIES[autopilot];
     if (policy) session.brakeHeld = !!policy(session.sim);
+    const attention = session.sim.attention;
+    if (attention === "phone" || attention === "drowsy" || attention === "asleep") session.tapQueued = true;
   }
   const before = session.phase;
   sessionStep(session, dt);
@@ -280,24 +284,21 @@ canvas.addEventListener("pointerdown", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
   audio.unlock();
   const id = hit(eventPoint(event));
-  if (id === "pedal" && session?.phase === "drive" && (session.pointerId === null || session.pointerId === undefined)) {
-    session.pointerId = event.pointerId;
-    session.brakeHeld = true;
-    canvas.setPointerCapture?.(event.pointerId);
+  const action = pointerDown(session, id, event.pointerId);
+  if (action === "brake" || action === "wake") {
+    try {
+      canvas.setPointerCapture?.(event.pointerId);
+    } catch {
+      /* A synthetic pointer has no capture target. The id is still tracked. */
+    }
     return;
   }
-  if (id && id !== "pedal") activate(id);
+  if (id && id !== "pedal" && id !== "anton") activate(id);
 });
 
-canvas.addEventListener("pointerup", (event) => releasePointer(event.pointerId));
-canvas.addEventListener("pointercancel", (event) => releasePointer(event.pointerId));
-canvas.addEventListener("lostpointercapture", (event) => releasePointer(event.pointerId));
-
-function releasePointer(pointerId) {
-  if (!session || session.pointerId !== pointerId) return;
-  session.pointerId = null;
-  session.brakeHeld = false;
-}
+canvas.addEventListener("pointerup", (event) => releasePointer(session, event.pointerId));
+canvas.addEventListener("pointercancel", (event) => releasePointer(session, event.pointerId));
+canvas.addEventListener("lostpointercapture", (event) => releasePointer(session, event.pointerId));
 
 window.addEventListener("keydown", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
@@ -405,6 +406,8 @@ window.__anton = {
       hazard: hazardState(),
       stopGap: gapState(),
       pose: session ? expressionId(session.sim) : expressionId(preview),
+      attention: session?.sim.attention ?? null,
+      pokes: session?.sim.stats.attentionPokes ?? 0,
     };
   },
   hotspots() {

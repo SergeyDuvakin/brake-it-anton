@@ -100,6 +100,7 @@ function preening(sim) {
 }
 
 export function expressionId(sim) {
+  if (sim.attention && sim.attention !== "road") return sim.attention;
   if (sim.beltT > 0 || sim.cargoFlash > 0) return "belted";
   if (sim.outburstT > 0 || sim.patience >= 100) return "furious";
   if (sim.intent === "lunge") return "angry";

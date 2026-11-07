@@ -34,7 +34,7 @@ import {
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset } from "../js/gait.js";
-import { actorTravel, contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { actorTravel, contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -42,6 +42,8 @@ import {
   onBlur,
   onVisibility,
   pauseSession,
+  pointerDown,
+  releasePointer,
   restartSession,
   resumeSession,
   sessionStep,
@@ -453,7 +455,8 @@ function driveTo(mission, policy, limitS, maxSec = 900) {
   let stuck = 0;
   let prev = sim.s;
   for (let i = 0; i < 60 * maxSec && sim.s < limitS && sim.body > 0 && sim.cargo > 0; i++) {
-    stepSim(sim, dt, { held: !!policy(sim) });
+    const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
+    stepSim(sim, dt, { held: !!policy(sim), tap: needsTap });
     if (sim.v < 0.05 && sim.s < prev + 0.002) stuck += 1;
     else stuck = 0;
     prev = sim.s;
@@ -832,7 +835,8 @@ test("early brake stops short of the pedestrian, then the lane clears", () => {
   let sawStop = false;
   for (let i = 0; i < 16000 && !sim.done; i++) {
     const ped = sim.hazards.find((h) => h.id === "ped");
-    stepSim(sim, dt, { held: brakeOpen(sim) });
+    const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
+    stepSim(sim, dt, { held: brakeOpen(sim), tap: needsTap });
     if (!ped.resolved && ped.crossT > 0.25 && ped.crossT < ped.crossDur * 0.7) {
       if (sim.v < 0.35) sawStop = true;
       if (Math.abs(sim.x - hazardWorldX(ped, sim)) < CFG.carHalfW + ped.halfW) {
@@ -962,7 +966,8 @@ test("brake timing: early stop leaves a gap, late speed is a hit, crawl is not",
   let sawLane = false;
   for (let i = 0; i < 8000 && !early.done; i++) {
     const ped = early.hazards.find((h) => h.id === "ped");
-    stepSim(early, dt, { held: brakeOpen(early) });
+    const needsTap = early.attention === "phone" || early.attention === "drowsy" || early.attention === "asleep";
+    stepSim(early, dt, { held: brakeOpen(early), tap: needsTap });
     if (!ped.resolved && ped.crossT > 0.4 && ped.crossT < ped.crossDur * 0.7) {
       sawLane = true;
       if (Math.abs(early.x - hazardWorldX(ped, early)) < CFG.carHalfW + ped.halfW + 0.2) {
@@ -1578,6 +1583,139 @@ test("pedestrian and dog feet follow distance, and a stride boundary does not fl
   const reset = session.sim.hazards.find((h) => h.id === "ped");
   assert.equal(actorTravel(reset, session.sim), 0);
   assert.equal(gaitOffset(actorTravel(reset, session.sim), "pedestrian"), -8);
+});
+
+test("one tap wakes Anton, the brake does not, and a late hole stays his", () => {
+  const phone = createSim(getMission("lesson1"), 11);
+  phone.s = 92;
+  phone.v = 12;
+  stepSim(phone, dt, { held: false, lockSpeed: true });
+  assert.equal(phone.attention, "phone");
+  assert.equal(pokeAttention(phone), true);
+  assert.equal(phone.attention, "stow");
+  assert.equal(pokeAttention(phone), false);
+  assert.equal(phone.stats.attentionPokes, 1);
+  frames(phone, Math.ceil(0.72 / dt), false, { lockSpeed: true });
+  assert.equal(phone.attention, "earnest");
+  const braked = createSim(getMission("lesson1"), 11);
+  braked.s = 100;
+  braked.v = 12;
+  braked.attention = "phone";
+  braked.phonePlayed = true;
+  stepSim(braked, dt, { held: true, lockSpeed: true });
+  assert.equal(braked.attention, "phone");
+  assert.equal(braked.stats.attentionPokes, 0);
+  assert.ok(braked.brakeInput > 0);
+
+  const lesson = getMission("lesson2");
+  assert.equal(lesson.sleepDrowsyAt, 390);
+  assert.equal(lesson.sleepAt, 430);
+  assert.equal(getMission("lesson3").phoneAt, undefined);
+  assert.equal(getMission("lesson4").sleepDrowsyAt, undefined);
+  const drowsy = createSim(lesson, 22);
+  drowsy.s = 390;
+  drowsy.v = 12;
+  stepSim(drowsy, dt, { held: false, lockSpeed: true });
+  assert.equal(drowsy.attention, "drowsy");
+  const hole = drowsy.hazards.find((h) => h.id === "nap");
+  hole.s = drowsy.s + 30;
+  stepSim(drowsy, dt, { held: false, lockSpeed: true });
+  assert.notEqual(hole.committed, "asleep");
+  assert.equal(pokeAttention(drowsy), true);
+  assert.equal(drowsy.attention, "wake");
+
+  const asleep = createSim(lesson, 22);
+  asleep.s = 430;
+  asleep.v = 10;
+  asleep.attention = "asleep";
+  asleep.sleepPlayed = true;
+  const nap = asleep.hazards.find((h) => h.id === "nap");
+  nap.s = asleep.s + 10;
+  stepSim(asleep, dt, { held: true, lockSpeed: true });
+  assert.equal(nap.committed, "asleep");
+  assert.equal(asleep.attention, "asleep");
+  pokeAttention(asleep);
+  stepSim(asleep, dt, { held: true, lockSpeed: true });
+  assert.equal(nap.committed, "asleep");
+  assert.ok(Math.abs(asleep.x) <= 3.35);
+
+  const early = createSim(lesson, 22);
+  early.s = 400;
+  early.v = 10;
+  early.attention = "asleep";
+  early.sleepPlayed = true;
+  const far = early.hazards.find((h) => h.id === "nap");
+  far.s = early.s + 20;
+  stepSim(early, dt, { held: false, lockSpeed: true });
+  assert.equal(far.committed, "asleep");
+  pokeAttention(early);
+  stepSim(early, dt, { held: false, lockSpeed: true });
+  assert.equal(far.committed, "avoid");
+
+  const missed = runSim(getMission("lesson1"), policyCareful, { maxTime: 120, attend: false });
+  assert.ok(missed.stats.collisions >= 1, dump(missed));
+  const watched = runSim(getMission("lesson1"), policyCareful, { maxTime: 120 });
+  assert.equal(watched.stats.collisions, 0, dump(watched));
+  assert.equal(watched.success, true, dump(watched));
+
+  function script(step) {
+    const sim = createSim(getMission("lesson1"), 11);
+    sim.s = 80;
+    sim.v = 12.5;
+    let acc = 0;
+    let taps = 0;
+    while (sim.s < 110 && !sim.done) {
+      const drained = drainFrame(acc, step, 1);
+      acc = drained.acc;
+      for (let n = 0; n < drained.steps; n += 1) {
+        const tap = sim.attention === "phone" && taps === 0;
+        if (tap) taps += 1;
+        stepSim(sim, 1 / 60, { held: false, lockSpeed: true, tap });
+      }
+    }
+    return { s: sim.s, attention: sim.attention, pokes: sim.stats.attentionPokes, collisions: sim.stats.collisions };
+  }
+  const slow = script(1 / 30);
+  const fast = script(1 / 120);
+  assert.equal(slow.pokes, 1);
+  assert.equal(fast.pokes, 1);
+  assert.equal(slow.attention, fast.attention);
+  assert.equal(slow.collisions, fast.collisions);
+
+  const session = createSession(getMission("lesson1"), { seed: 11 });
+  session.phase = "drive";
+  session.countdownAcc = 3;
+  assert.equal(pointerDown(session, "screen", 4), "ignore");
+  assert.equal(pointerDown(session, "pedal", 1), "brake");
+  assert.equal(pointerDown(session, "anton", 2), "wake");
+  assert.equal(session.brakeHeld, true);
+  assert.equal(session.wakeId, 2);
+  releasePointer(session, 2);
+  assert.equal(session.brakeHeld, true);
+  assert.equal(session.wakeId, null);
+  assert.equal(pointerDown(session, "anton", 3), "wake");
+  releasePointer(session, 9);
+  assert.equal(session.pointerId, 1);
+  assert.equal(session.wakeId, 3);
+  releasePointer(session, 3);
+  releasePointer(session, 1);
+  assert.equal(session.brakeHeld, false);
+  assert.equal(session.wakeId, null);
+  session.phase = "drive";
+  pointerDown(session, "anton", 5);
+  pointerDown(session, "pedal", 6);
+  assert.equal(session.wakeId, 5);
+  assert.equal(session.pointerId, 6);
+  releasePointer(session, 6);
+  assert.equal(session.wakeId, 5);
+  assert.equal(session.brakeHeld, false);
+  onBlur(session);
+  assert.equal(session.pointerId, null);
+  assert.equal(session.wakeId, null);
+  assert.equal(session.tapQueued, false);
+  restartSession(session);
+  assert.equal(session.sim.attention, "road");
+  assert.equal(session.sim.stats.attentionPokes, 0);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

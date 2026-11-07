@@ -291,7 +291,10 @@ function drawPlay(ctx, state) {
   drawPatience(ctx, sim, paused);
   drawPedal(ctx, paused ? 0 : visual, paused);
   drawHud(ctx, state, sim);
-  if (session.phase === "drive" && !paused) spots.push({ id: "pedal", x: 1080, y: 730, w: 480, h: 150 });
+  if (session.phase === "drive" && !paused) {
+    spots.push({ id: "anton", x: 1088, y: 36, w: 464, h: 560 });
+    spots.push({ id: "pedal", x: 1080, y: 730, w: 480, h: 150 });
+  }
   if (session.phase === "countdown") {
     roundRect(ctx, 44, 124, 120, 84, 14);
     ctx.fillStyle = P.PAPER;
@@ -302,7 +305,15 @@ function drawPlay(ctx, state) {
   }
   if (session.phase === "pause") drawPause(ctx, state);
   if (session.phase === "result") drawResult(ctx, state);
-  if (state.hint && session.phase === "drive") {
+  const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
+  if (session.phase === "drive" && needsTap) {
+    roundRect(ctx, 1092, 596, 448, 40, 12);
+    ctx.fillStyle = P.YEL;
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    paintCenter(ctx, sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F", 1092, 596, 448, 40, 18, P.INK, false, true);
+  } else if (state.hint && session.phase === "drive") {
     roundRect(ctx, 1092, 596, 448, 40, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
@@ -1069,7 +1080,9 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   ctx.moveTo(0, -14);
   ctx.lineTo(0, 14);
   ctx.stroke();
-  if (!shift.hairHand) {
+  if (shift.phoneHand || shift.limp) {
+    /* The wheel is empty while the phone or sleep has his hands. */
+  } else if (!shift.hairHand) {
     ctx.fillStyle = P.SKIN;
     ctx.beginPath();
     ctx.arc(-36, 2, 13, 0, Math.PI * 2);
@@ -1102,6 +1115,43 @@ function drawAnton(ctx, exp, boil, lean, sim) {
     ctx.stroke();
   }
 
+  if (shift.limp) {
+    ctx.strokeStyle = P.INK;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(-48, 108);
+    ctx.quadraticCurveTo(-88, 170, -70, 214);
+    ctx.moveTo(48, 112);
+    ctx.quadraticCurveTo(92, 176, 74, 218);
+    ctx.stroke();
+    ctx.fillStyle = P.SKIN;
+    ctx.beginPath();
+    ctx.arc(-70, 222, 13, 0, Math.PI * 2);
+    ctx.arc(74, 226, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+  }
+  if (shift.phoneHand) {
+    const u = exp === "stow" ? Math.max(0, Math.min(1, (sim.stowT || 0) / 0.72)) : 0;
+    ctx.strokeStyle = P.INK;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(40, 112);
+    ctx.quadraticCurveTo(96, 70 + u * 30, 52 + u * 28, (shift.headDrop || 0) + 24 + u * u * 120);
+    ctx.moveTo(-62, 118);
+    ctx.quadraticCurveTo(-96, 168, -74, 206);
+    ctx.stroke();
+    ctx.fillStyle = P.SKIN;
+    ctx.beginPath();
+    ctx.arc(-74, 214, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+  }
+
+  ctx.save();
+  ctx.translate(0, shift.headDrop || 0);
   ctx.beginPath();
   ctx.ellipse(shift.head, 0, 112, 100, 0, 0, Math.PI * 2);
   ctx.fillStyle = P.SKIN;
@@ -1127,8 +1177,11 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   ctx.stroke();
 
   const look = lookFor(exp);
-  eye(ctx, -32 + shift.head, -10, exp === "belted" ? 30 : 26, exp === "belted" ? 26 : 22, 8, look.left);
-  eye(ctx, 30 + shift.head, 8, 16, 14, 5, look.right, false);
+  const wide = exp === "stow" || exp === "earnest" || exp === "wake";
+  const heavy = exp === "drowsy";
+  const shut = exp === "asleep";
+  eye(ctx, -32 + shift.head, -10, heavy ? 26 : wide ? 32 : exp === "belted" ? 30 : 26, heavy ? 8 : wide ? 28 : exp === "belted" ? 26 : 22, wide ? 9 : 8, look.left, shut);
+  eye(ctx, 30 + shift.head, 8, heavy ? 16 : wide ? 20 : 16, heavy ? 5 : wide ? 18 : 14, wide ? 6 : 5, look.right, shut);
   brows(ctx, exp, shift.head);
   mouth(ctx, exp, shift.head);
 
@@ -1152,9 +1205,35 @@ function drawAnton(ctx, exp, boil, lean, sim) {
     ctx.stroke();
   }
   ctx.restore();
+  if (shift.phoneHand) {
+    const u = exp === "stow" ? Math.max(0, Math.min(1, (sim.stowT || 0) / 0.72)) : 0;
+    drawHandset(ctx, 50 + u * 34, (shift.headDrop || 0) + 18 + u * u * 128, -0.4 + u * 2.2);
+  }
+  ctx.restore();
+}
+
+function drawHandset(ctx, x, y, rot) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  roundRect(ctx, -28, -46, 56, 92, 8);
+  ctx.fillStyle = P.INK;
+  ctx.fill();
+  ink(ctx, 5);
+  ctx.stroke();
+  roundRect(ctx, -20, -34, 40, 64, 4);
+  ctx.fillStyle = P.GLASS;
+  ctx.fill();
+  ctx.restore();
 }
 
 function poseShift(exp) {
+  if (exp === "phone") return { y: 16, rot: 0.12, hairHand: false, phoneHand: true, belt: 5, head: 2, notes: false, headDrop: 30 };
+  if (exp === "drowsy") return { y: 20, rot: 0.18, hairHand: false, slack: true, belt: 5, head: 8, notes: false, headDrop: 16 };
+  if (exp === "asleep") return { y: 34, rot: 0.3, hairHand: false, limp: true, belt: 4, head: 12, notes: false, headDrop: 32 };
+  if (exp === "wake") return { y: -14, rot: -0.16, hairHand: false, grip: true, belt: 7, head: -6, notes: false, headDrop: 0 };
+  if (exp === "stow") return { y: 0, rot: -0.04, hairHand: false, phoneHand: true, belt: 6, head: -2, notes: false, headDrop: 6 };
+  if (exp === "earnest") return { y: -18, rot: -0.07, hairHand: false, grip: true, belt: 6, head: 0, notes: false, headDrop: 0 };
   if (exp === "preen") return { y: -10, rot: -0.06, hairHand: true, belt: 5, head: 6, notes: true };
   if (exp === "focused") return { y: 12, rot: 0.05, hairHand: false, belt: 5, head: 0, notes: false };
   if (exp === "belted") return { y: 26, rot: 0.1, hairHand: false, belt: 10, head: -4, notes: false };
@@ -1166,6 +1245,12 @@ function poseShift(exp) {
 }
 
 function lookFor(exp) {
+  if (exp === "phone") return { left: { x: 0, y: 9 }, right: { x: 0, y: 6 } };
+  if (exp === "drowsy") return { left: { x: 0, y: 4 }, right: { x: 0, y: 3 } };
+  if (exp === "asleep") return { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } };
+  if (exp === "wake") return { left: { x: 0, y: -5 }, right: { x: 0, y: -3 } };
+  if (exp === "stow") return { left: { x: -1, y: -4 }, right: { x: 0, y: -3 } };
+  if (exp === "earnest") return { left: { x: 1, y: 3 }, right: { x: 0, y: 2 } };
   if (exp === "focused") return { left: { x: 1, y: 7 }, right: { x: 1, y: 4 } };
   if (exp === "preen") return { left: { x: -2, y: -6 }, right: { x: 0, y: -4 } };
   if (exp === "belted") return { left: { x: 0, y: -8 }, right: { x: 1, y: -5 } };
@@ -1204,6 +1289,31 @@ function brows(ctx, exp, hx) {
     ctx.quadraticCurveTo(-30 + x, -60, -8 + x, -46);
     ctx.moveTo(14 + x, -24);
     ctx.quadraticCurveTo(32 + x, -34, 50 + x, -20);
+  } else if (exp === "drowsy" || exp === "asleep") {
+    ctx.moveTo(-58 + x, -28);
+    ctx.lineTo(-8 + x, -34);
+    ctx.moveTo(14 + x, -10);
+    ctx.lineTo(50 + x, -16);
+  } else if (exp === "wake") {
+    ctx.moveTo(-62 + x, -58);
+    ctx.lineTo(-8 + x, -36);
+    ctx.moveTo(12 + x, -30);
+    ctx.lineTo(54 + x, -48);
+  } else if (exp === "phone") {
+    ctx.moveTo(-58 + x, -30);
+    ctx.lineTo(-8 + x, -36);
+    ctx.moveTo(14 + x, -12);
+    ctx.lineTo(50 + x, -16);
+  } else if (exp === "stow") {
+    ctx.moveTo(-60 + x, -56);
+    ctx.lineTo(-8 + x, -40);
+    ctx.moveTo(12 + x, -34);
+    ctx.lineTo(52 + x, -46);
+  } else if (exp === "earnest") {
+    ctx.moveTo(-58 + x, -34);
+    ctx.lineTo(-8 + x, -48);
+    ctx.moveTo(14 + x, -22);
+    ctx.lineTo(52 + x, -34);
   } else if (exp === "focused") {
     ctx.moveTo(-58 + x, -36);
     ctx.lineTo(-8 + x, -44);
@@ -1244,7 +1354,21 @@ function mouth(ctx, exp, hx) {
     ctx.stroke();
     return;
   }
-  if (exp === "annoyed") {
+  if (exp === "drowsy") {
+    ctx.moveTo(-16 + x, 56);
+    ctx.quadraticCurveTo(4 + x, 62, 22 + x, 56);
+  } else if (exp === "asleep") {
+    ctx.ellipse(4 + x, 60, 8, 10, 0, 0, Math.PI * 2);
+  } else if (exp === "wake") {
+    ctx.arc(2 + x, 50, 14, 0, Math.PI * 2);
+  } else if (exp === "phone") {
+    ctx.ellipse(4 + x, 58, 10, 7, 0, 0, Math.PI * 2);
+  } else if (exp === "stow") {
+    ctx.arc(2 + x, 54, 12, 0, Math.PI * 2);
+  } else if (exp === "earnest") {
+    ctx.moveTo(-22 + x, 50);
+    ctx.quadraticCurveTo(4 + x, 66, 26 + x, 48);
+  } else if (exp === "annoyed") {
     ctx.moveTo(-18 + x, 50);
     ctx.quadraticCurveTo(x, 42, 24 + x, 56);
   } else if (exp === "focused") {

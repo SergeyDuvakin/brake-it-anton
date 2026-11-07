@@ -516,6 +516,7 @@ async function driveWithPedal(page, decide, shots = {}) {
   );
   const pedal = await pedalPoint(page);
   let down = false;
+  let sawTap = false;
   let sawRescue = !shots.rescue;
   let sawBusy = !shots.busy;
   const started = Date.now();
@@ -527,6 +528,20 @@ async function driveWithPedal(page, decide, shots = {}) {
       expect(sawBusy).toBe(true);
       return state;
     }
+    const needsTap = state.attention === "phone" || state.attention === "drowsy" || state.attention === "asleep";
+    if (needsTap && !sawTap) {
+      await page.evaluate(() => {
+        const spot = window.__anton.hotspots().find((item) => item.id === "anton");
+        const rect = document.querySelector("canvas").getBoundingClientRect();
+        const x = rect.left + (spot.x + spot.w / 2) * (rect.width / 1600);
+        const y = rect.top + (spot.y + spot.h / 2) * (rect.height / 900);
+        const canvas = document.querySelector("canvas");
+        canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, clientX: x, clientY: y, bubbles: true }));
+        canvas.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: x, clientY: y, bubbles: true }));
+      });
+      sawTap = true;
+    }
+    if (!needsTap) sawTap = false;
     const want = state.phase === "drive" && decide(state);
     if (want && !down) {
       await page.mouse.move(pedal.x, pedal.y);
@@ -1030,6 +1045,123 @@ test("production draw walks people and dogs by distance", async ({ page }) => {
     "/opt/cursor/artifacts/gait-phases.png",
     Buffer.from(drawn.sheet.split(",")[1], "base64"),
   );
+});
+
+test("one tap and the brake are different fingers", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton);
+  const sheet = await page.evaluate(async () => {
+    const { render } = await import("./js/draw.js");
+    const { createSim } = await import("./js/sim.js");
+    const { freshSave } = await import("./js/storage.js");
+    const { getMission, LESSONS } = await import("./js/missions.js");
+    await document.fonts.ready;
+    const mission = getMission("lesson1");
+    const save = freshSave();
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 900;
+    const ctx = canvas.getContext("2d");
+    const poses = ["phone", "drowsy", "asleep", "earnest"];
+    const sheet = document.createElement("canvas");
+    sheet.width = 520 * 4;
+    sheet.height = 640;
+    const out = sheet.getContext("2d");
+    poses.forEach((attention, index) => {
+      const sim = createSim(mission, 11);
+      sim.attention = attention;
+      sim.stowT = attention === "stow" ? 0.4 : 0;
+      const session = {
+        sim,
+        phase: "drive",
+        mission,
+        countdown: 0,
+        keysDown: new Set(),
+        brakeHeld: false,
+        result: null,
+      };
+      render(ctx, {
+        screen: "play",
+        session,
+        save,
+        now: 0,
+        hint: false,
+        debug: false,
+        notice: null,
+        preview: null,
+        missions: LESSONS,
+        selected: "lesson1",
+        pose: null,
+        alpha: 1,
+      });
+      out.drawImage(canvas, 1056, 24, 520, 640, index * 520, 0, 520, 640);
+    });
+    return sheet.toDataURL("image/png");
+  });
+  fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
+  fs.writeFileSync("/opt/cursor/artifacts/attention-states.png", Buffer.from(sheet.split(",")[1], "base64"));
+
+  await page.evaluate(() => {
+    window.__anton.debugStart("lesson1");
+    window.__anton.setTimeScale(6);
+  });
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  const pedal = await pedalPoint(page);
+  let down = false;
+  const started = Date.now();
+  while (Date.now() - started < 20000) {
+    const state = await page.evaluate(() => window.__anton.getState());
+    if (state.attention === "phone") break;
+    const want = state.phase === "drive" && lessonBrake(state);
+    if (want && !down) {
+      await page.mouse.move(pedal.x, pedal.y);
+      await page.mouse.down();
+      down = true;
+    } else if (!want && down) {
+      await page.mouse.up();
+      down = false;
+    }
+    await page.waitForTimeout(30);
+  }
+  await page.evaluate(() => window.__anton.setTimeScale(0));
+  if (!down) {
+    await page.mouse.move(pedal.x, pedal.y);
+    await page.mouse.down();
+  }
+  await page.waitForFunction(() => window.__anton.getState().attention === "phone" && window.__anton.getState().held);
+  const anton = await page.evaluate(() => {
+    const spot = window.__anton.hotspots().find((item) => item.id === "anton");
+    const rect = document.querySelector("canvas").getBoundingClientRect();
+    return {
+      x: rect.left + (spot.x + spot.w / 2) * (rect.width / 1600),
+      y: rect.top + (spot.y + spot.h / 2) * (rect.height / 900),
+    };
+  });
+  await page.evaluate(({ x, y }) => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 2, clientX: x, clientY: y, bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2, clientX: x, clientY: y, bubbles: true }));
+  }, anton);
+  await page.evaluate(() => window.__anton.setTimeScale(1));
+  await page.waitForFunction(() => window.__anton.getState().attention !== "phone");
+  const after = await page.evaluate(() => window.__anton.getState());
+  expect(after.held).toBe(true);
+  expect(after.pokes).toBe(1);
+  await page.evaluate(({ x, y }) => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 3, clientX: x, clientY: y, bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", { pointerId: 3, clientX: x, clientY: y, bubbles: true }));
+  }, anton);
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => window.__anton.getState().pokes)).toBe(1);
+  expect(await page.evaluate(() => window.__anton.getState().held)).toBe(true);
+  await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }));
+  });
+  await page.waitForFunction(() => window.__anton.getState().held === false);
+  expect(errors).toEqual([]);
 });
 
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {
