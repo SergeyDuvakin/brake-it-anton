@@ -308,11 +308,16 @@ async function driveWithPedal(page, decide, shots = {}) {
   );
   const pedal = await pedalPoint(page);
   let down = false;
+  let sawPhone = false;
   let sawRescue = !shots.rescue;
   let sawBusy = !shots.busy;
   const started = Date.now();
   while (Date.now() - started < 90000) {
     const state = await page.evaluate(() => window.__anton.getState());
+    if (!sawPhone && state.attention === "phone") {
+      await page.keyboard.press("KeyF");
+      sawPhone = true;
+    }
     if (state.phase === "result") {
       if (down) await page.mouse.up();
       expect(sawRescue).toBe(true);
@@ -546,6 +551,59 @@ test("normal speed: early brake leaves a visible gap on desktop and on 844×390"
   await captureEarlyStop(page, shot("after-pedestrian-gap"));
   await page.setViewportSize({ width: 844, height: 390 });
   await captureEarlyStop(page, shot("after-pedestrian-gap-844"));
+});
+
+test("second finger taps Anton and the brake finger stays down", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await page.evaluate(() => window.__anton.setTimeScale(8));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  const pedal = await pedalPoint(page);
+  let down = false;
+  const started = Date.now();
+  while (Date.now() - started < 30000) {
+    const state = await page.evaluate(() => window.__anton.getState());
+    if (state.attention === "phone") break;
+    const want = state.hazard?.type === "pedestrian" && state.hazard.dist < 36 && state.v > 2.2;
+    if (want && !down) {
+      await page.mouse.move(pedal.x, pedal.y);
+      await page.mouse.down();
+      down = true;
+    } else if (!want && down) {
+      await page.mouse.up();
+      down = false;
+    }
+    await page.waitForTimeout(30);
+  }
+  if (!down) {
+    await page.mouse.move(pedal.x, pedal.y);
+    await page.mouse.down();
+    down = true;
+  }
+  await page.waitForFunction(() => window.__anton.getState().brake > 0.3);
+  const poked = await page.evaluate(() => {
+    const spot = window.__anton.hotspots().find((item) => item.id === "anton");
+    const canvas = document.querySelector("canvas");
+    const rect = canvas.getBoundingClientRect();
+    const x = rect.left + (spot.x + spot.w / 2) * (rect.width / 1600);
+    const y = rect.top + (spot.y + spot.h / 2) * (rect.height / 900);
+    canvas.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true, clientX: x, clientY: y, pointerId: 9, pointerType: "touch", button: 0, isPrimary: false,
+    }));
+    const mid = window.__anton.getState();
+    canvas.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true, clientX: x, clientY: y, pointerId: 9, pointerType: "touch", button: 0,
+    }));
+    return { mid, after: window.__anton.getState() };
+  });
+  expect(poked.mid.attention).toBe("stow");
+  expect(poked.mid.held).toBe(true);
+  expect(poked.after.held).toBe(true);
+  expect(poked.after.attention).toBe("stow");
+  await page.mouse.up();
 });
 
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {

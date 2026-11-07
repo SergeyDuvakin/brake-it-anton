@@ -1,5 +1,5 @@
 import { grade } from "./physics.js";
-import { createSim, stepSim } from "./sim.js";
+import { createSim, pokeAttention, stepSim } from "./sim.js";
 
 /**
  * Countdown, pause and the single brake pointer live outside the integrator
@@ -83,6 +83,11 @@ export function keyDown(session, code, opts = {}) {
   if (!session) return;
   if (code === "Escape") {
     if (session.phase === "drive" || session.phase === "countdown") pauseSession(session, "escape");
+    return;
+  }
+  if (code === "KeyF" && session.phase === "drive") {
+    if (opts.repeat) return;
+    pokeAttention(session.sim);
     return;
   }
   if (code === "Space" && session.phase === "drive") {
