@@ -351,6 +351,7 @@ function snapshotPose(sim) {
   sim.prevX = sim.x;
   for (const h of sim.hazards) {
     h.prevX = hazardWorldX(h, sim);
+    h.prevTravel = actorTravel(h, sim);
   }
 }
 
@@ -378,17 +379,64 @@ export function renderPose(sim, alpha = 1) {
   const prevS = sim.prevS ?? sim.s;
   const prevX = sim.prevX ?? sim.x;
   const hazardX = new Map();
+  const hazardTravel = new Map();
   for (const h of sim.hazards || []) {
     const now = hazardWorldX(h, sim);
     const prev = h.prevX ?? now;
     hazardX.set(h.id, prev + (now - prev) * t);
+    const nowTravel = actorTravel(h, sim);
+    const prevTravel = h.prevTravel ?? nowTravel;
+    hazardTravel.set(h.id, prevTravel + (nowTravel - prevTravel) * t);
   }
   return {
     s: prevS + (sim.s - prevS) * t,
     x: prevX + (sim.x - prevX) * t,
     alpha: t,
     hazardX,
+    hazardTravel,
   };
+}
+
+/**
+ * Metres this body has walked. Waiting, lingering and a finished dart stay put.
+ * The value depends on the pose, not on how many steps reached it.
+ */
+export function actorTravel(h, sim) {
+  if (!h) return 0;
+  if (h.type === "pedestrian") return pedestrianTravel(h);
+  if (h.type === "dog") return dogTravel(h, h.s - (sim?.s || 0));
+  return 0;
+}
+
+function pedestrianTravel(h) {
+  if (h.hopped || !(h.crossT >= 0)) return 0;
+  const dur = h.crossDur || 3.35;
+  const u = clamp(h.crossT / dur, 0, 1);
+  const dummy = { s: h.s - 10 };
+  const at = (uu) => hazardWorldX({ ...h, crossT: uu * dur, hopped: false }, dummy);
+  const side = at(0);
+  const lane = at(0.2);
+  const here = at(u);
+  if (u <= 0.16) return Math.abs(here - side);
+  const inbound = Math.abs(lane - side);
+  if (u <= 0.74) return inbound;
+  return inbound + Math.abs(here - lane);
+}
+
+function dogTravel(h, dist) {
+  if (dist >= 18) return 0;
+  const end = clamp(1 - Math.max(dist, 0) / 18, 0, 1);
+  const steps = 64;
+  const n = Math.max(1, Math.round(steps * end));
+  const at = (t) => hazardWorldX(h, { s: h.s - 18 * (1 - t) });
+  let prev = at(0);
+  let length = 0;
+  for (let i = 1; i <= n; i += 1) {
+    const x = at((end * i) / n);
+    length += Math.abs(x - prev);
+    prev = x;
+  }
+  return length;
 }
 
 function frontOf(s) {

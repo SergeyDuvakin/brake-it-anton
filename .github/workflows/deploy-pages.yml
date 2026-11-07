@@ -45,6 +45,7 @@ jobs:
           cp js/clock.js .pages-dist/js/clock.js
           cp js/config.js .pages-dist/js/config.js
           cp js/draw.js .pages-dist/js/draw.js
+          cp js/gait.js .pages-dist/js/gait.js
           cp js/game.js .pages-dist/js/game.js
           cp js/geom.js .pages-dist/js/geom.js
           cp js/missions.js .pages-dist/js/missions.js

@@ -872,6 +872,166 @@ test("production draw interpolates the road between sim steps", async ({ page })
   expect(errors).toEqual([]);
 });
 
+test("production draw walks people and dogs by distance", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto(gameURL("debug=1"));
+  await page.waitForFunction(() => window.__anton);
+  const drawn = await page.evaluate(async () => {
+    const { render, placedScene } = await import("./js/draw.js");
+    const { createSim } = await import("./js/sim.js");
+    const { gaitOffset } = await import("./js/gait.js");
+    const { freshSave } = await import("./js/storage.js");
+    const { LESSONS } = await import("./js/missions.js");
+    await document.fonts.ready;
+    const mission = {
+      id: "walk",
+      seed: 1,
+      cruise: 12,
+      length: 400,
+      cargo: null,
+      slippery: [],
+      hazards: [
+        { id: "ped", type: "pedestrian", s: 7.2, x: 0.2, halfW: 0.42, halfL: 0.55 },
+        { id: "dog", type: "dog", s: 24, x: -1.4, halfW: 0.35, halfL: 0.45 },
+      ],
+    };
+    const save = freshSave();
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 900;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    function paint(sim, now) {
+      const session = {
+        sim,
+        phase: "drive",
+        mission,
+        countdown: 0,
+        keysDown: new Set(),
+        brakeHeld: false,
+        result: null,
+      };
+      const before = sim.events.length;
+      render(ctx, {
+        screen: "play",
+        session,
+        save,
+        now,
+        hint: false,
+        debug: false,
+        notice: null,
+        preview: null,
+        missions: LESSONS,
+        selected: "walk",
+        pose: null,
+        alpha: 1,
+      });
+      return before === sim.events.length && sim.stats.collisions === 0;
+    }
+    function hash(rect) {
+      const data = ctx.getImageData(rect.x, rect.y, rect.w, rect.h).data;
+      let value = 0;
+      for (let i = 0; i < data.length; i += 16) value = (value * 33 + data[i] + data[i + 1] * 3) >>> 0;
+      return value;
+    }
+    function body(sim, id) {
+      const actor = placedScene(sim, 1).actors.find((item) => item.id === id);
+      const size = 150;
+      return {
+        travel: actor.travel,
+        step: gaitOffset(actor.travel, id === "dog" ? "dog" : "pedestrian", false),
+        x: Math.max(0, Math.min(1600 - size, Math.round(actor.spot.x - size / 2))),
+        y: Math.max(0, Math.min(900 - size, Math.round(actor.spot.y - size * 0.85))),
+        w: size,
+        h: size,
+      };
+    }
+    const standing = createSim(mission, 1);
+    standing.v = 0;
+    const cleanA = paint(standing, 0);
+    const road = { x: 80, y: 360, w: 900, h: 480 };
+    paint(standing, 0);
+    const standHash = hash(road);
+    const cleanB = paint(standing, 110);
+    const standAgain = hash(road);
+
+    function posePed(u) {
+      const sim = createSim(mission, 1);
+      sim.v = 0;
+      const ped = sim.hazards.find((h) => h.id === "ped");
+      ped.crossT = u * ped.crossDur;
+      return sim;
+    }
+    function poseDog(s) {
+      const sim = createSim(mission, 1);
+      sim.v = 0;
+      sim.s = s;
+      return sim;
+    }
+    const pedPhases = [posePed(-1)];
+    const dogPhases = [poseDog(0)];
+    for (const target of [0, 8]) {
+      let best = null;
+      for (let u = 0.04; u < 0.16; u += 0.0004) {
+        const sim = posePed(u);
+        const step = gaitOffset(body(sim, "ped").travel, "pedestrian", false);
+        const err = Math.abs(step - target);
+        if (!best || err < best.err) best = { err, sim };
+      }
+      pedPhases.push(best.sim);
+    }
+    for (const target of [0, 5]) {
+      let best = null;
+      for (let s = 6; s < 24; s += 0.05) {
+        const sim = poseDog(s);
+        const step = gaitOffset(body(sim, "dog").travel, "dog", false);
+        const err = Math.abs(step - target);
+        if (!best || err < best.err) best = { err, sim };
+      }
+      dogPhases.push(best.sim);
+    }
+
+    const sheet = document.createElement("canvas");
+    const zoom = 3;
+    const cell = 150 * zoom;
+    sheet.width = cell * 3;
+    sheet.height = cell * 2 + 8;
+    const out = sheet.getContext("2d");
+    const pedHashes = [];
+    const dogHashes = [];
+    pedPhases.forEach((sim, index) => {
+      paint(sim, 0);
+      const box = body(sim, "ped");
+      pedHashes.push(hash(box));
+      out.drawImage(canvas, box.x, box.y, box.w, box.h, index * cell, 0, cell, cell);
+    });
+    dogPhases.forEach((sim, index) => {
+      paint(sim, 0);
+      const box = body(sim, "dog");
+      dogHashes.push(hash(box));
+      const legs = { ...box, y: Math.min(900 - box.h, box.y + 48) };
+      out.drawImage(canvas, legs.x, legs.y, legs.w, legs.h, index * cell, cell + 8, cell, cell);
+    });
+    return {
+      clean: cleanA && cleanB,
+      standHash,
+      standAgain,
+      pedHashes,
+      dogHashes,
+      sheet: sheet.toDataURL("image/png"),
+    };
+  });
+  expect(errors).toEqual([]);
+  expect(drawn.clean).toBe(true);
+  expect(drawn.standAgain).toBe(drawn.standHash);
+  expect(new Set(drawn.pedHashes).size).toBe(drawn.pedHashes.length);
+  expect(new Set(drawn.dogHashes).size).toBe(drawn.dogHashes.length);
+  fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
+  fs.writeFileSync(
+    "/opt/cursor/artifacts/gait-phases.png",
+    Buffer.from(drawn.sheet.split(",")[1], "base64"),
+  );
+});
+
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto(gameURL("e2e=1"));

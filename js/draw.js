@@ -6,7 +6,8 @@
 import { CFG, PALETTE as P } from "./config.js";
 import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
 import { VIEW, project } from "./road.js";
-import { hazardWorldX, renderPose } from "./sim.js";
+import { gaitOffset } from "./gait.js";
+import { actorTravel, hazardWorldX, renderPose } from "./sim.js";
 
 /** World car scale. Do not shrink this to fake a gap in front of a pedestrian. */
 export const CAR_SPRITE_SCALE = 1.42;
@@ -140,7 +141,7 @@ export function render(ctx, state) {
 
 function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
-  drawWorld(ctx, state.preview, boil, false, 1);
+  drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
   panel(ctx, 1056, 24, 520, 852, P.CABIN);
   ctx.fillStyle = P.GLASS;
   ctx.fillRect(1056, 24, 520, 168);
@@ -284,7 +285,7 @@ function drawPlay(ctx, state) {
 
   ctx.save();
   if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
-  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1);
+  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion);
   ctx.restore();
   drawCabin(ctx, sim, state, boil, visual);
   drawPatience(ctx, sim, paused);
@@ -358,12 +359,13 @@ export function placedScene(sim, alpha = 1) {
   for (const h of sim.hazards || []) {
     const dist = h.s - pose.s;
     const hx = pose.hazardX.has(h.id) ? pose.hazardX.get(h.id) : hazardWorldX(h, sim);
-    actors.push({ id: h.id, dist, hx, spot: project(dist, hx) });
+    const travel = pose.hazardTravel?.has(h.id) ? pose.hazardTravel.get(h.id) : actorTravel(h, sim);
+    actors.push({ id: h.id, dist, hx, travel, spot: project(dist, hx) });
   }
   return { pose, car, actors };
 }
 
-function drawWorld(ctx, sim, boil, motion, alpha = 1) {
+function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false) {
   const scene = placedScene(sim, alpha);
   const cam = scene.pose.s;
   const actorAt = new Map(scene.actors.map((actor) => [actor.id, actor]));
@@ -452,7 +454,7 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1) {
   props.sort((a, b) => b.ds - a.ds);
   for (const item of props) {
     if (item.kind === "prop") drawProp(ctx, item, boil);
-    else drawHazard(ctx, sim, item.h, boil, item.placed);
+    else drawHazard(ctx, sim, item.h, boil, item.placed, reduced);
   }
 
   for (const skid of sim.skids || []) {
@@ -679,16 +681,18 @@ function drawTree(ctx, x, y, sc, boil, seed) {
   ctx.restore();
 }
 
-function drawHazard(ctx, sim, h, boil, placed) {
+function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
   const dist = placed ? placed.dist : h.s - sim.s;
   const hx = placed ? placed.hx : hazardWorldX(h, sim);
   const spot = placed ? placed.spot : project(dist, hx);
+  const travel = reduced ? 0 : placed?.travel ?? actorTravel(h, sim);
+  const step = gaitOffset(travel, h.type, reduced);
   if (spot.y < -40 || spot.y > 940) return;
   const sc = Math.max(0.62, Math.min(1.45, spot.scale * 1.55));
   const hop = h.hopped ? -22 * sc : 0;
   shadowAt(ctx, spot.x, spot.y, sc, h.type === "cutin" || h.type === "stopped" ? 34 : 22);
-  if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, boil, true);
-  else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, boil);
+  if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, step, true);
+  else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, step);
   else if (h.type === "pothole") drawHole(ctx, spot.x, spot.y, sc);
   else if (h.type === "bin") drawBin(ctx, spot.x, spot.y + hop, sc, dist, h.hopped);
   else if (h.type === "roller") drawRoller(ctx, spot.x, spot.y, sc, h);
@@ -720,12 +724,11 @@ function drawHazard(ctx, sim, h, boil, placed) {
   }
 }
 
-function drawPed(ctx, x, y, sc, boil, phone) {
+function drawPed(ctx, x, y, sc, step, phone) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
   ctx.translate(0, pedestrianFootShift());
-  const step = boil ? 8 : -8;
   ctx.strokeStyle = P.INK;
   ctx.lineWidth = 6;
   ctx.beginPath();
@@ -763,7 +766,7 @@ function drawPed(ctx, x, y, sc, boil, phone) {
   ctx.restore();
 }
 
-function drawDog(ctx, x, y, sc, boil) {
+function drawDog(ctx, x, y, sc, step = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
@@ -785,13 +788,14 @@ function drawDog(ctx, x, y, sc, boil) {
   ctx.beginPath();
   ctx.arc(41, -18, 2, 0, Math.PI * 2);
   ctx.fill();
-  const leg = boil ? 6 : 0;
-  ctx.fillRect(-28, 14, 8, 16 + leg);
-  ctx.fillRect(-8, 14, 8, 18 - leg);
-  ctx.fillRect(10, 14, 8, 16 + leg);
+  ctx.fillStyle = "#8A5A3A";
+  ctx.fillRect(-28 + step, 14, 8, 18);
+  ctx.fillRect(-8 - step, 14, 8, 18);
+  ctx.fillRect(10 + step, 14, 8, 18);
+  ink(ctx, 4);
   ctx.beginPath();
   ctx.moveTo(-36, -8);
-  ctx.quadraticCurveTo(-52, boil ? -24 : -8, -34, 6);
+  ctx.quadraticCurveTo(-52, -16 - step * 0.6, -34, 6);
   ctx.stroke();
   ctx.restore();
 }

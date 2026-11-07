@@ -33,7 +33,8 @@ import {
   steerParams,
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
-import { contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset } from "../js/gait.js";
+import { actorTravel, contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -1427,6 +1428,156 @@ test("drawing between frames does not change 30/60/90/120 or the stall cap", () 
   }
   assert.equal(simFingerprint(stalled.sim), simFingerprint(twin.sim));
   assert.equal(stalled.sim.events.length, twin.sim.events.length);
+});
+
+function walkMission() {
+  return {
+    id: "walk",
+    seed: 1,
+    cruise: 12,
+    roll: 10,
+    length: 400,
+    cargo: null,
+    slippery: [],
+    hazards: [
+      { id: "ped", type: "pedestrian", s: 90, x: 1.2, halfW: 0.42, halfL: 0.55 },
+      { id: "dog", type: "dog", s: 30, x: 0.4, halfW: 0.35, halfL: 0.45 },
+    ],
+  };
+}
+
+test("pedestrian and dog feet follow distance, and a stride boundary does not flip them", () => {
+  let prev = footOffset(0, PED_STRIDE, 8);
+  for (let distance = 0.01; distance < PED_STRIDE * 3; distance += 0.01) {
+    const next = footOffset(distance, PED_STRIDE, 8);
+    assert.ok(Math.abs(next - prev) < 1, `${distance} jumped from ${prev} to ${next}`);
+    prev = next;
+  }
+  const edge = PED_STRIDE;
+  assert.ok(Math.abs(footOffset(edge - 0.01, PED_STRIDE, 8) - footOffset(edge + 0.01, PED_STRIDE, 8)) < 0.5);
+  assert.ok(Math.abs(footOffset(edge, PED_STRIDE, 8) + 8) < 1e-9);
+  assert.equal(gaitOffset(1.2, "pedestrian", true), 0);
+  assert.equal(gaitOffset(1.2, "dog", true), 0);
+  assert.equal(footOffset(0, DOG_STRIDE, 5), footOffset(0, DOG_STRIDE, 5));
+
+  const sim = createSim(walkMission(), 1);
+  const ped = sim.hazards.find((h) => h.id === "ped");
+  const dog = sim.hazards.find((h) => h.id === "dog");
+  assert.equal(actorTravel(ped, sim), 0);
+  assert.equal(actorTravel(dog, sim), 0);
+  sim.v = 0;
+  frames(sim, 40, false);
+  assert.equal(actorTravel(ped, sim), 0);
+  assert.equal(actorTravel(dog, sim), 0);
+  assert.equal(gaitOffset(actorTravel(ped, sim), "pedestrian"), gaitOffset(0, "pedestrian"));
+
+  let walked = 0;
+  for (let u = 0; u <= 1.001; u += 0.01) {
+    ped.crossT = u * ped.crossDur;
+    const travel = actorTravel(ped, sim);
+    assert.ok(travel + 1e-9 >= walked, `ped travel went back at ${u}`);
+    walked = travel;
+  }
+  ped.crossT = 0.3 * ped.crossDur;
+  const lingerA = actorTravel(ped, sim);
+  ped.crossT = 0.6 * ped.crossDur;
+  assert.equal(actorTravel(ped, sim), lingerA);
+  assert.equal(hazardWorldX(ped, sim), ped.x);
+
+  ped.hopped = true;
+  ped.crossT = 0.5 * ped.crossDur;
+  assert.equal(actorTravel(ped, sim), 0);
+  ped.hopped = false;
+  ped.crossT = -1;
+
+  let dogWalk = 0;
+  for (let s = 0; s <= 40; s += 0.25) {
+    sim.s = s;
+    const travel = actorTravel(dog, sim);
+    assert.ok(travel + 1e-6 >= dogWalk);
+    dogWalk = travel;
+  }
+  const parked = actorTravel(dog, sim);
+  sim.v = 0;
+  const frozenS = sim.s;
+  stepSim(sim, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(sim.s, frozenS);
+  assert.equal(actorTravel(dog, sim), parked);
+
+  function arrive(dt, n) {
+    const next = createSim(walkMission(), 1);
+    const body = next.hazards.find((h) => h.id === "ped");
+    body.crossT = 0.08 * body.crossDur;
+    next.v = 0;
+    for (let i = 0; i < n; i += 1) stepSim(next, dt, { held: false, lockSpeed: true });
+    return actorTravel(body, next);
+  }
+  const fine = arrive(1 / 60, 12);
+  const mid = arrive(1 / 30, 6);
+  const coarse = arrive(0.2, 1);
+  assert.ok(Math.abs(fine - mid) < 1e-9);
+  assert.ok(Math.abs(fine - coarse) < 1e-9);
+  assert.ok(fine > 0);
+
+  function dart(dt, n) {
+    const next = createSim(walkMission(), 1);
+    next.v = 12;
+    next.s = 10;
+    for (let i = 0; i < n; i += 1) stepSim(next, dt, { held: false, lockSpeed: true });
+    return { s: next.s, travel: actorTravel(next.hazards.find((h) => h.id === "dog"), next) };
+  }
+  const dashA = dart(1 / 60, 12);
+  const dashB = dart(1 / 30, 6);
+  const dashC = dart(0.2, 1);
+  assert.ok(Math.abs(dashA.s - dashB.s) < 1e-9);
+  assert.ok(Math.abs(dashA.s - dashC.s) < 1e-9);
+  assert.ok(Math.abs(dashA.travel - dashB.travel) < 1e-6, `${dashA.travel} vs ${dashB.travel}`);
+  assert.ok(Math.abs(dashA.travel - dashC.travel) < 1e-6, `${dashA.travel} vs ${dashC.travel}`);
+
+  const posed = createSim(walkMission(), 1);
+  const mover = posed.hazards.find((h) => h.id === "ped");
+  mover.crossT = 0.1 * mover.crossDur;
+  posed.v = 0;
+  stepSim(posed, 1 / 60, { held: false, lockSpeed: true });
+  assert.ok(actorTravel(mover, posed) > mover.prevTravel);
+  let past = null;
+  for (let u = 0.04; u < 0.2; u += 0.0002) {
+    mover.crossT = u * mover.crossDur;
+    const travel = actorTravel(mover, posed);
+    if (travel >= PED_STRIDE + 0.02) {
+      past = travel;
+      break;
+    }
+  }
+  assert.ok(past > PED_STRIDE);
+  mover.prevTravel = past - 0.04;
+  const beforeEvents = posed.events.length;
+  const beforeHits = posed.stats.collisions;
+  const seen = renderPose(posed, 0.5);
+  assert.equal(posed.events.length, beforeEvents);
+  assert.equal(posed.stats.collisions, beforeHits);
+  const rendered = mover.prevTravel + (past - mover.prevTravel) * 0.5;
+  assert.ok(Math.abs(seen.hazardTravel.get("ped") - rendered) < 1e-9);
+  const scene = placedScene(posed, 0.5);
+  assert.equal(scene.actors.find((actor) => actor.id === "ped").travel, seen.hazardTravel.get("ped"));
+  assert.ok(Math.abs(gaitOffset(rendered, "pedestrian") + 8) < 1);
+
+  const session = createSession(walkMission(), { seed: 1 });
+  session.phase = "drive";
+  session.countdownAcc = 3;
+  const livePed = session.sim.hazards.find((h) => h.id === "ped");
+  livePed.crossT = 0.1 * livePed.crossDur;
+  session.sim.v = 0;
+  sessionStep(session, 1 / 60);
+  pauseSession(session, "button");
+  assert.equal(livePed.prevTravel, actorTravel(livePed, session.sim));
+  assert.equal(renderPose(session.sim, 0.25).hazardTravel.get("ped"), livePed.prevTravel);
+  onVisibility(session, true);
+  assert.equal(session.sim.hazards.find((h) => h.id === "ped").prevTravel, actorTravel(session.sim.hazards.find((h) => h.id === "ped"), session.sim));
+  restartSession(session);
+  const reset = session.sim.hazards.find((h) => h.id === "ped");
+  assert.equal(actorTravel(reset, session.sim), 0);
+  assert.equal(gaitOffset(actorTravel(reset, session.sim), "pedestrian"), -8);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {
