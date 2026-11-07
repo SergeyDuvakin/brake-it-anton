@@ -6,7 +6,7 @@
 import { createAudio } from "./audio.js";
 import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
-import { render } from "./draw.js";
+import { bumperFootGap, render } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
@@ -162,12 +162,23 @@ function activate(id) {
   }
   if (id === "retry" && session) {
     const mission = session.mission;
+    const pointerId = session.pointerId;
     restartSession(session);
+    if (pointerId !== null && pointerId !== undefined) {
+      try {
+        canvas.releasePointerCapture(pointerId);
+      } catch {
+        /* the pointer already ended */
+      }
+    }
     hint = mission.id === "lesson1";
     lastHits = 0;
     lastHonks = 0;
     lastClears = 0;
     lastNear = 0;
+    wasDown = false;
+    acc = 0;
+    last = performance.now();
     if (save.settings.sound) audio.startRadio();
     audio.ui();
     return;
@@ -296,8 +307,8 @@ window.addEventListener("keydown", (event) => {
     if (event.code === "Enter" || event.code === "Space") activate(screen === "garage" ? "go" : "start");
     return;
   }
-  keyDown(session, event.code);
-  if (event.code === "KeyR" && session.phase === "result") activate("retry");
+  keyDown(session, event.code, { repeat: event.repeat });
+  if (event.code === "KeyR" && (session.phase === "result" || session.phase === "pause")) activate("retry");
 });
 
 window.addEventListener("keyup", (event) => {
@@ -341,6 +352,7 @@ window.__anton = {
       collisions: session?.sim.stats.collisions ?? 0,
       cargoType: session?.sim.cargoType ?? null,
       hazard: hazardState(),
+      stopGap: gapState(),
       pose: session ? expressionId(session.sim) : expressionId(preview),
     };
   },
@@ -385,6 +397,14 @@ function hazardState() {
     trust: hazard.trust === true,
     cross: hazard.crossT,
   };
+}
+
+function gapState() {
+  if (!session) return null;
+  const ped = session.sim.hazards.find((hazard) => hazard.type === "pedestrian" && !hazard.resolved);
+  if (!ped) return null;
+  const gap = bumperFootGap(session.sim, ped);
+  return { world: gap.world, screen: gap.screen };
 }
 
 async function boot() {

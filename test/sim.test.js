@@ -6,6 +6,16 @@ import { readFileSync, readdirSync } from "node:fs";
 import { CFG } from "../js/config.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
+import {
+  CAR_BODY_H,
+  CAR_BODY_W,
+  CAR_NOSE_LOCAL_Y,
+  CAR_SPRITE_SCALE,
+  PED_FOOT_LOCAL_Y,
+  bumperFootGap,
+  carDrawOrigin,
+  pedestrianFootShift,
+} from "../js/draw.js";
 import { VIEW, project } from "../js/road.js";
 import {
   brakeAccel,
@@ -21,8 +31,10 @@ import { createSim, hazardWorldX, runSim, stepSim } from "../js/sim.js";
 import {
   createSession,
   keyDown,
+  keyUp,
   onBlur,
   onVisibility,
+  pauseSession,
   restartSession,
   resumeSession,
   sessionStep,
@@ -418,30 +430,92 @@ test("infinite mode is seeded, capped near 96 km/h, and stays in the lanes", () 
   assert.equal(bill.total, 2 * 1400 + 350 + 800 + 3 * 90 + 120);
 });
 
-test("countdown holds the car and replay restores the attempt", () => {
+test("the opening countdown holds the car, and retry is an immediate clean ride", () => {
   const session = createSession(getMission("lesson1"), { seed: 11 });
-  sessionStep(session, 2.4);
-  assert.equal(session.phase, "countdown");
-  assert.equal(session.sim.s, 0);
-  assert.equal(session.sim.v, 0);
-  sessionStep(session, 0.7);
-  assert.equal(session.phase, "drive");
-  sessionStep(session, 1.2);
-  assert.ok(session.sim.s > 0);
-  assert.ok(session.sim.v > 0);
-  const progressed = session.sim.patience;
-  restartSession(session);
   assert.equal(session.phase, "countdown");
   assert.equal(session.countdown, 3);
+  sessionStep(session, 0.4);
+  pauseSession(session, "escape");
+  assert.equal(session.phase, "pause");
+  resumeSession(session);
+  assert.equal(session.phase, "countdown");
+  assert.ok(session.countdown >= 1);
+  keyDown(session, "Space");
+  sessionStep(session, 1);
+  assert.equal(session.phase, "countdown");
   assert.equal(session.sim.s, 0);
   assert.equal(session.sim.v, 0);
   assert.equal(session.sim.brakeInput, 0);
+  sessionStep(session, 1.4);
+  assert.equal(session.phase, "countdown");
+  sessionStep(session, 0.7);
+  assert.equal(session.phase, "drive");
+  assert.equal(session.countdown, 0);
+  sessionStep(session, 1.2);
+  assert.ok(session.sim.s > 0);
+  assert.ok(session.sim.v > 0);
+
+  session.brakeHeld = true;
+  session.pointerId = 7;
+  keyDown(session, "Space");
+  session.sim.bubble = "ОЙ!";
+  session.sim.bubbleT = 1;
+  session.sim.crashT = 0.2;
+  session.sim.events.push({ kind: "hit" });
+  session.phase = "result";
+  session.result = { success: false, stars: 0 };
+  session.recorded = true;
+  const seed = session.seed;
+  const mission = session.mission;
+  restartSession(session);
+
+  assert.equal(session.phase, "drive");
+  assert.equal(session.countdown, 0);
+  assert.equal(session.countdownAcc, 3);
+  assert.equal(session.seed, seed);
+  assert.equal(session.mission, mission);
+  assert.equal(session.result, null);
+  assert.equal(session.recorded, false);
+  assert.equal(session.pauseReason, null);
+  assert.equal(session.brakeHeld, false);
+  assert.equal(session.pointerId, null);
+  assert.equal(session.keysDown.size, 0);
+  assert.equal(session.sim.s, 0);
+  assert.equal(session.sim.v, mission.roll);
+  assert.equal(session.sim.t, 0);
+  assert.equal(session.sim.brakeInput, 0);
+  assert.equal(session.sim.holdTime, 0);
+  assert.equal(session.sim.pressTime, 0);
+  assert.equal(session.sim.wasHeld, false);
+  assert.equal(session.sim.bubble, null);
+  assert.equal(session.sim.crashT, 0);
+  assert.equal(session.sim.events.length, 0);
   assert.equal(session.sim.patience, CFG.patienceStart);
   assert.equal(session.sim.cargo, 100);
   assert.equal(session.sim.body, 100);
-  assert.notEqual(progressed, session.sim.s);
-  sessionStep(session, 1);
-  assert.equal(session.sim.s, 0);
+  assert.equal(session.sim.stats.collisions, 0);
+
+  keyDown(session, "Space", { repeat: true });
+  sessionStep(session, 0.2);
+  assert.equal(session.sim.brakeInput, 0, "a held key must not leak into the new ride");
+  assert.ok(session.sim.s > 0);
+  keyUp(session, "Space");
+  session.brakeHeld = true;
+  sessionStep(session, 0.2);
+  assert.ok(session.sim.brakeInput > 0.5, "a new press brakes on the first frames");
+
+  onBlur(session);
+  assert.equal(session.phase, "pause");
+  assert.equal(session.sim.brakeInput, 0);
+  assert.equal(session.brakeHeld, false);
+  restartSession(session);
+  assert.equal(session.phase, "drive");
+  assert.equal(session.pauseReason, null);
+  const heldS = session.sim.s;
+  sessionStep(session, 0.25);
+  assert.equal(session.sim.brakeInput, 0);
+  assert.ok(session.sim.s > heldS);
+  assert.equal(session.phase, "drive");
 });
 
 test("pause, blur and hide clear the pedal and the held keys", () => {
@@ -599,6 +673,71 @@ test("the straight road stays forward and does not fold between frames", () => {
   }
 });
 
+test("early brake keeps a visible bumper-to-feet gap and the crossing runs at zero speed", () => {
+  const sim = createSim(getMission("lesson1"), 11);
+  sim.v = 10;
+  let minWorld = Infinity;
+  let minScreen = Infinity;
+  let sawStop = false;
+  let crossWhileStopped = null;
+  for (let i = 0; i < 8000 && !sim.done; i++) {
+    const ped = sim.hazards.find((h) => h.id === "ped");
+    stepSim(sim, dt, { held: brakeOpen(sim) });
+    if (!ped.resolved && ped.crossT > 0.35 && ped.crossT < ped.crossDur * 0.7) {
+      if (sim.v < 0.05) {
+        sawStop = true;
+        const gap = bumperFootGap(sim, ped);
+        if (Math.abs(sim.x - hazardWorldX(ped, sim)) < CFG.carHalfW + ped.halfW + 0.2) {
+          minWorld = Math.min(minWorld, gap.world);
+          minScreen = Math.min(minScreen, gap.screen);
+        }
+        if (crossWhileStopped === null) crossWhileStopped = ped.crossT;
+      }
+    }
+    if (sawStop && crossWhileStopped !== null && ped.crossT > crossWhileStopped + 1) break;
+  }
+  const ped = sim.hazards.find((h) => h.id === "ped");
+  assert.ok(sawStop, "car never actually stopped for the crossing");
+  assert.equal(sim.v, 0);
+  assert.ok(ped.crossT > crossWhileStopped + 0.9, "pedestrian froze while the car was stopped");
+  assert.equal(sim.stats.collisions, 0);
+  assert.ok(minWorld > 2, `world gap ${minWorld}`);
+  assert.ok(minWorld <= CFG.yieldStandoff + 0.05, `stop drifted past the standoff ${minWorld}`);
+  assert.ok(minScreen > 48, `screen gap ${minScreen}px does not show daylight between bumper and feet`);
+
+  const bumper = project(CFG.carHalfFront, sim.x);
+  const origin = carDrawOrigin(bumper.x, bumper.y, 1, 0);
+  const ly = CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE;
+  const dive = 0.14;
+  const noseY = origin.y + Math.cos(dive) * ly;
+  const noseX = origin.x - Math.sin(dive) * ly;
+  assert.ok(Math.abs(noseY - bumper.y) < 0.01, noseY);
+  assert.ok(Math.abs(noseX - bumper.x) < 0.01, noseX);
+  assert.equal(CAR_SPRITE_SCALE, 1.42);
+  assert.equal(CAR_BODY_W, 80);
+  assert.equal(CAR_BODY_H, 112);
+  assert.equal(PED_FOOT_LOCAL_Y + pedestrianFootShift(), 0);
+
+  const sHeld = sim.s;
+  const crossHeld = ped.crossT;
+  for (let i = 0; i < 90; i++) stepSim(sim, dt, { held: true });
+  assert.equal(sim.v, 0);
+  assert.equal(sim.s, sHeld);
+  assert.ok(ped.crossT > crossHeld + 1);
+  assert.equal(sim.stats.collisions, 0);
+  assert.equal(ped.resolved, null);
+
+  for (let i = 0; i < 6000 && !ped.resolved && !sim.done; i++) stepSim(sim, dt, { held: false });
+  assert.equal(ped.resolved, "clear");
+  assert.equal(sim.stats.collisions, 0);
+  assert.ok(Math.abs(hazardWorldX(ped, sim)) > 4, "pedestrian still in the lane");
+  const sClear = sim.s;
+  for (let i = 0; i < 240 && !sim.done; i++) stepSim(sim, dt, { held: false });
+  assert.ok(sim.s > sClear + 8, "release did not resume");
+  assert.equal(sim.stats.collisions, 0, "driving through the cleared crossing counted a hit");
+  assert.ok(sim.s + CFG.carHalfFront > ped.s, "bumper never passed where the pedestrian stood");
+});
+
 test("early brake stops short of the pedestrian, then the lane clears", () => {
   const sim = createSim(getMission("lesson1"), 11);
   let minGap = Infinity;
@@ -633,6 +772,19 @@ test("a large step cannot tunnel through a person, and a braked crawl does not d
   stepSim(fast, 0.5, { held: false, lockSpeed: true });
   assert.ok(fast.stats.collisions >= 1, dump(fast));
   assert.equal(fast.success, false);
+
+  const shy = createSim(
+    empty({
+      hazards: [{ id: "ped", type: "pedestrian", s: 30, x: 1.8, halfW: 0.42, halfL: 0.55, trust: false }],
+    }),
+    1,
+  );
+  shy.v = 40;
+  shy.s = 10;
+  shy.x = 1.8;
+  stepSim(shy, 0.25, { held: false, lockSpeed: true });
+  assert.equal(shy.stats.collisions, 0, dump(shy));
+  assert.ok(shy.s + CFG.carHalfFront < 30 - 0.55);
 
   const slow = createSim(getMission("lesson1"), 11);
   frames(slow, 200, false);

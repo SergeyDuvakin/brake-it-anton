@@ -3,10 +3,56 @@
  * One forward projection. Poses and props change with the situation.
  */
 
-import { PALETTE as P } from "./config.js";
+import { CFG, PALETTE as P } from "./config.js";
 import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
 import { VIEW, project } from "./road.js";
 import { hazardWorldX } from "./sim.js";
+
+/** World car scale. Do not shrink this to fake a gap in front of a pedestrian. */
+export const CAR_SPRITE_SCALE = 1.42;
+/** Radians of brake dive at a full press. Shared by the sprite and its anchor. */
+export const CAR_DIVE = 0.14;
+/** Unscaled top of the body. That edge is the bumper. */
+export const CAR_NOSE_LOCAL_Y = -62;
+export const CAR_BODY_W = 80;
+export const CAR_BODY_H = 112;
+/** Unscaled y of the pedestrian's feet before they are parked on the ground point. */
+export const PED_FOOT_LOCAL_Y = 48;
+
+/**
+ * Draw origin that puts the body nose on the bumper after the same
+ * rotate-then-scale the sprite applies. The car is not resized.
+ */
+export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = CAR_SPRITE_SCALE) {
+  const dive = (brakeInput || 0) * CAR_DIVE;
+  const squash = 1 - Math.min(0.16, crashT || 0);
+  const ly = CAR_NOSE_LOCAL_Y * scale * squash;
+  return {
+    x: bumperX + Math.sin(dive) * ly,
+    y: bumperY - Math.cos(dive) * ly,
+  };
+}
+
+/** Local y shift that sits the feet on the projected ground point. */
+export function pedestrianFootShift() {
+  return -PED_FOOT_LOCAL_Y;
+}
+
+/**
+ * Bumper-to-feet separation for a pedestrian.
+ * `screen` is pixels: positive when the bumper is closer to the camera than the feet.
+ * `world` is metres from the bumper to the near face of the hitbox.
+ */
+export function bumperFootGap(sim, hazard) {
+  const bumper = project(CFG.carHalfFront, sim.x);
+  const foot = project(hazard.s - sim.s, hazardWorldX(hazard, sim));
+  return {
+    world: hazard.s - hazard.halfL - (sim.s + CFG.carHalfFront),
+    screen: bumper.y - foot.y,
+    bumperY: bumper.y,
+    footY: foot.y,
+  };
+}
 
 let spots = [];
 let labels = [];
@@ -627,7 +673,8 @@ function drawHazard(ctx, sim, h, boil) {
   else drawNpc(ctx, spot.x, spot.y, sc, h, dist, boil);
 
   if (!h.resolved && dist < (h.telegraph || 60) && dist > 2) {
-    const by = spot.y - 78 * sc;
+    const markLift = h.type === "pedestrian" ? 184 : 78;
+    const by = spot.y - markLift * sc;
     ctx.beginPath();
     ctx.arc(spot.x, by, 18 * Math.min(sc, 1.1) + 4, 0, Math.PI * 2);
     ctx.fillStyle = P.YEL;
@@ -655,14 +702,15 @@ function drawPed(ctx, x, y, sc, boil, phone) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
+  ctx.translate(0, pedestrianFootShift());
   const step = boil ? 8 : -8;
   ctx.strokeStyle = P.INK;
   ctx.lineWidth = 6;
   ctx.beginPath();
   ctx.moveTo(-12, 10);
-  ctx.lineTo(-18, 48 + step);
+  ctx.lineTo(-18 + step, PED_FOOT_LOCAL_Y);
   ctx.moveTo(12, 10);
-  ctx.lineTo(20, 48 - step);
+  ctx.lineTo(20 - step, PED_FOOT_LOCAL_Y);
   ctx.stroke();
   roundRect(ctx, -26, -34, 52, 50, 10);
   ctx.fillStyle = P.PINK;
@@ -809,22 +857,23 @@ function drawNpc(ctx, x, y, sc, h, dist, boil) {
 }
 
 function drawCar(ctx, sim, boil) {
-  const spot = project(0, sim.x);
-  drawCarSprite(ctx, spot.x, spot.y, 1.42, sim.brakeInput, sim, boil);
+  const bumper = project(CFG.carHalfFront, sim.x);
+  const origin = carDrawOrigin(bumper.x, bumper.y, sim.brakeInput, sim.crashT);
+  drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil);
 }
 
 function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0) {
   ctx.save();
   ctx.translate(x, y);
   const live = sim || { s: 0, cargoType: null, cargo: 100, body: 100, t: 0, cargoFlash: 0, nearT: 0, crashT: 0, lastSelfBrake: 0 };
-  const dive = (brake || 0) * 0.14;
+  const dive = (brake || 0) * CAR_DIVE;
   ctx.rotate(dive);
   ctx.scale(sc, sc * (1 - Math.min(0.16, live.crashT || 0)));
   ctx.fillStyle = "rgba(28,22,30,0.22)";
   ctx.beginPath();
   ctx.ellipse(0, 42, 40, 12, 0, 0, Math.PI * 2);
   ctx.fill();
-  roundRect(ctx, -40, -62, 80, 112, 16);
+  roundRect(ctx, -CAR_BODY_W / 2, CAR_NOSE_LOCAL_Y, CAR_BODY_W, CAR_BODY_H, 16);
   ctx.fillStyle = live.body < 45 ? "#CDB56A" : P.YEL;
   ctx.fill();
   ink(ctx, 5);
@@ -1322,8 +1371,8 @@ function drawResult(ctx, state) {
     });
     paintCenter(ctx, `Итого ${bill.total}`, 900, 690, 520, 32, 22, P.INK, false, false);
   }
-  button(ctx, "retry", 80, 760, 380, 84, "Ещё раз", graded.success ? "paper" : "primary");
-  button(ctx, "next", 1140, 760, 380, 84, graded.success && !sim.infinite ? "Дальше" : "В гараж", graded.success ? "primary" : "paper");
+  button(ctx, "retry", 80, 736, 420, 120, "Ещё раз", graded.success ? "paper" : "primary");
+  button(ctx, "next", 1100, 736, 420, 120, graded.success && !sim.infinite ? "Дальше" : "В гараж", graded.success ? "primary" : "paper");
 }
 
 function resultPhrase(sim, graded) {

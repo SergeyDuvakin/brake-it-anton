@@ -342,9 +342,9 @@ function resolveHit(sim, h) {
 }
 
 function pinShort(sim, h) {
-  // Leave enough world-space in front of the bumper that the drawn car
-  // is not sitting on the body. The hitbox itself stays the real one.
-  const stopAt = h.s - h.halfL - CFG.carHalfFront - 8.4;
+  // Hold the bumper this far short of the body. Drawing places the nose
+  // on that bumper, so the standoff is physical and visible together.
+  const stopAt = h.s - h.halfL - CFG.carHalfFront - CFG.yieldStandoff;
   if (sim.s > stopAt) sim.s = stopAt;
   sim.v = 0;
   h.yielded = true;
