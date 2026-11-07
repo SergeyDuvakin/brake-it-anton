@@ -99,9 +99,15 @@ export function createSim(mission, seed = 1) {
     cargoFlash: 0,
     phoneAt: mission.phoneAt ?? null,
     phoneFor: mission.phoneFor ?? null,
+    sleepDrowsyAt: mission.sleepDrowsyAt ?? null,
+    sleepAt: mission.sleepAt ?? null,
+    sleepFor: mission.sleepFor ?? null,
     attention: "road",
     phonePlayed: false,
+    sleepPlayed: false,
+    wokeFrom: null,
     stowT: 0,
+    wakeT: 0,
     stats: {
       collisions: 0,
       trustClears: 0,
@@ -249,7 +255,7 @@ function commitHazards(sim, held) {
   for (const h of sim.hazards) {
     if (h.resolved) continue;
     const dist = h.s - sim.s;
-    if (h.committed === "asleep" && sim.attention !== "phone" && dist > 14) {
+    if (h.committed === "asleep" && !outOfIt(sim) && dist > 14) {
       h.committed = "avoid";
       h.commitAt = sim.t;
       sim.intent = "avoid";
@@ -272,9 +278,9 @@ function commitHazards(sim, held) {
     if (dist <= h.commit && dist > -5) {
       h.commitAt = sim.t;
       if (h.trust) {
-        if (sim.attention === "phone") {
+        if (outOfIt(sim)) {
           h.committed = "asleep";
-          sim.intent = "phone";
+          sim.intent = sim.attention === "asleep" ? "sleep" : "phone";
           log(sim, { kind: "asleep", id: h.id });
           continue;
         }
@@ -492,26 +498,53 @@ function fail(sim, reason) {
   sim.cargo = clamp(sim.cargo, 0, 100);
 }
 
-/** One tap clears the single phone episode. Anything else is a no-op. */
+function outOfIt(sim) {
+  return sim.attention === "phone" || sim.attention === "asleep";
+}
+
+/** One tap clears the current phone or sleep episode. Anything else is a no-op. */
 export function pokeAttention(sim) {
-  if (!sim || sim.attention !== "phone") return false;
-  sim.attention = "stow";
-  sim.stowT = 0;
-  sim.stats.attentionPokes += 1;
-  return true;
+  if (!sim) return false;
+  if (sim.attention === "phone") {
+    sim.attention = "stow";
+    sim.stowT = 0;
+    sim.wokeFrom = "phone";
+    sim.stats.attentionPokes += 1;
+    return true;
+  }
+  if (sim.attention === "drowsy" || sim.attention === "asleep") {
+    sim.attention = "wake";
+    sim.wakeT = 0;
+    sim.wokeFrom = "sleep";
+    sim.stats.attentionPokes += 1;
+    return true;
+  }
+  return false;
 }
 
 function advanceAttention(sim, dt) {
-  if (!sim.phonePlayed && sim.phoneAt !== null && sim.phoneAt !== undefined && sim.s >= sim.phoneAt) {
+  if (sim.attention === "road" && !sim.phonePlayed && sim.phoneAt !== null && sim.phoneAt !== undefined && sim.s >= sim.phoneAt) {
     sim.phonePlayed = true;
     sim.attention = "phone";
+  }
+  if (sim.attention === "road" && !sim.sleepPlayed && sim.sleepDrowsyAt !== null && sim.sleepDrowsyAt !== undefined && sim.s >= sim.sleepDrowsyAt) {
+    sim.sleepPlayed = true;
+    sim.attention = "drowsy";
+  }
+  if (sim.attention === "drowsy" && sim.sleepAt !== null && sim.sleepAt !== undefined && sim.s >= sim.sleepAt) {
+    sim.attention = "asleep";
   }
   if (sim.attention === "stow") {
     sim.stowT += dt;
     if (sim.stowT >= 0.72) sim.attention = "earnest";
   }
-  if (sim.attention === "earnest" && sim.phoneFor) {
-    const linked = sim.hazards.find((hazard) => hazard.id === sim.phoneFor);
+  if (sim.attention === "wake") {
+    sim.wakeT += dt;
+    if (sim.wakeT >= 0.62) sim.attention = "earnest";
+  }
+  if (sim.attention === "earnest") {
+    const linkedId = sim.wokeFrom === "sleep" ? sim.sleepFor : sim.phoneFor;
+    const linked = linkedId ? sim.hazards.find((hazard) => hazard.id === linkedId) : null;
     if (linked && linked.resolved) sim.attention = "road";
   }
 }
@@ -731,7 +764,8 @@ export function runSim(mission, policy, opts = {}) {
   let t = 0;
   while (!sim.done && t < max) {
     const held = !!policy(sim, t);
-    const tap = opts.attend === false ? false : sim.attention === "phone";
+    const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
+    const tap = opts.attend === false ? false : needsTap;
     stepSim(sim, dt, { held, tap });
     t += dt;
   }

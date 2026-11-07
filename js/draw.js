@@ -294,13 +294,14 @@ function drawPlay(ctx, state) {
     spots.push({ id: "anton", x: 1088, y: 36, w: 464, h: 560 });
     spots.push({ id: "pedal", x: 1080, y: 730, w: 480, h: 150 });
   }
-  if (session.phase === "drive" && sim.attention === "phone") {
+  if (session.phase === "drive" && (sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep")) {
+    const line = sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F";
     roundRect(ctx, 1120, 548, 400, 46, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, "Ткни в него · F", 1120, 548, 400, 46, 22, P.INK, false, false);
+    paintCenter(ctx, line, 1120, 548, 400, 46, 22, P.INK, false, false);
   }
   if (session.phase === "countdown") {
     roundRect(ctx, 44, 124, 120, 84, 14);
@@ -1073,14 +1074,15 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   ctx.moveTo(0, -14);
   ctx.lineTo(0, 14);
   ctx.stroke();
-  if (shift.phoneHand) {
-    /* wheel stays empty: the hand is on the phone */
+  if (shift.phoneHand || shift.limp) {
+    /* wheel stays empty */
   } else if (!shift.hairHand) {
-    const grip = shift.grip ? 16 : 13;
+    const grip = shift.grip ? 16 : shift.slack ? 11 : 13;
+    const handY = shift.slack ? 16 : 2;
     ctx.fillStyle = P.SKIN;
     ctx.beginPath();
-    ctx.arc(-36, 2, grip, 0, Math.PI * 2);
-    ctx.arc(36, 2, grip, 0, Math.PI * 2);
+    ctx.arc(-36, handY, grip, 0, Math.PI * 2);
+    ctx.arc(36, handY, grip, 0, Math.PI * 2);
     ctx.fill();
     ink(ctx, 3);
     ctx.stroke();
@@ -1104,6 +1106,24 @@ function drawAnton(ctx, exp, boil, lean, sim) {
     ctx.fillStyle = P.SKIN;
     ctx.beginPath();
     ctx.arc(-18, -78, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+  }
+
+  if (shift.limp) {
+    ctx.strokeStyle = P.INK;
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(-48, 108);
+    ctx.quadraticCurveTo(-88, 170, -70, 214);
+    ctx.moveTo(48, 112);
+    ctx.quadraticCurveTo(92, 176, 74, 218);
+    ctx.stroke();
+    ctx.fillStyle = P.SKIN;
+    ctx.beginPath();
+    ctx.arc(-70, 222, 13, 0, Math.PI * 2);
+    ctx.arc(74, 226, 13, 0, Math.PI * 2);
     ctx.fill();
     ink(ctx, 3);
     ctx.stroke();
@@ -1154,9 +1174,11 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   ctx.stroke();
 
   const look = lookFor(exp);
-  const wide = exp === "stow" || exp === "earnest";
-  eye(ctx, -32 + shift.head, -10, wide ? 32 : exp === "belted" ? 30 : 26, wide ? 28 : exp === "belted" ? 26 : 22, wide ? 9 : 8, look.left);
-  eye(ctx, 30 + shift.head, 8, wide ? 20 : 16, wide ? 18 : 14, wide ? 6 : 5, look.right, false);
+  const wide = exp === "stow" || exp === "earnest" || exp === "wake";
+  const heavy = exp === "drowsy";
+  const shut = exp === "asleep";
+  eye(ctx, -32 + shift.head, -10, heavy ? 26 : wide ? 32 : exp === "belted" ? 30 : 26, heavy ? 8 : wide ? 28 : exp === "belted" ? 26 : 22, wide ? 9 : 8, look.left, shut);
+  eye(ctx, 30 + shift.head, 8, heavy ? 16 : wide ? 20 : 16, heavy ? 5 : wide ? 18 : 14, wide ? 6 : 5, look.right, shut);
   brows(ctx, exp, shift.head);
   mouth(ctx, exp, shift.head);
 
@@ -1235,32 +1257,45 @@ export function paintPoseCard(ctx, pose, width, height) {
   ctx.restore();
 }
 
-export function paintPoseSheet(ctx, width = 1640, height = 980) {
+export function paintPoseSheet(ctx, width = 1640, height = 1760) {
   ctx.fillStyle = P.PAPER;
   ctx.fillRect(0, 0, width, height);
-  const cards = [
-    ["attentive", "Смотрит на дорогу"],
-    ["phone", "В телефоне"],
-    ["stow", "Чуть не уронил"],
-    ["earnest", "Снова за рулём"],
+  const rows = [
+    [
+      ["attentive", "Смотрит на дорогу"],
+      ["phone", "В телефоне"],
+      ["stow", "Чуть не уронил"],
+      ["earnest", "Снова за рулём"],
+    ],
+    [
+      ["drowsy", "Клонит в сон"],
+      ["asleep", "Заснул"],
+      ["wake", "Вздрогнул"],
+    ],
   ];
-  cards.forEach(([pose, label], index) => {
-    const x = 16 + index * 406;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x, 16, 390, 800);
-    ctx.clip();
-    ctx.translate(x, 16);
-    paintPoseCard(ctx, pose, 390, 800);
-    ctx.restore();
-    ink(ctx, 4);
-    ctx.strokeRect(x, 16, 390, 800);
-    paintCenter(ctx, label, x, 832, 390, 64, 26, P.INK, false, false);
+  rows.forEach((cards, row) => {
+    const y = 16 + row * 860;
+    cards.forEach(([pose, label], index) => {
+      const x = 16 + index * 406;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, 390, 720);
+      ctx.clip();
+      ctx.translate(x, y);
+      paintPoseCard(ctx, pose, 390, 720);
+      ctx.restore();
+      ink(ctx, 4);
+      ctx.strokeRect(x, y, 390, 720);
+      paintCenter(ctx, label, x, y + 736, 390, 64, 26, P.INK, false, false);
+    });
   });
 }
 
 function poseShift(exp) {
   if (exp === "phone") return { y: 16, rot: 0.12, hairHand: false, phoneHand: true, belt: 5, head: 2, notes: false, headDrop: 30 };
+  if (exp === "drowsy") return { y: 20, rot: 0.18, hairHand: false, slack: true, belt: 5, head: 8, notes: false, headDrop: 16 };
+  if (exp === "asleep") return { y: 34, rot: 0.3, hairHand: false, limp: true, belt: 4, head: 12, notes: false, headDrop: 32 };
+  if (exp === "wake") return { y: -14, rot: -0.16, hairHand: false, grip: true, belt: 7, head: -6, notes: false, headDrop: 0 };
   if (exp === "stow") return { y: 0, rot: -0.04, hairHand: false, phoneHand: true, belt: 6, head: -2, notes: false, headDrop: 6 };
   if (exp === "earnest") return { y: -18, rot: -0.07, hairHand: false, belt: 6, head: 0, notes: false, headDrop: 0, grip: true };
   if (exp === "preen") return { y: -10, rot: -0.06, hairHand: true, belt: 5, head: 6, notes: true };
@@ -1275,6 +1310,9 @@ function poseShift(exp) {
 
 function lookFor(exp) {
   if (exp === "phone") return { left: { x: 0, y: 9 }, right: { x: 0, y: 6 } };
+  if (exp === "drowsy") return { left: { x: 0, y: 4 }, right: { x: 0, y: 3 } };
+  if (exp === "asleep") return { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } };
+  if (exp === "wake") return { left: { x: 0, y: -5 }, right: { x: 0, y: -3 } };
   if (exp === "stow") return { left: { x: -1, y: -4 }, right: { x: 0, y: -3 } };
   if (exp === "earnest") return { left: { x: 1, y: 3 }, right: { x: 0, y: 2 } };
   if (exp === "focused") return { left: { x: 1, y: 7 }, right: { x: 1, y: 4 } };
@@ -1315,7 +1353,17 @@ function brows(ctx, exp, hx) {
     ctx.quadraticCurveTo(-30 + x, -60, -8 + x, -46);
     ctx.moveTo(14 + x, -24);
     ctx.quadraticCurveTo(32 + x, -34, 50 + x, -20);
-  } else   if (exp === "phone") {
+  } else   if (exp === "drowsy" || exp === "asleep") {
+    ctx.moveTo(-58 + x, -28);
+    ctx.lineTo(-8 + x, -34);
+    ctx.moveTo(14 + x, -10);
+    ctx.lineTo(50 + x, -16);
+  } else if (exp === "wake") {
+    ctx.moveTo(-62 + x, -58);
+    ctx.lineTo(-8 + x, -36);
+    ctx.moveTo(12 + x, -30);
+    ctx.lineTo(54 + x, -48);
+  } else if (exp === "phone") {
     ctx.moveTo(-58 + x, -30);
     ctx.lineTo(-8 + x, -36);
     ctx.moveTo(14 + x, -12);
@@ -1370,7 +1418,14 @@ function mouth(ctx, exp, hx) {
     ctx.stroke();
     return;
   }
-  if (exp === "phone") {
+  if (exp === "drowsy") {
+    ctx.moveTo(-16 + x, 56);
+    ctx.quadraticCurveTo(4 + x, 62, 22 + x, 56);
+  } else if (exp === "asleep") {
+    ctx.ellipse(4 + x, 60, 8, 10, 0, 0, Math.PI * 2);
+  } else if (exp === "wake") {
+    ctx.arc(2 + x, 50, 14, 0, Math.PI * 2);
+  } else if (exp === "phone") {
     ctx.ellipse(4 + x, 58, 10, 7, 0, 0, Math.PI * 2);
   } else if (exp === "stow") {
     ctx.arc(2 + x, 54, 12, 0, Math.PI * 2);
