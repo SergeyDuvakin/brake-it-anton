@@ -6,11 +6,11 @@
 import { createAudio } from "./audio.js";
 import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
-import { bumperFootGap, render } from "./draw.js";
+import { bumperFootGap, paintAttentiveIcon, paintPoseCard, paintPoseSheet, render } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
-import { createSim, nextHazard } from "./sim.js";
+import { createSim, nextHazard, pokeAttention } from "./sim.js";
 import {
   createSession,
   keyDown,
@@ -158,6 +158,10 @@ function activate(id) {
     resumeSession(session);
     if (save.settings.sound) audio.startRadio();
     audio.ui();
+    return;
+  }
+  if (id === "anton") {
+    if (session?.phase === "drive" && pokeAttention(session.sim)) audio.ui();
     return;
   }
   if (id === "retry" && session) {
@@ -354,6 +358,7 @@ window.__anton = {
       hazard: hazardState(),
       stopGap: gapState(),
       pose: session ? expressionId(session.sim) : expressionId(preview),
+      attention: session?.sim.attention ?? "road",
     };
   },
   hotspots() {
@@ -369,6 +374,14 @@ window.__anton = {
   setTimeScale(value) {
     if (!debug) return;
     timeScale = value;
+  },
+  paintIcon(canvas) {
+    paintAttentiveIcon(canvas.getContext("2d"), canvas.width);
+  },
+  paintPose(canvas, pose) {
+    const ctx = canvas.getContext("2d");
+    if (pose === "sheet") paintPoseSheet(ctx, canvas.width, canvas.height);
+    else paintPoseCard(ctx, pose, canvas.width, canvas.height);
   },
   debugStart(id) {
     if (!debug) return;

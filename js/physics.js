@@ -100,6 +100,12 @@ function preening(sim) {
 }
 
 export function expressionId(sim) {
+  if (sim.attention === "phone") return "phone";
+  if (sim.attention === "stow") return "stow";
+  if (sim.attention === "drowsy") return "drowsy";
+  if (sim.attention === "asleep") return "asleep";
+  if (sim.attention === "wake") return "wake";
+  if (sim.attention === "earnest") return "earnest";
   if (sim.beltT > 0 || sim.cargoFlash > 0) return "belted";
   if (sim.outburstT > 0 || sim.patience >= 100) return "furious";
   if (sim.intent === "lunge") return "angry";

@@ -28,7 +28,13 @@ import {
   steerParams,
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
-import { createSim, hazardWorldX, runSim, stepSim } from "../js/sim.js";
+import { createSim, hazardWorldX, pokeAttention, runSim, stepSim as rawStep } from "../js/sim.js";
+
+function stepSim(sim, dt, input = {}) {
+  const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
+  const tap = input.tap !== undefined ? input.tap : needsTap;
+  return rawStep(sim, dt, { ...input, tap });
+}
 import {
   createSession,
   keyDown,
@@ -902,6 +908,178 @@ test("brake timing: early stop leaves a gap, late speed is a hit, crawl is not",
 
   const kinds = new Set(early.events.map((e) => e.kind + ":" + (e.id || "")));
   assert.ok([...kinds].some((name) => name.includes("lid") || name.includes("roller") || early.events.some((e) => e.id === "lid")));
+});
+
+function phoneYard() {
+  return {
+    id: "phone-yard",
+    seed: 4,
+    cruise: 12,
+    length: 280,
+    phoneAt: 24,
+    phoneFor: "hole",
+    hazards: [
+      { id: "hole", type: "pothole", s: 110, trust: true, x: 1.8, halfW: 0.72, halfL: 1.15, telegraph: 72, decision: 58, commit: 40 },
+    ],
+  };
+}
+
+test("one phone tap lets Anton take the hole; no tap hits; brake still stops", () => {
+  const tapped = runSim(phoneYard(), () => false, { maxTime: 40 });
+  assert.equal(tapped.stats.collisions, 0, dump(tapped));
+  assert.equal(tapped.stats.attentionPokes, 1);
+  assert.equal(tapped.hazards[0].resolved, "clear");
+  assert.equal(tapped.attention, "road");
+
+  const ignored = runSim(phoneYard(), () => false, { maxTime: 40, attend: false });
+  assert.ok(ignored.stats.collisions >= 1, dump(ignored));
+  assert.equal(ignored.stats.attentionPokes, 0);
+
+  const braked = createSim(phoneYard(), 4);
+  braked.v = 12;
+  for (let i = 0; i < 4000 && !braked.done && braked.stats.collisions === 0; i++) {
+    const dist = 110 - braked.s;
+    stepSim(braked, dt, { held: dist < 48, tap: false });
+  }
+  assert.equal(braked.stats.collisions, 0, dump(braked));
+  assert.ok(braked.v < 0.4, braked.v);
+  assert.ok(braked.s + CFG.carHalfFront < 110 - 1.15, braked.s);
+  assert.equal(braked.attention, "phone");
+
+  const calm = createSim(phoneYard(), 4);
+  const patience = calm.patience;
+  assert.equal(pokeAttention(calm), false);
+  assert.equal(calm.patience, patience);
+  assert.equal(calm.stats.attentionPokes, 0);
+  calm.s = 24;
+  rawStep(calm, dt, { held: false, tap: false });
+  assert.equal(calm.attention, "phone");
+  assert.equal(pokeAttention(calm), true);
+  assert.equal(pokeAttention(calm), false);
+  assert.equal(calm.stats.attentionPokes, 1);
+  assert.equal(calm.attention, "stow");
+  rawStep(calm, 0.8, { held: false, tap: true });
+  assert.equal(calm.attention, "earnest");
+  assert.equal(calm.stats.attentionPokes, 1);
+});
+
+test("a phone tap does not replace the pedestrian brake, and retry clears it", () => {
+  const mission = {
+    id: "phone-ped",
+    seed: 6,
+    cruise: 12,
+    roll: 10,
+    length: 240,
+    phoneAt: 8,
+    phoneFor: "hole",
+    hazards: [
+      { id: "ped", type: "pedestrian", s: 70, x: 1.8, halfW: 0.42, halfL: 0.55, trust: false },
+      { id: "hole", type: "pothole", s: 160, trust: true, x: 1.8, halfW: 0.72, halfL: 1.15 },
+    ],
+  };
+  const hit = runSim(mission, () => false, { maxTime: 30 });
+  assert.ok(hit.stats.collisions >= 1, dump(hit));
+  assert.equal(hit.failReason, "body");
+
+  const session = createSession(getMission("lesson1"), { seed: 11 });
+  sessionStep(session, 3.1);
+  session.sim.s = 92;
+  sessionStep(session, 0.05);
+  assert.equal(session.sim.attention, "phone");
+  keyDown(session, "KeyF");
+  assert.equal(session.sim.attention, "stow");
+  keyDown(session, "KeyF", { repeat: true });
+  assert.equal(session.sim.stats.attentionPokes, 1);
+  session.brakeHeld = true;
+  sessionStep(session, 0.2);
+  assert.ok(session.sim.brakeInput > 0.4);
+  onBlur(session);
+  assert.equal(session.phase, "pause");
+  assert.equal(session.sim.brakeInput, 0);
+  assert.equal(session.sim.attention, "stow");
+  restartSession(session);
+  assert.equal(session.phase, "drive");
+  assert.equal(session.sim.attention, "road");
+  assert.equal(session.sim.phonePlayed, false);
+  assert.equal(session.sim.stats.attentionPokes, 0);
+});
+
+function napYard() {
+  return {
+    id: "nap-yard",
+    seed: 8,
+    cruise: 12,
+    length: 260,
+    sleepDrowsyAt: 20,
+    sleepAt: 48,
+    sleepFor: "nap",
+    hazards: [
+      { id: "nap", type: "pothole", s: 120, trust: true, x: 1.8, halfW: 0.72, halfL: 1.15, telegraph: 72, decision: 58, commit: 40 },
+    ],
+  };
+}
+
+test("drowsiness shows before sleep, and one tap or the brake keeps the hole fair", () => {
+  const preview = createSim(napYard(), 8);
+  preview.v = 12;
+  preview.s = 20;
+  rawStep(preview, dt, { held: false, tap: false });
+  assert.equal(preview.attention, "drowsy");
+  assert.equal(expressionId(preview), "drowsy");
+  preview.s = 48;
+  rawStep(preview, dt, { held: false, tap: false });
+  assert.equal(preview.attention, "asleep");
+  assert.equal(expressionId(preview), "asleep");
+  assert.notEqual(expressionId(preview), "phone");
+
+  const woken = runSim(napYard(), () => false, { maxTime: 40 });
+  assert.equal(woken.stats.collisions, 0, dump(woken));
+  assert.equal(woken.stats.attentionPokes, 1);
+  assert.equal(woken.hazards[0].resolved, "clear");
+
+  const dozing = runSim(napYard(), () => false, { maxTime: 40, attend: false });
+  assert.ok(dozing.stats.collisions >= 1, dump(dozing));
+  assert.equal(dozing.stats.attentionPokes, 0);
+
+  const braked = createSim(napYard(), 8);
+  braked.v = 12;
+  for (let i = 0; i < 4000 && braked.stats.collisions === 0 && braked.s < 140; i++) {
+    stepSim(braked, dt, { held: 120 - braked.s < 50, tap: false });
+  }
+  assert.equal(braked.stats.collisions, 0, dump(braked));
+  assert.ok(braked.v < 0.4, braked.v);
+  assert.ok(braked.s + CFG.carHalfFront < 120 - 1.15, braked.s);
+
+  const calm = createSim(napYard(), 8);
+  assert.equal(pokeAttention(calm), false);
+  calm.s = 48;
+  rawStep(calm, dt, { held: false, tap: false });
+  assert.equal(pokeAttention(calm), true);
+  assert.equal(calm.attention, "wake");
+  assert.equal(pokeAttention(calm), false);
+  assert.equal(calm.stats.attentionPokes, 1);
+  rawStep(calm, 0.7, { held: false, tap: true });
+  assert.equal(calm.attention, "earnest");
+  assert.equal(calm.stats.attentionPokes, 1);
+
+  const session = createSession(getMission("lesson2"), { seed: 22 });
+  sessionStep(session, 3.1);
+  session.sim.s = 430;
+  sessionStep(session, 0.05);
+  assert.equal(session.sim.attention, "asleep");
+  keyDown(session, "KeyF");
+  assert.equal(session.sim.attention, "wake");
+  keyDown(session, "KeyF", { repeat: true });
+  assert.equal(session.sim.stats.attentionPokes, 1);
+  session.brakeHeld = true;
+  sessionStep(session, 0.2);
+  assert.ok(session.sim.brakeInput > 0.3);
+  onBlur(session);
+  assert.equal(session.sim.brakeInput, 0);
+  assert.equal(session.sim.attention, "wake");
+  restartSession(session);
+  assert.equal(session.sim.attention, "road");
+  assert.equal(session.sim.sleepPlayed, false);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {
