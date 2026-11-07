@@ -1,0 +1,139 @@
+{
+  "status": "proposal-v2",
+  "accepted": false,
+  "rejected_previous": "art/proposals (c6d9823) — угловатая итерация, не принята",
+  "production": "js/draw.js не менялся",
+  "source": "art/proposals-v2/sample.html",
+  "completed": [
+    "anton-drive",
+    "anton-phone",
+    "anton-drowsy",
+    "anton-asleep",
+    "anton-earnest",
+    "anton-wake",
+    "ped-one",
+    "dog",
+    "car-forward",
+    "car-brake",
+    "car-other",
+    "bin",
+    "lid",
+    "hole",
+    "icon-preserved"
+  ],
+  "missing": [
+    "дома и деревья",
+    "педаль, терпение, титры, гараж, пауза, итог",
+    "торт и рыба",
+    "Антон: stow, preen, furious, belted, ashamed, proud, annoyed, focused",
+    "второй и третий пешеход",
+    "кадры походки внутри симуляции"
+  ],
+  "assets": [
+    {
+      "id": "anton-drive",
+      "file": "png/anton-drive.png",
+      "width": 640,
+      "height": 760,
+      "status": "proposal"
+    },
+    {
+      "id": "anton-phone",
+      "file": "png/anton-phone.png",
+      "width": 640,
+      "height": 760,
+      "status": "proposal"
+    },
+    {
+      "id": "anton-drowsy",
+      "file": "png/anton-drowsy.png",
+      "width": 640,
+      "height": 760,
+      "status": "proposal"
+    },
+    {
+      "id": "anton-asleep",
+      "file": "png/anton-asleep.png",
+      "width": 640,
+      "height": 760,
+      "status": "proposal"
+    },
+    {
+      "id": "anton-earnest",
+      "file": "png/anton-earnest.png",
+      "width": 640,
+      "height": 760,
+      "status": "proposal"
+    },
+    {
+      "id": "anton-wake",
+      "file": "png/anton-wake.png",
+      "width": 640,
+      "height": 760,
+      "status": "proposal"
+    },
+    {
+      "id": "ped-one",
+      "file": "png/ped-one.png",
+      "width": 360,
+      "height": 560,
+      "status": "proposal"
+    },
+    {
+      "id": "dog",
+      "file": "png/dog.png",
+      "width": 460,
+      "height": 320,
+      "status": "proposal"
+    },
+    {
+      "id": "car-forward",
+      "file": "png/car-forward.png",
+      "width": 640,
+      "height": 460,
+      "status": "proposal"
+    },
+    {
+      "id": "car-brake",
+      "file": "png/car-brake.png",
+      "width": 640,
+      "height": 460,
+      "status": "proposal"
+    },
+    {
+      "id": "car-other",
+      "file": "png/car-other.png",
+      "width": 640,
+      "height": 460,
+      "status": "proposal"
+    },
+    {
+      "id": "bin",
+      "file": "png/bin.png",
+      "width": 280,
+      "height": 320,
+      "status": "proposal"
+    },
+    {
+      "id": "lid",
+      "file": "png/lid.png",
+      "width": 280,
+      "height": 180,
+      "status": "proposal"
+    },
+    {
+      "id": "hole",
+      "file": "png/hole.png",
+      "width": 280,
+      "height": 200,
+      "status": "proposal"
+    },
+    {
+      "id": "icon",
+      "file": "png/icon-anton-wheel-1024.png",
+      "width": 1024,
+      "height": 1024,
+      "status": "preserved"
+    }
+  ]
+}
