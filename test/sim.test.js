@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 
 import { CFG } from "../js/config.js";
+import { frameSize, stableFrame } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
 import {
@@ -902,6 +903,34 @@ test("brake timing: early stop leaves a gap, late speed is a hit, crawl is not",
 
   const kinds = new Set(early.events.map((e) => e.kind + ":" + (e.id || "")));
   assert.ok([...kinds].some((name) => name.includes("lid") || name.includes("roller") || early.events.some((e) => e.id === "lid")));
+});
+
+test("the mobile frame stays on whole pixels when the toolbar jitters", () => {
+  const phone = frameSize(844, 390);
+  assert.equal(phone.width, Math.floor(phone.width));
+  assert.equal(phone.height, Math.floor(phone.height));
+  assert.ok(phone.height <= 390);
+  assert.ok(phone.width <= 844);
+  assert.ok(Math.abs(phone.width / phone.height - 16 / 9) < 0.02);
+
+  const held = stableFrame(phone, 844, 391);
+  assert.equal(held.width, phone.width);
+  assert.equal(held.height, phone.height);
+  assert.equal(stableFrame(phone, 844, 389).height, phone.height);
+
+  const android = frameSize(915, 412);
+  const shorter = stableFrame(android, 915, 360);
+  assert.ok(shorter.height < android.height);
+  assert.equal(shorter.width, Math.floor(shorter.width));
+
+  // The old 100vh formula centers a changing canvas in a fixed screen.
+  function legacyTop(outerW, outerH, cssVh) {
+    const height = Math.min(cssVh, (outerW * 9) / 16);
+    return (outerH - height) / 2;
+  }
+  const a = legacyTop(932, 430, 430);
+  const b = legacyTop(932, 430, 414);
+  assert.ok(Math.abs(b - a) > 5);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

@@ -23,6 +23,7 @@ import {
   sessionStep,
 } from "./session.js";
 import { applyVictory, freshSave, noteInfiniteDistance, parseSave } from "./storage.js";
+import { stableFrame } from "./viewport.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -324,11 +325,33 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function syncOrient() {
-  document.body.classList.toggle("is-portrait", window.innerHeight > window.innerWidth);
+  const box = window.visualViewport;
+  const width = box?.width || window.innerWidth;
+  const height = box?.height || window.innerHeight;
+  document.body.classList.toggle("is-portrait", height > width);
 }
 
-window.addEventListener("resize", syncOrient);
+let frameSize = null;
+
+function fitCanvas() {
+  const wrap = document.getElementById("wrap");
+  const box = window.visualViewport;
+  const width = wrap && wrap.clientWidth > 0 ? wrap.clientWidth : box?.width || window.innerWidth;
+  const height = wrap && wrap.clientHeight > 0 ? wrap.clientHeight : box?.height || window.innerHeight;
+  const next = stableFrame(frameSize, width, height);
+  if (frameSize && next.width === frameSize.width && next.height === frameSize.height) return;
+  frameSize = next;
+  canvas.style.width = `${next.width}px`;
+  canvas.style.height = `${next.height}px`;
+}
+
+window.addEventListener("resize", () => {
+  syncOrient();
+  fitCanvas();
+});
+window.visualViewport?.addEventListener("resize", fitCanvas);
 syncOrient();
+fitCanvas();
 
 window.__anton = {
   getState() {
@@ -358,6 +381,10 @@ window.__anton = {
   },
   hotspots() {
     return hotspots.map((spot) => ({ id: spot.id, x: spot.x, y: spot.y, w: spot.w, h: spot.h }));
+  },
+  frameBox() {
+    const rect = canvas.getBoundingClientRect();
+    return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
   },
   labels() {
     return labels.map((item) => ({ ...item }));

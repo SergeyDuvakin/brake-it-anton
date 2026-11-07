@@ -185,6 +185,30 @@ function assertLabels(labels) {
   }
 }
 
+test("844×390 and a Pixel landscape keep a stable 16:9 canvas when height jitters", async ({ page }) => {
+  for (const size of [
+    { width: 844, height: 390 },
+    { width: 915, height: 412 },
+    { width: 800, height: 360 },
+  ]) {
+    await page.setViewportSize(size);
+    await page.goto(gameURL());
+    await page.waitForFunction(() => window.__anton?.frameBox);
+    const first = await page.evaluate(() => window.__anton.frameBox());
+    expect(Math.abs(first.width / first.height - 16 / 9)).toBeLessThan(0.03);
+    expect(first.width).toBe(Math.floor(first.width));
+    expect(first.height).toBe(Math.floor(first.height));
+    for (const height of [size.height + 1, size.height - 1, size.height + 2, size.height]) {
+      await page.setViewportSize({ width: size.width, height });
+      await page.waitForTimeout(40);
+    }
+    const after = await page.evaluate(() => window.__anton.frameBox());
+    expect(Math.abs(after.top - first.top)).toBeLessThan(1.5);
+    expect(Math.abs(after.height - first.height)).toBeLessThan(1.5);
+    expect(Math.abs(after.left - first.left)).toBeLessThan(1.5);
+  }
+});
+
 test("844×390 landscape keeps 16:9 and the start control inside the canvas", async ({ page }) => {
   await page.setViewportSize({ width: 844, height: 390 });
   await page.goto(gameURL());
