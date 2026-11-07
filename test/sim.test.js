@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 
 import { CFG } from "../js/config.js";
@@ -834,7 +835,25 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
   for (const font of ["BalsamiqSans-Bold.ttf", "BalsamiqSans-Regular.ttf", "RubikMonoOne-Regular.ttf"]) {
     assert.ok(yml.includes(`assets/fonts/${font}`), font);
   }
-  assert.ok(!yml.includes(".png"));
+  for (const icon of [
+    "manifest.webmanifest",
+    "icons/favicon-32.png",
+    "icons/apple-touch-icon.png",
+    "icons/icon-192.png",
+    "icons/icon-512.png",
+  ]) {
+    assert.ok(yml.includes(icon), icon);
+  }
+  assert.ok(!yml.includes("artifacts/"));
+  assert.ok(!yml.includes("cp icons/anton-wheel-1024.png"));
+  assert.ok(yml.includes("test ! -e .pages-dist/icons/anton-wheel-1024.png"));
+  const master = createHash("sha256").update(readFileSync("icons/anton-wheel-1024.png")).digest("hex");
+  assert.equal(master, "0d4fb6984918709768f78bc567088197970b7fd75c09de47f082377c2076f0a6");
+  const html = readFileSync("index.html", "utf8");
+  assert.ok(html.includes('href="icons/favicon-32.png"'));
+  assert.ok(html.includes('href="icons/apple-touch-icon.png"'));
+  assert.ok(html.includes('href="manifest.webmanifest"'));
+  assert.ok(!html.includes("/icons/"));
 });
 
 function brakeOpen(sim) {
