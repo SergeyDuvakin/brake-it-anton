@@ -1132,45 +1132,99 @@ function drawCabin(ctx, sim, state, boil, visual) {
   ctx.restore();
 }
 
-function gripPoint(side, angle) {
-  const lx = side * 42;
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  return { x: lx * c, y: 188 + lx * s };
-}
-
 function drawLimb(ctx, x0, y0, cx, cy, x1, y1) {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 22;
+  ctx.lineWidth = 16;
   ctx.beginPath();
   ctx.moveTo(x0, y0);
   ctx.quadraticCurveTo(cx, cy, x1, y1);
   ctx.stroke();
   ctx.strokeStyle = P.SKIN;
-  ctx.lineWidth = 12;
+  ctx.lineWidth = 8;
   ctx.stroke();
 }
 
-function drawGripHand(ctx, point, side) {
-  ctx.fillStyle = P.SKIN;
-  ctx.beginPath();
-  ctx.arc(point.x, point.y, 26, 0, Math.PI * 2);
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
+/** A point `dist` pixels from `from` toward `to`. */
+function toward(from, to, dist) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: from.x + (dx / len) * dist, y: from.y + (dy / len) * dist };
+}
+
+const STEER_Y = 200;
+const STEER_RX = 76;
+const STEER_RY = 34;
+
+function gripPoint(side, angle) {
+  const base = side < 0 ? Math.PI - 0.5 : 0.5;
+  const a = base + angle;
+  return {
+    x: Math.cos(a) * (STEER_RX - 6),
+    y: STEER_Y + Math.sin(a) * (STEER_RY - 3),
+    a,
+  };
+}
+
+function drawSteeringWheel(ctx, angle) {
+  ctx.save();
+  ctx.translate(0, STEER_Y);
+  ctx.rotate(angle);
   ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 4;
   ctx.lineCap = "round";
+  ctx.lineWidth = 8;
   ctx.beginPath();
-  ctx.moveTo(point.x + side * 4, point.y - 14);
-  ctx.lineTo(point.x + side * 16, point.y - 22);
-  ctx.moveTo(point.x + side * 10, point.y - 2);
-  ctx.lineTo(point.x + side * 24, point.y - 2);
-  ctx.moveTo(point.x + side * 6, point.y + 12);
-  ctx.lineTo(point.x + side * 18, point.y + 14);
+  ctx.moveTo(-44, 7);
+  ctx.lineTo(-12, 1);
+  ctx.moveTo(44, 7);
+  ctx.lineTo(12, 1);
+  ctx.moveTo(0, 22);
+  ctx.lineTo(0, 10);
   ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(0, 0, STEER_RX, STEER_RY, 0, 0, Math.PI * 2);
+  ctx.lineWidth = 16;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(0, 0, STEER_RX - 20, STEER_RY - 11, 0, 0, Math.PI * 2);
+  ctx.strokeStyle = P.PAPER;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 2, 11, 0, Math.PI * 2);
+  ctx.fillStyle = P.INK;
+  ctx.fill();
+  ctx.strokeStyle = P.PAPER;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawGripHand(ctx, point, side) {
+  const dir = side < 0 ? -1 : 1;
+  ctx.save();
+  ctx.translate(point.x, point.y);
+  ctx.fillStyle = P.SKIN;
+  for (const [x, y, rad] of [[dir * 9, -10, 5.5], [dir * 15, -1, 5.5], [dir * 11, 8, 5]]) {
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(0, 0, 13, 0, Math.PI * 2);
+  ctx.fill();
+  ink(ctx, 3);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(-dir * 8, 8, 6, 4.5, dir * 0.5, 0, Math.PI * 2);
+  ctx.fill();
+  ink(ctx, 3);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawAnton(ctx, exp, boil, lean, sim) {
@@ -1195,30 +1249,20 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   const wheel = Math.max(-0.35, Math.min(0.35, ((sim.targetX || 1.8) - (sim.x || 1.8)) * 0.45));
   const leftGrip = gripPoint(-1, wheel);
   const rightGrip = gripPoint(1, wheel);
+  const leftShoulder = { x: -102, y: 128 };
+  const rightShoulder = { x: 102, y: 128 };
   const stowU = exp === "stow" ? Math.max(0, Math.min(1, (sim.stowT || 0) / 0.72)) : 0;
   const onWheel = !shift.phoneHand && !shift.limp;
   if (onWheel && !shift.hairHand) {
-    drawLimb(ctx, -102, 128, -128, 168, leftGrip.x, leftGrip.y);
-    drawLimb(ctx, 102, 128, 128, 168, rightGrip.x, rightGrip.y);
+    const leftWrist = toward(leftGrip, leftShoulder, 14);
+    const rightWrist = toward(rightGrip, rightShoulder, 14);
+    drawLimb(ctx, leftShoulder.x, leftShoulder.y, -124, 168, leftWrist.x, leftWrist.y);
+    drawLimb(ctx, rightShoulder.x, rightShoulder.y, 124, 168, rightWrist.x, rightWrist.y);
   } else if (onWheel && shift.hairHand) {
-    drawLimb(ctx, 102, 128, 128, 168, rightGrip.x, rightGrip.y);
+    const rightWrist = toward(rightGrip, rightShoulder, 14);
+    drawLimb(ctx, rightShoulder.x, rightShoulder.y, 124, 168, rightWrist.x, rightWrist.y);
   }
-  ctx.save();
-  ctx.translate(0, 188);
-  ctx.rotate(wheel);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 58, 24, 0, 0, Math.PI * 2);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-  ctx.strokeStyle = P.PAPER;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(-34, 0);
-  ctx.lineTo(34, 0);
-  ctx.moveTo(0, -14);
-  ctx.lineTo(0, 14);
-  ctx.stroke();
-  ctx.restore();
+  drawSteeringWheel(ctx, wheel);
   if (onWheel && !shift.hairHand) {
     drawGripHand(ctx, leftGrip, -1);
     drawGripHand(ctx, rightGrip, 1);
@@ -1242,16 +1286,20 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   }
 
   if (shift.limp) {
-    drawLimb(ctx, -48, 108, -88, 170, -70, 214);
-    drawLimb(ctx, 48, 112, 92, 176, 74, 218);
-    drawGripHand(ctx, { x: -70, y: 222 }, -1);
-    drawGripHand(ctx, { x: 74, y: 226 }, 1);
+    const leftHang = { x: -96, y: 258 };
+    const rightHang = { x: 100, y: 262 };
+    const leftWrist = toward(leftHang, { x: -48, y: 108 }, 14);
+    const rightWrist = toward(rightHang, { x: 48, y: 112 }, 14);
+    drawLimb(ctx, -48, 108, -108, 196, leftWrist.x, leftWrist.y);
+    drawLimb(ctx, 48, 112, 112, 200, rightWrist.x, rightWrist.y);
+    drawGripHand(ctx, leftHang, -1);
+    drawGripHand(ctx, rightHang, 1);
   }
   if (shift.phoneHand) {
     const u = stowU;
     const left = {
-      x: -74 + (leftGrip.x + 74) * u,
-      y: 214 + (leftGrip.y - 214) * u,
+      x: -96 + (leftGrip.x + 96) * u,
+      y: 252 + (leftGrip.y - 252) * u,
     };
     const phone = {
       x: 50 + u * 34,
@@ -1261,8 +1309,10 @@ function drawAnton(ctx, exp, boil, lean, sim) {
       x: phone.x + (rightGrip.x - phone.x) * u,
       y: phone.y + (rightGrip.y - phone.y) * u,
     };
-    drawLimb(ctx, -62, 118, -96, 168, left.x, left.y);
-    drawLimb(ctx, 48, 116, 96, 70 + u * 30, right.x, right.y);
+    const leftWrist = toward(left, { x: -62, y: 118 }, 14);
+    const rightWrist = toward(right, { x: 48, y: 116 }, 14);
+    drawLimb(ctx, -62, 118, -108, 180, leftWrist.x, leftWrist.y);
+    drawLimb(ctx, 48, 116, 96, 70 + u * 30, rightWrist.x, rightWrist.y);
     drawGripHand(ctx, left, -1);
     if (u > 0.72) drawGripHand(ctx, rightGrip, 1);
   }
@@ -1276,12 +1326,15 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   ink(ctx, 6);
   ctx.stroke();
   ctx.fillStyle = P.SKIN;
-  ctx.beginPath();
-  ctx.ellipse(-104, 18, 16, 22, 0, 0, Math.PI * 2);
-  ctx.ellipse(104, 26, 14, 18, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
+  // Each ear is its own path. Two ellipses in one path draw a straight
+  // line from the end of the first to the start of the second.
+  for (const [x, y, rx, ry] of [[-104, 18, 16, 22], [104, 26, 14, 18]]) {
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+  }
 
   ctx.strokeStyle = P.INK;
   ctx.lineWidth = 5;

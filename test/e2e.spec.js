@@ -1063,24 +1063,39 @@ test("one tap and the brake are different fingers", async ({ page }) => {
     canvas.width = 1600;
     canvas.height = 900;
     const ctx = canvas.getContext("2d");
-    const poses = ["road", "phone", "drowsy", "asleep", "earnest"];
+    const poses = ["road", "earnest", "drowsy", "phone", "stow", "asleep", "wake"];
     const sheet = document.createElement("canvas");
     sheet.width = 520 * poses.length;
     const phoneH = Math.round(640 * (225 / 520));
     sheet.height = 640 + 12 + phoneH;
     const out = sheet.getContext("2d");
     const skin = {};
-    function skinCount(x, y) {
-      const data = ctx.getImageData(x, y, 48, 48).data;
+    function skinCount(x, y, w, h) {
+      const data = ctx.getImageData(x, y, w, h).data;
       let n = 0;
       for (let i = 0; i < data.length; i += 4) {
         if (data[i] > 210 && data[i + 1] > 150 && data[i + 1] < 220 && data[i + 2] < 180) n += 1;
       }
       return n;
     }
+    function longestInk(x, y, w, h) {
+      const data = ctx.getImageData(x, y, w, h).data;
+      let best = 0;
+      for (let row = 0; row < h; row += 1) {
+        let run = 0;
+        for (let col = 0; col < w; col += 1) {
+          const i = (row * w + col) * 4;
+          const inked = data[i] < 45 && data[i + 1] < 40 && data[i + 2] < 50;
+          run = inked ? run + 1 : 0;
+          if (run > best) best = run;
+        }
+      }
+      return best;
+    }
     poses.forEach((attention, index) => {
       const sim = createSim(mission, 11);
       sim.attention = attention;
+      if (attention === "stow") sim.stowT = 0.36;
       const session = {
         sim,
         phase: "drive",
@@ -1106,17 +1121,27 @@ test("one tap and the brake are different fingers", async ({ page }) => {
       });
       out.drawImage(canvas, 1056, 24, 520, 640, index * 520, 0, 520, 640);
       out.drawImage(canvas, 1056, 24, 520, 640, index * 225, 652, 225, phoneH);
-      skin[attention] = { left: skinCount(1250, 430), right: skinCount(1340, 430) };
+      skin[attention] = {
+        left: skinCount(1210, 450, 80, 90),
+        right: skinCount(1355, 450, 80, 90),
+        line: longestInk(1180, 250, 280, 100),
+      };
     });
     return { sheet: sheet.toDataURL("image/png"), skin };
   });
   fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
   fs.writeFileSync("/opt/cursor/artifacts/anton-hands.png", Buffer.from(sheet.sheet.split(",")[1], "base64"));
-  expect(sheet.skin.road.left).toBeGreaterThan(80);
-  expect(sheet.skin.road.right).toBeGreaterThan(80);
-  expect(sheet.skin.earnest.left).toBeGreaterThan(80);
-  expect(sheet.skin.drowsy.left).toBeGreaterThan(40);
+  expect(sheet.skin.road.left).toBeGreaterThan(40);
+  expect(sheet.skin.road.right).toBeGreaterThan(40);
+  expect(sheet.skin.earnest.left).toBeGreaterThan(40);
+  expect(sheet.skin.earnest.right).toBeGreaterThan(40);
+  expect(sheet.skin.wake.left).toBeGreaterThan(40);
+  expect(sheet.skin.wake.right).toBeGreaterThan(40);
+  expect(sheet.skin.drowsy.left).toBeGreaterThan(20);
   expect(sheet.skin.asleep.left).toBeLessThan(sheet.skin.road.left / 2);
+  for (const pose of ["road", "earnest", "drowsy", "phone", "stow", "asleep", "wake"]) {
+    expect(sheet.skin[pose].line, pose).toBeLessThan(80);
+  }
 
   await page.evaluate(() => {
     window.__anton.debugStart("lesson1");
