@@ -516,21 +516,22 @@ function drawProp(ctx, item, boil) {
   const color = [P.PINK, P.BLUE, P.ORANGE, P.YEL, P.TEAL][Math.abs(item.n + item.side) % 5];
   const cycle = Math.abs(item.n * 2 + (item.side > 0 ? 1 : 4)) % 7;
   shadowAt(ctx, spot.x, spot.y, sc, 46);
+  // Houses and trees stay put. The 110 ms boil is only for people, dogs and Anton.
   if (item.band === "market") {
-    drawBuilding(ctx, spot.x, spot.y, sc, cycle % 2 === 0 ? 1 : 4, color, boil, true);
+    drawBuilding(ctx, spot.x, spot.y, sc, cycle % 2 === 0 ? 1 : 4, color, 0, true);
     return;
   }
   if (item.band === "edge") {
-    if (cycle % 3 === 0) drawTree(ctx, spot.x, spot.y, sc, boil, item.n);
-    else drawBuilding(ctx, spot.x, spot.y, sc * 1.1, 3, color, boil, false);
+    if (cycle % 3 === 0) drawTree(ctx, spot.x, spot.y, sc, 0, item.n);
+    else drawBuilding(ctx, spot.x, spot.y, sc * 1.1, 3, color, 0, false);
     return;
   }
-  if (cycle === 0 || cycle === 5) drawTree(ctx, spot.x, spot.y, sc, boil, item.n);
-  else if (cycle === 1) drawBuilding(ctx, spot.x, spot.y, sc, 0, color, boil, Math.abs(item.n) % 3 === 0);
-  else if (cycle === 2) drawBuilding(ctx, spot.x, spot.y, sc, 1, color, boil, false);
-  else if (cycle === 3) drawBuilding(ctx, spot.x, spot.y, sc, 4, color, boil, false);
-  else if (cycle === 4) drawBuilding(ctx, spot.x, spot.y, sc, 0, color, boil, true);
-  else drawBuilding(ctx, spot.x, spot.y, sc, 2, color, boil, false);
+  if (cycle === 0 || cycle === 5) drawTree(ctx, spot.x, spot.y, sc, 0, item.n);
+  else if (cycle === 1) drawBuilding(ctx, spot.x, spot.y, sc, 0, color, 0, Math.abs(item.n) % 3 === 0);
+  else if (cycle === 2) drawBuilding(ctx, spot.x, spot.y, sc, 1, color, 0, false);
+  else if (cycle === 3) drawBuilding(ctx, spot.x, spot.y, sc, 4, color, 0, false);
+  else if (cycle === 4) drawBuilding(ctx, spot.x, spot.y, sc, 0, color, 0, true);
+  else drawBuilding(ctx, spot.x, spot.y, sc, 2, color, 0, false);
 }
 
 function drawBuilding(ctx, x, y, sc, kind, color, boil, laundry) {
@@ -893,7 +894,9 @@ function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0) {
   ctx.fillStyle = lamps ? P.RED : P.ORANGE;
   ctx.fillRect(-28, 32, 16, 10);
   ctx.fillRect(12, 32, 16, 10);
-  const spin = live.s * 2.6 + (boil ? 0.5 : 0);
+  // Distance turns the wheels. The 110 ms boil used to add half a radian
+  // even while the title car was standing still.
+  const spin = live.s * 2.6;
   drawWheel(ctx, -28, -30, spin);
   drawWheel(ctx, 28, -30, spin);
   drawWheel(ctx, -28, 26, spin);

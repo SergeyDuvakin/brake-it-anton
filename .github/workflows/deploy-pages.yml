@@ -42,6 +42,7 @@ jobs:
           cp icons/icon-192.png .pages-dist/icons/icon-192.png
           cp icons/icon-512.png .pages-dist/icons/icon-512.png
           cp js/audio.js .pages-dist/js/audio.js
+          cp js/clock.js .pages-dist/js/clock.js
           cp js/config.js .pages-dist/js/config.js
           cp js/draw.js .pages-dist/js/draw.js
           cp js/game.js .pages-dist/js/game.js

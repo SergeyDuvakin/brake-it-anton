@@ -7,6 +7,7 @@ export default [
       globals: {
         window: "readonly",
         document: "readonly",
+        getComputedStyle: "readonly",
         navigator: "readonly",
         requestAnimationFrame: "readonly",
         cancelAnimationFrame: "readonly",

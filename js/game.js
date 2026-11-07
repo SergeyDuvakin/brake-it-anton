@@ -23,7 +23,8 @@ import {
   sessionStep,
 } from "./session.js";
 import { applyVictory, freshSave, noteInfiniteDistance, parseSave } from "./storage.js";
-import { stableFrame } from "./viewport.js";
+import { drainFrame } from "./clock.js";
+import { contentBox, stablePlacement } from "./viewport.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -237,16 +238,10 @@ function tick(dt) {
 }
 
 function frame(now) {
-  const raw = Math.min(0.1, (now - last) / 1000);
+  const drained = drainFrame(acc, (now - last) / 1000, timeScale);
   last = now;
-  acc += raw * timeScale;
-  const cap = timeScale > 1 ? 48 : 8;
-  let steps = 0;
-  while (acc >= 1 / 60 && steps < cap) {
-    acc -= 1 / 60;
-    steps += 1;
-    tick(1 / 60);
-  }
+  acc = drained.acc;
+  for (let step = 0; step < drained.steps; step += 1) tick(1 / 60);
   const drawn = render(ctx, {
     screen,
     session,
@@ -292,6 +287,7 @@ canvas.addEventListener("pointerdown", (event) => {
 
 canvas.addEventListener("pointerup", (event) => releasePointer(event.pointerId));
 canvas.addEventListener("pointercancel", (event) => releasePointer(event.pointerId));
+canvas.addEventListener("lostpointercapture", (event) => releasePointer(event.pointerId));
 
 function releasePointer(pointerId) {
   if (!session || session.pointerId !== pointerId) return;
@@ -331,16 +327,44 @@ function syncOrient() {
   document.body.classList.toggle("is-portrait", height > width);
 }
 
-let frameSize = null;
+let placement = null;
 
 function fitCanvas() {
   const wrap = document.getElementById("wrap");
   const box = window.visualViewport;
-  const width = wrap && wrap.clientWidth > 0 ? wrap.clientWidth : box?.width || window.innerWidth;
-  const height = wrap && wrap.clientHeight > 0 ? wrap.clientHeight : box?.height || window.innerHeight;
-  const next = stableFrame(frameSize, width, height);
-  if (frameSize && next.width === frameSize.width && next.height === frameSize.height) return;
-  frameSize = next;
+  let outerW = box?.width || window.innerWidth;
+  let outerH = box?.height || window.innerHeight;
+  let originX = 0;
+  let originY = 0;
+  if (wrap && wrap.clientWidth > 0 && wrap.clientHeight > 0) {
+    const style = getComputedStyle(wrap);
+    const pad = {
+      top: parseFloat(style.paddingTop) || 0,
+      right: parseFloat(style.paddingRight) || 0,
+      bottom: parseFloat(style.paddingBottom) || 0,
+      left: parseFloat(style.paddingLeft) || 0,
+    };
+    const inner = contentBox(wrap.clientWidth, wrap.clientHeight, pad);
+    outerW = inner.width;
+    outerH = inner.height;
+    const rect = wrap.getBoundingClientRect();
+    originX = rect.left + pad.left;
+    originY = rect.top + pad.top;
+  }
+  const next = stablePlacement(placement, outerW, outerH);
+  if (
+    placement &&
+    next.width === placement.width &&
+    next.height === placement.height &&
+    next.left === placement.left &&
+    next.top === placement.top
+  ) {
+    return;
+  }
+  placement = next;
+  canvas.style.position = "fixed";
+  canvas.style.left = `${Math.round(originX + next.left)}px`;
+  canvas.style.top = `${Math.round(originY + next.top)}px`;
   canvas.style.width = `${next.width}px`;
   canvas.style.height = `${next.height}px`;
 }

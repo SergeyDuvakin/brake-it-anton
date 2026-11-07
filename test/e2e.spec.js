@@ -209,6 +209,135 @@ test("844×390 and a Pixel landscape keep a stable 16:9 canvas when height jitte
   }
 });
 
+test("title scenery and wheels stay still while people may idle", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(gameURL());
+  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "В урок"));
+  const changed = await page.evaluate(async () => {
+    const canvas = document.querySelector("canvas");
+    const ctx = canvas.getContext("2d");
+    const regions = {
+      buttons: { x: 1092, y: 640, w: 448, h: 204 },
+      tree: { x: 140, y: 280, w: 240, h: 320 },
+      wheel: { x: 640, y: 670, w: 140, h: 140 },
+    };
+    const read = (rect) => Uint8ClampedArray.from(ctx.getImageData(rect.x, rect.y, rect.w, rect.h).data);
+    const count = (a, b) => {
+      let changed = 0;
+      for (let i = 0; i < a.length; i += 4) {
+        const delta = Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+        if (delta > 24) changed += 1;
+      }
+      return changed;
+    };
+    let painted = read(regions.buttons);
+    for (let i = 0; i < 30; i++) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const now = read(regions.buttons);
+      if (now[3] !== 0 && count(painted, now) === 0) break;
+      painted = now;
+    }
+    const first = Object.fromEntries(Object.entries(regions).map(([key, rect]) => [key, read(rect)]));
+    const worst = { buttons: 0, tree: 0, wheel: 0 };
+    const start = performance.now();
+    while (performance.now() - start < 450) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      for (const [key, rect] of Object.entries(regions)) {
+        worst[key] = Math.max(worst[key], count(first[key], read(rect)));
+      }
+    }
+    return worst;
+  });
+  expect(changed.buttons).toBe(0);
+  expect(changed.tree).toBe(0);
+  expect(changed.wheel).toBe(0);
+});
+
+test("safe-area padding keeps a 16:9 canvas inside the content box", async ({ page }) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto(gameURL());
+  await page.waitForFunction(() => window.__anton?.frameBox);
+  await page.evaluate(() => {
+    document.getElementById("wrap").style.padding = "0px 47px 21px 47px";
+    window.dispatchEvent(new Event("resize"));
+  });
+  const box = await page.evaluate(() => {
+    const wrap = document.getElementById("wrap");
+    const canvas = document.querySelector("canvas");
+    const style = getComputedStyle(wrap);
+    const pad = {
+      top: parseFloat(style.paddingTop) || 0,
+      right: parseFloat(style.paddingRight) || 0,
+      bottom: parseFloat(style.paddingBottom) || 0,
+      left: parseFloat(style.paddingLeft) || 0,
+    };
+    const wrapRect = wrap.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    return {
+      content: {
+        left: wrapRect.left + pad.left,
+        top: wrapRect.top + pad.top,
+        right: wrapRect.right - pad.right,
+        bottom: wrapRect.bottom - pad.bottom,
+      },
+      canvas: {
+        left: canvasRect.left,
+        top: canvasRect.top,
+        right: canvasRect.right,
+        bottom: canvasRect.bottom,
+        width: canvasRect.width,
+        height: canvasRect.height,
+      },
+    };
+  });
+  expect(box.canvas.width / box.canvas.height).toBeCloseTo(16 / 9, 1);
+  expect(box.canvas.left).toBeGreaterThanOrEqual(box.content.left - 0.5);
+  expect(box.canvas.top).toBeGreaterThanOrEqual(box.content.top - 0.5);
+  expect(box.canvas.right).toBeLessThanOrEqual(box.content.right + 0.5);
+  expect(box.canvas.bottom).toBeLessThanOrEqual(box.content.bottom + 0.5);
+});
+
+test("losing pointer capture releases the pedal", async ({ page }) => {
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  const pedal = await pedalPoint(page);
+  await page.mouse.move(pedal.x, pedal.y);
+  await page.mouse.down();
+  await page.waitForFunction(() => window.__anton.getState().held);
+  await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }));
+  });
+  await page.waitForFunction(() => window.__anton.getState().held === false);
+  await page.mouse.up();
+});
+
+test("pointercancel releases the pedal and a second finger cannot hold it", async ({ page }) => {
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  const pedal = await pedalPoint(page);
+  await page.mouse.move(pedal.x, pedal.y);
+  await page.mouse.down();
+  await page.waitForFunction(() => window.__anton.getState().held);
+  await page.evaluate(({ x, y }) => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 2, clientX: x, clientY: y, bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2, clientX: x, clientY: y, bubbles: true }));
+  }, pedal);
+  await page.waitForTimeout(40);
+  expect(await page.evaluate(() => window.__anton.getState().held)).toBe(true);
+  await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
+  });
+  await page.waitForFunction(() => window.__anton.getState().held === false);
+  await page.mouse.up();
+});
+
 test("844×390 landscape keeps 16:9 and the start control inside the canvas", async ({ page }) => {
   await page.setViewportSize({ width: 844, height: 390 });
   await page.goto(gameURL());

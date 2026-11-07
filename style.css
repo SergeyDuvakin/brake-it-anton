@@ -41,6 +41,7 @@ html, body {
 }
 
 canvas {
+  position: fixed;
   touch-action: none;
   background: #F6ECD6;
   /* Fallback, then the small viewport, which does not track the moving toolbar. */

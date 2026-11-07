@@ -5,7 +5,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 
 import { CFG } from "../js/config.js";
-import { frameSize, stableFrame } from "../js/viewport.js";
+import { drainFrame } from "../js/clock.js";
+import { contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
 import {
@@ -916,7 +917,39 @@ test("the mobile frame stays on whole pixels when the toolbar jitters", () => {
   const held = stableFrame(phone, 844, 391);
   assert.equal(held.width, phone.width);
   assert.equal(held.height, phone.height);
-  assert.equal(stableFrame(phone, 844, 389).height, phone.height);
+  const shrunk = stableFrame(phone, 844, 389);
+  assert.ok(shrunk.height <= 389);
+  assert.ok(shrunk.width <= phone.width);
+  const back = stableFrame(shrunk, 844, 390);
+  assert.equal(back.width, shrunk.width);
+  assert.equal(back.height, shrunk.height);
+
+  const placed = stablePlacement(null, 844, 390);
+  assert.equal(placed.width, phone.width);
+  assert.equal(placed.height, phone.height);
+  assert.equal(placed.left + placed.width <= 844, true);
+  assert.equal(placed.top + placed.height <= 390, true);
+  const nudged = stablePlacement(placed, 844, 391);
+  assert.equal(nudged.left, placed.left);
+  assert.equal(nudged.top, placed.top);
+  assert.equal(nudged.width, placed.width);
+  assert.equal(nudged.height, placed.height);
+  const clipped = stablePlacement(placed, 844, 389);
+  assert.ok(clipped.height <= 389);
+  assert.ok(clipped.top >= 0);
+  assert.ok(clipped.top + clipped.height <= 389);
+  assert.ok(clipped.left >= 0);
+  assert.ok(clipped.left + clipped.width <= 844);
+
+  const padded = contentBox(844, 390, { top: 0, right: 47, bottom: 21, left: 47 });
+  assert.equal(padded.width, 750);
+  assert.equal(padded.height, 369);
+  const fitted = frameSize(padded.width, padded.height);
+  assert.ok(fitted.width <= padded.width);
+  assert.ok(fitted.height <= padded.height);
+  assert.ok(Math.abs(fitted.width / fitted.height - 16 / 9) < 0.02);
+  const squashed = 693 / 369;
+  assert.ok(Math.abs(fitted.width / fitted.height - 16 / 9) < Math.abs(squashed - 16 / 9));
 
   const android = frameSize(915, 412);
   const shorter = stableFrame(android, 915, 360);
@@ -931,6 +964,26 @@ test("the mobile frame stays on whole pixels when the toolbar jitters", () => {
   const a = legacyTop(932, 430, 430);
   const b = legacyTop(932, 430, 414);
   assert.ok(Math.abs(b - a) > 5);
+});
+
+test("display rate changes how many 1/60 steps land in a frame, not the step itself", () => {
+  for (const hz of [30, 60, 90, 120]) {
+    let acc = 0;
+    let steps = 0;
+    for (let i = 0; i < hz; i++) {
+      const drained = drainFrame(acc, 1 / hz, 1);
+      acc = drained.acc;
+      steps += drained.steps;
+    }
+    assert.ok(Math.abs(steps - 60) <= 1, `${hz} Hz produced ${steps} steps`);
+    assert.ok(acc < 1 / 60, `${hz} Hz leftover ${acc}`);
+  }
+  const stall = drainFrame(0, 0.5, 1);
+  assert.equal(stall.raw, 0.1);
+  assert.equal(stall.steps, 6);
+  const behind = drainFrame(0.2, 0.1, 1);
+  assert.ok(behind.steps <= 8);
+  assert.ok(behind.acc < 1 / 60 + 0.2);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {
