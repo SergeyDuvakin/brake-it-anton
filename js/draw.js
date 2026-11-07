@@ -1045,6 +1045,47 @@ function drawCabin(ctx, sim, state, boil, visual) {
   ctx.restore();
 }
 
+function gripPoint(side, angle) {
+  const lx = side * 42;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return { x: lx * c, y: 188 + lx * s };
+}
+
+function drawLimb(ctx, x0, y0, cx, cy, x1, y1) {
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = P.INK;
+  ctx.lineWidth = 22;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.quadraticCurveTo(cx, cy, x1, y1);
+  ctx.stroke();
+  ctx.strokeStyle = P.SKIN;
+  ctx.lineWidth = 12;
+  ctx.stroke();
+}
+
+function drawGripHand(ctx, point, side) {
+  ctx.fillStyle = P.SKIN;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 26, 0, Math.PI * 2);
+  ctx.fill();
+  ink(ctx, 4);
+  ctx.stroke();
+  ctx.strokeStyle = P.INK;
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(point.x + side * 4, point.y - 14);
+  ctx.lineTo(point.x + side * 16, point.y - 22);
+  ctx.moveTo(point.x + side * 10, point.y - 2);
+  ctx.lineTo(point.x + side * 24, point.y - 2);
+  ctx.moveTo(point.x + side * 6, point.y + 12);
+  ctx.lineTo(point.x + side * 18, point.y + 14);
+  ctx.stroke();
+}
+
 function drawAnton(ctx, exp, boil, lean, sim) {
   const shift = poseShift(exp);
   ctx.save();
@@ -1065,6 +1106,16 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   ctx.stroke();
 
   const wheel = Math.max(-0.35, Math.min(0.35, ((sim.targetX || 1.8) - (sim.x || 1.8)) * 0.45));
+  const leftGrip = gripPoint(-1, wheel);
+  const rightGrip = gripPoint(1, wheel);
+  const stowU = exp === "stow" ? Math.max(0, Math.min(1, (sim.stowT || 0) / 0.72)) : 0;
+  const onWheel = !shift.phoneHand && !shift.limp;
+  if (onWheel && !shift.hairHand) {
+    drawLimb(ctx, -102, 128, -128, 168, leftGrip.x, leftGrip.y);
+    drawLimb(ctx, 102, 128, 128, 168, rightGrip.x, rightGrip.y);
+  } else if (onWheel && shift.hairHand) {
+    drawLimb(ctx, 102, 128, 128, 168, rightGrip.x, rightGrip.y);
+  }
   ctx.save();
   ctx.translate(0, 188);
   ctx.rotate(wheel);
@@ -1080,25 +1131,13 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   ctx.moveTo(0, -14);
   ctx.lineTo(0, 14);
   ctx.stroke();
-  if (shift.phoneHand || shift.limp) {
-    /* The wheel is empty while the phone or sleep has his hands. */
-  } else if (!shift.hairHand) {
-    ctx.fillStyle = P.SKIN;
-    ctx.beginPath();
-    ctx.arc(-36, 2, 13, 0, Math.PI * 2);
-    ctx.arc(36, 2, 13, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
-  } else {
-    ctx.fillStyle = P.SKIN;
-    ctx.beginPath();
-    ctx.arc(36, 2, 13, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
-  }
   ctx.restore();
+  if (onWheel && !shift.hairHand) {
+    drawGripHand(ctx, leftGrip, -1);
+    drawGripHand(ctx, rightGrip, 1);
+  } else if (onWheel && shift.hairHand) {
+    drawGripHand(ctx, rightGrip, 1);
+  }
 
   if (shift.hairHand) {
     ctx.strokeStyle = P.INK;
@@ -1116,38 +1155,29 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   }
 
   if (shift.limp) {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 10;
-    ctx.beginPath();
-    ctx.moveTo(-48, 108);
-    ctx.quadraticCurveTo(-88, 170, -70, 214);
-    ctx.moveTo(48, 112);
-    ctx.quadraticCurveTo(92, 176, 74, 218);
-    ctx.stroke();
-    ctx.fillStyle = P.SKIN;
-    ctx.beginPath();
-    ctx.arc(-70, 222, 13, 0, Math.PI * 2);
-    ctx.arc(74, 226, 13, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
+    drawLimb(ctx, -48, 108, -88, 170, -70, 214);
+    drawLimb(ctx, 48, 112, 92, 176, 74, 218);
+    drawGripHand(ctx, { x: -70, y: 222 }, -1);
+    drawGripHand(ctx, { x: 74, y: 226 }, 1);
   }
   if (shift.phoneHand) {
-    const u = exp === "stow" ? Math.max(0, Math.min(1, (sim.stowT || 0) / 0.72)) : 0;
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 10;
-    ctx.beginPath();
-    ctx.moveTo(40, 112);
-    ctx.quadraticCurveTo(96, 70 + u * 30, 52 + u * 28, (shift.headDrop || 0) + 24 + u * u * 120);
-    ctx.moveTo(-62, 118);
-    ctx.quadraticCurveTo(-96, 168, -74, 206);
-    ctx.stroke();
-    ctx.fillStyle = P.SKIN;
-    ctx.beginPath();
-    ctx.arc(-74, 214, 13, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
+    const u = stowU;
+    const left = {
+      x: -74 + (leftGrip.x + 74) * u,
+      y: 214 + (leftGrip.y - 214) * u,
+    };
+    const phone = {
+      x: 50 + u * 34,
+      y: (shift.headDrop || 0) + 48 + u * u * 90,
+    };
+    const right = {
+      x: phone.x + (rightGrip.x - phone.x) * u,
+      y: phone.y + (rightGrip.y - phone.y) * u,
+    };
+    drawLimb(ctx, -62, 118, -96, 168, left.x, left.y);
+    drawLimb(ctx, 48, 116, 96, 70 + u * 30, right.x, right.y);
+    drawGripHand(ctx, left, -1);
+    if (u > 0.72) drawGripHand(ctx, rightGrip, 1);
   }
 
   ctx.save();
@@ -1206,7 +1236,16 @@ function drawAnton(ctx, exp, boil, lean, sim) {
   }
   ctx.restore();
   if (shift.phoneHand) {
-    const u = exp === "stow" ? Math.max(0, Math.min(1, (sim.stowT || 0) / 0.72)) : 0;
+    const u = stowU;
+    const phone = {
+      x: 50 + u * 34,
+      y: (shift.headDrop || 0) + 48 + u * u * 90,
+    };
+    const right = {
+      x: phone.x + (rightGrip.x - phone.x) * u,
+      y: phone.y + (rightGrip.y - phone.y) * u,
+    };
+    if (u <= 0.72) drawGripHand(ctx, right, 1);
     drawHandset(ctx, 50 + u * 34, (shift.headDrop || 0) + 18 + u * u * 128, -0.4 + u * 2.2);
   }
   ctx.restore();
