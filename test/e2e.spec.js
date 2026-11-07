@@ -1521,6 +1521,79 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
         gap: rgb(actor.spot.x, (fy + placedScene(sim, 1).car.y) / 2),
       };
     }
+    function show(sim, alpha = 1) {
+      render(ctx, {
+        screen: "play",
+        session: {
+          sim,
+          phase: "drive",
+          mission: { id: "cross", objective: "след", lesson: 1, length: 200, infinite: false },
+          countdown: 0,
+          keysDown: new Set(),
+          brakeHeld: false,
+          result: null,
+        },
+        save,
+        now: 1000,
+        hint: false,
+        debug: false,
+        notice: null,
+        preview: null,
+        missions: LESSONS,
+        selected: "lesson1",
+        pose: null,
+        alpha,
+        legacyAnchors: false,
+      });
+    }
+    const { project } = await import("./js/road.js");
+    const bare = createSim({
+      id: "cross", seed: 11, cruise: 12, length: 200, cargo: null, slippery: [], hazards: [],
+    }, 11);
+    bare.s = 40;
+    bare.x = 0.2;
+    bare.prevS = 39.2;
+    bare.prevX = -0.6;
+    const beforeCar = JSON.stringify({ s: bare.s, x: bare.x, hits: bare.stats.collisions });
+    const alphas = {};
+    for (const alpha of [0, 0.5, 1]) {
+      show(bare, alpha);
+      const view = placedScene(bare, alpha);
+      const xm = view.pose.x;
+      const noseIn = project(CFG.carHalfFront - 0.4, xm);
+      const noseOut = project(CFG.carHalfFront + 0.55, xm);
+      const tailIn = project(-CFG.carHalfBack + 1.05, xm);
+      const tailOut = project(-CFG.carHalfBack - 0.55, xm);
+      const mid = (CFG.carHalfFront - CFG.carHalfBack) / 2;
+      const leftOut = project(mid, xm - CFG.carHalfW - 0.4);
+      const leftIn = project(mid, xm - CFG.carHalfW + 0.28);
+      const rightOut = project(mid, xm + CFG.carHalfW + 0.4);
+      alphas[alpha] = {
+        same: JSON.stringify({ s: bare.s, x: bare.x, hits: bare.stats.collisions }) === beforeCar,
+        noseIn: rgb(noseIn.x, noseIn.y),
+        noseOut: rgb(noseOut.x, noseOut.y),
+        tailIn: rgb(tailIn.x, tailIn.y),
+        tailOut: rgb(tailOut.x, tailOut.y),
+        leftIn: rgb(leftIn.x, leftIn.y),
+        leftOut: rgb(leftOut.x, leftOut.y),
+        rightOut: rgb(rightOut.x, rightOut.y),
+      };
+    }
+    function sideCar(x) {
+      const sim = createSim({
+        id: "cross",
+        seed: 11,
+        cruise: 12,
+        length: 200,
+        cargo: null,
+        slippery: [],
+        hazards: [{ id: "park", type: "stopped", s: 40, x, halfW: 0.95, halfL: 2.2, telegraph: -1, trust: false }],
+      }, 11);
+      sim.s = 40;
+      sim.x = 0;
+      show(sim);
+      return rgb(project(0.35, x > 2 ? 1.1 : 0.62).x, project(0.35, x > 2 ? 1.1 : 0.62).y);
+    }
     const road = "88,96,120";
     const zoom = document.createElement("canvas");
     zoom.width = 560 * 3;
@@ -1542,6 +1615,9 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
       zoom: zoom.toDataURL("image/png"),
       patches,
       contacts: [4, 0, -1.2].map(contact),
+      alphas,
+      clearSide: sideCar(2.3),
+      hitSide: sideCar(1.35),
       road,
     };
   });
@@ -1574,6 +1650,23 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
   expect(carPaint(touch.below), touch.below).toBe(true);
   expect(dark(inside.foot), inside.foot).toBe(true);
   expect(dark(inside.leg), inside.leg).toBe(true);
+  const yellowEnough = (value) => {
+    const [r, g, b] = value.split(",").map(Number);
+    return r > 200 && g > 150 && b < 100;
+  };
+  for (const alpha of ["0", "0.5", "1"]) {
+    const row = drawn.alphas[alpha];
+    expect(row.same, alpha).toBe(true);
+    expect(yellowEnough(row.noseIn), `${alpha} nose ${row.noseIn}`).toBe(true);
+    expect(yellowEnough(row.tailIn), `${alpha} tail ${row.tailIn}`).toBe(true);
+    expect(yellowEnough(row.leftIn), `${alpha} side ${row.leftIn}`).toBe(true);
+    expect(yellowEnough(row.noseOut), `${alpha} past nose ${row.noseOut}`).toBe(false);
+    expect(yellowEnough(row.tailOut), `${alpha} past tail ${row.tailOut}`).toBe(false);
+    expect(yellowEnough(row.leftOut), `${alpha} past left ${row.leftOut}`).toBe(false);
+    expect(yellowEnough(row.rightOut), `${alpha} past right ${row.rightOut}`).toBe(false);
+  }
+  expect(yellowEnough(drawn.clearSide), drawn.clearSide).toBe(false);
+  expect(drawn.hitSide, drawn.hitSide).not.toBe(drawn.road);
   fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
   fs.writeFileSync("/opt/cursor/artifacts/crossing-before-after.png", Buffer.from(drawn.sheet.split(",")[1], "base64"));
   fs.writeFileSync("/opt/cursor/artifacts/crossing-zoom.png", Buffer.from(drawn.zoom.split(",")[1], "base64"));

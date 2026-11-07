@@ -20,6 +20,7 @@ import {
   bumperFootGap,
   carDrawOrigin,
   pedestrianFootShift,
+  playerChassis,
   placedScene,
   render,
 } from "../js/draw.js";
@@ -2059,30 +2060,47 @@ test("every family shares its hitbox ground, and nearer bodies paint in front", 
   assert.equal(simFingerprint(session.sim), fingerprint);
 });
 
-test("upright bodies stay tall, and the player sprite is not resized to the chassis", () => {
-  const nose = project(CFG.carHalfFront, 0);
-  const paintedPx = CAR_BODY_H * CAR_SPRITE_SCALE;
-  const tailY = nose.y + paintedPx;
-  const zTail = VIEW.camLift / (tailY - VIEW.vanishY);
-  const paintedM = CFG.carHalfFront - (zTail - VIEW.camBack);
-  const chassisM = CFG.carHalfFront + CFG.carHalfBack;
-  assert.ok(paintedM > 7.4 && paintedM < 7.9, paintedM);
-  assert.ok(Math.abs(chassisM - 3.4) < 1e-9);
-  const paintedW = CAR_BODY_W * CAR_SPRITE_SCALE;
-  const hitW = (CFG.carHalfW * 2 * VIEW.focal) / nose.z;
-  assert.ok(hitW - paintedW > 50 && hitW - paintedW < 70, hitW - paintedW);
-  const origin = carDrawOrigin(nose.x, nose.y, 0, 0);
-  assert.ok(Math.abs(origin.y + CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE - nose.y) < 1e-6);
+test("the player chassis matches its hitbox, and people stay taller than their patch", () => {
+  const sim = createSim({
+    id: "fit",
+    seed: 2,
+    cruise: 12,
+    length: 80,
+    cargo: null,
+    slippery: [],
+    hazards: [{ id: "ped", type: "pedestrian", s: 30, x: 1.1, halfW: 0.42, halfL: 0.55 }],
+  }, 2);
+  sim.prevS = 10;
+  sim.s = 14;
+  sim.prevX = -0.4;
+  sim.x = 1.2;
+  for (const alpha of [0, 0.5, 1]) {
+    const scene = placedScene(sim, alpha);
+    const box = playerChassis(scene.pose.x);
+    assert.ok(Math.abs(box.nose.x - project(CFG.carHalfFront, scene.pose.x).x) < 1e-6);
+    assert.ok(Math.abs(box.nose.y - project(CFG.carHalfFront, scene.pose.x).y) < 1e-6);
+    assert.ok(Math.abs(box.tail.y - project(-CFG.carHalfBack, scene.pose.x).y) < 1e-6);
+    assert.ok(box.noseL.x < box.nose.x && box.nose.x < box.noseR.x);
+    assert.ok(box.tail.y > box.nose.y);
+    assert.ok(Math.abs(box.noseR.x - project(CFG.carHalfFront, scene.pose.x + CFG.carHalfW).x) < 1e-6);
+    assert.ok(Math.abs(box.tailL.x - project(-CFG.carHalfBack, scene.pose.x - CFG.carHalfW).x) < 1e-6);
+  }
+  const mid = placedScene(sim, 0.5);
+  const at0 = placedScene(sim, 0);
+  const at1 = placedScene(sim, 1);
+  assert.ok(Math.abs(mid.pose.x - (at0.pose.x + at1.pose.x) / 2) < 1e-9);
 
+  const nose = project(CFG.carHalfFront, 0);
   const sc = Math.max(0.62, Math.min(1.45, nose.scale * 1.55));
   const personPx = (PED_FOOT_LOCAL_Y + 62 + 26) * sc;
   const dogPx = (DOG_PAW_LOCAL_Y + 16 + 14) * sc;
   const personGround = nose.y - project(CFG.carHalfFront + 1.1, 0).y;
   const dogGround = nose.y - project(CFG.carHalfFront + 1.6, 0).y;
-  assert.ok(personGround > 10 && personGround < 25, personGround);
   assert.ok(personPx > personGround * 8, personPx);
   assert.ok(dogPx > dogGround * 3, dogPx);
   assert.equal(pedestrianFootShift(), -PED_FOOT_LOCAL_Y);
+  const title = carDrawOrigin(nose.x, nose.y, 0, 0);
+  assert.ok(Math.abs(title.y + CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE - nose.y) < 1e-6);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {
