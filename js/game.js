@@ -421,6 +421,9 @@ window.__anton = {
     if (!debug) return;
     timeScale = value;
   },
+  getTimeScale() {
+    return timeScale;
+  },
   debugStart(id) {
     if (!debug) return;
     const mission = getMission(id, id === "infinite" ? 7 : undefined);

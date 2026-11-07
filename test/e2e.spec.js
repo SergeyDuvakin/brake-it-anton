@@ -451,6 +451,13 @@ function lessonBrake(state) {
   return false;
 }
 
+async function frozenShot(page, path) {
+  const scale = await page.evaluate(() => window.__anton.getTimeScale());
+  await page.evaluate(() => window.__anton.setTimeScale(0));
+  await page.screenshot({ path });
+  await page.evaluate((value) => window.__anton.setTimeScale(value), scale);
+}
+
 async function driveWithPedal(page, decide, shots = {}) {
   await page.waitForFunction(() => {
     const phase = window.__anton.getState().phase;
@@ -472,6 +479,15 @@ async function driveWithPedal(page, decide, shots = {}) {
       expect(sawBusy).toBe(true);
       return state;
     }
+    const want = state.phase === "drive" && decide(state);
+    if (want && !down) {
+      await page.mouse.move(pedal.x, pedal.y);
+      await page.mouse.down();
+      down = true;
+    } else if (!want && down) {
+      await page.mouse.up();
+      down = false;
+    }
     if (
       !sawRescue &&
       state.phase === "drive" &&
@@ -481,7 +497,7 @@ async function driveWithPedal(page, decide, shots = {}) {
       state.hazard.cross > 0.25 &&
       state.hazard.cross < 2.8
     ) {
-      await page.screenshot({ path: shots.rescue });
+      await frozenShot(page, shots.rescue);
       sawRescue = true;
     }
     if (
@@ -493,21 +509,12 @@ async function driveWithPedal(page, decide, shots = {}) {
       state.hazard.dist > 5 &&
       state.v > 2
     ) {
-      await page.screenshot({ path: shots.busy });
+      await frozenShot(page, shots.busy);
       sawBusy = true;
     }
     if (shots.preen && state.pose === "preen" && state.hazard?.type === "roller") {
-      await page.screenshot({ path: shots.preen });
+      await frozenShot(page, shots.preen);
       shots.preen = null;
-    }
-    const want = state.phase === "drive" && decide(state);
-    if (want && !down) {
-      await page.mouse.move(pedal.x, pedal.y);
-      await page.mouse.down();
-      down = true;
-    } else if (!want && down) {
-      await page.mouse.up();
-      down = false;
     }
     await page.waitForTimeout(30);
   }
