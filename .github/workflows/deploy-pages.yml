@@ -33,9 +33,14 @@ jobs:
         run: |
           set -eu
           rm -rf .pages-dist
-          mkdir -p .pages-dist/js .pages-dist/assets/fonts
+          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/icons
           cp index.html .pages-dist/index.html
           cp style.css .pages-dist/style.css
+          cp manifest.webmanifest .pages-dist/manifest.webmanifest
+          cp icons/favicon-32.png .pages-dist/icons/favicon-32.png
+          cp icons/apple-touch-icon.png .pages-dist/icons/apple-touch-icon.png
+          cp icons/icon-192.png .pages-dist/icons/icon-192.png
+          cp icons/icon-512.png .pages-dist/icons/icon-512.png
           cp js/audio.js .pages-dist/js/audio.js
           cp js/config.js .pages-dist/js/config.js
           cp js/draw.js .pages-dist/js/draw.js
@@ -65,8 +70,20 @@ jobs:
           test ! -e .pages-dist/test
           test ! -e .pages-dist/artifacts
           test ! -e .pages-dist/.git
+          test -f .pages-dist/manifest.webmanifest
+          test -f .pages-dist/icons/favicon-32.png
+          test -f .pages-dist/icons/apple-touch-icon.png
+          test -f .pages-dist/icons/icon-192.png
+          test -f .pages-dist/icons/icon-512.png
+          test ! -e .pages-dist/icons/anton-wheel-1024.png
           grep -q 'href="style.css"' .pages-dist/index.html
           grep -q 'src="js/game.js"' .pages-dist/index.html
+          grep -q 'href="manifest.webmanifest"' .pages-dist/index.html
+          grep -q 'href="icons/apple-touch-icon.png"' .pages-dist/index.html
+          grep -q 'href="icons/favicon-32.png"' .pages-dist/index.html
+          grep -q '"start_url": "/brake-it-anton/"' .pages-dist/manifest.webmanifest
+          grep -q '"src": "icons/icon-192.png"' .pages-dist/manifest.webmanifest
+          grep -q '"src": "icons/icon-512.png"' .pages-dist/manifest.webmanifest
           grep -q 'assets/fonts/' .pages-dist/style.css
           grep -q 'assets/fonts/' .pages-dist/js/game.js
 
