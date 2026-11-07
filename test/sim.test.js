@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 
-import { anchorKind, farDs, groundDs, paintFarToNear } from "../js/anchors.js";
+import { anchorKind, farDs, groundDs, paintFarToNear, screenFootprint } from "../js/anchors.js";
 import { CFG } from "../js/config.js";
 import { drainFrame } from "../js/clock.js";
 import { contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
@@ -15,6 +15,7 @@ import {
   CAR_BODY_W,
   CAR_NOSE_LOCAL_Y,
   CAR_SPRITE_SCALE,
+  DOG_PAW_LOCAL_Y,
   PED_FOOT_LOCAL_Y,
   bumperFootGap,
   carDrawOrigin,
@@ -1982,23 +1983,31 @@ test("every family shares its hitbox ground, and nearer bodies paint in front", 
       assert.ok(Math.abs(actor.farDs - farDs(hazard, scene.pose.s)) < 1e-9);
       assert.ok(Math.abs(actor.spot.x - spot.x) < 1e-6);
       assert.ok(Math.abs(actor.spot.y - spot.y) < 1e-6);
-      const expectNear = actor.kind === "feet" ? hazard.s - scene.pose.s : hazard.s - hazard.halfL - scene.pose.s;
+      const expectNear = hazard.s - hazard.halfL - scene.pose.s;
       assert.ok(Math.abs(near - expectNear) < 1e-9);
+      const foot = screenFootprint(actor.groundDs, actor.farDs, actor.hx, hazard.halfW || 0.4);
+      assert.ok(Math.abs(actor.spot.y - foot.near.y) < 1e-6);
+      assert.ok(Math.abs(actor.farSpot.y - foot.far.y) < 1e-6);
+      assert.ok(Math.abs(foot.length - Math.abs(foot.near.y - foot.far.y)) < 1e-6 || foot.length === 4);
       assert.equal(Math.sign(actor.spot.x - VIEW.vanishX), Math.sign(hazard.x) || 0);
     }
     assert.ok(Math.abs(scene.car.y - project(CFG.carHalfFront, scene.pose.x).y) < 1e-6);
   }
-  const pedMid = mid.actors.find((actor) => actor.id === "ped");
-  const ped0 = start.actors.find((actor) => actor.id === "ped");
-  const ped1 = end.actors.find((actor) => actor.id === "ped");
-  assert.ok(Math.abs(pedMid.groundDs - (ped0.groundDs + ped1.groundDs) / 2) < 1e-6);
+  for (const actor of mid.actors) {
+    const a0 = start.actors.find((item) => item.id === actor.id);
+    const a1 = end.actors.find((item) => item.id === actor.id);
+    assert.ok(Math.abs(actor.groundDs - (a0.groundDs + a1.groundDs) / 2) < 1e-6, actor.id);
+    assert.ok(Math.abs(actor.farDs - (a0.farDs + a1.farDs) / 2) < 1e-6, actor.id);
+  }
 
   const order = paintFarToNear([
-    { id: "ped", ds: 8 },
-    { id: "car", ds: -CFG.carHalfBack },
-    { id: "close", ds: -3 },
+    { id: "ahead", ds: CFG.carHalfFront + 4, layer: 1 },
+    { id: "car", ds: CFG.carHalfFront, layer: 0 },
+    { id: "on", ds: CFG.carHalfFront, layer: 1 },
+    { id: "inside", ds: CFG.carHalfFront - 1.2, layer: 1 },
+    { id: "past", ds: -CFG.carHalfBack - 2, layer: 1 },
   ]).map((item) => item.id);
-  assert.deepEqual(order, ["ped", "car", "close"]);
+  assert.deepEqual(order, ["ahead", "car", "on", "inside", "past"]);
 
   sim.s = 20;
   const ped = sim.hazards.find((item) => item.id === "ped");
@@ -2007,12 +2016,73 @@ test("every family shares its hitbox ground, and nearer bodies paint in front", 
   const ahead = placedScene(sim, 1);
   assert.ok(ahead.actors.find((actor) => actor.id === "ped").spot.y < ahead.car.y);
 
+  function crossing(lead, x) {
+    const body = createSim({
+      id: "cross",
+      seed: 11,
+      cruise: 12,
+      length: 200,
+      cargo: null,
+      slippery: [],
+      hazards: [{ id: "ped", type: "pedestrian", s: 0, x, halfW: 0.42, halfL: 0.55 }],
+    }, 11);
+    body.s = 40;
+    body.x = 1.8;
+    body.prevS = 40;
+    const person = body.hazards[0];
+    person.crossT = 0.45 * person.crossDur;
+    person.s = body.s + CFG.carHalfFront + person.halfL + lead;
+    person.x = x;
+    return body;
+  }
+  const clear = crossing(1.2, 1.8);
+  const clearView = placedScene(clear, 1);
+  assert.ok(bumperFootGap(clear, clear.hazards[0]).world > 1);
+  assert.ok(clearView.actors[0].spot.y < clearView.car.y);
+  const touch = crossing(0, 1.8);
+  const touchView = placedScene(touch, 1);
+  assert.ok(Math.abs(bumperFootGap(touch, touch.hazards[0]).world) < 1e-9);
+  assert.ok(Math.abs(touchView.actors[0].spot.y - touchView.car.y) < 0.05);
+  const hit = crossing(-0.8, 1.8);
+  const hitView = placedScene(hit, 1);
+  assert.ok(bumperFootGap(hit, hit.hazards[0]).world < 0);
+  assert.ok(hitView.actors[0].spot.y > hitView.car.y);
+  const beside = placedScene(crossing(0, -1.6), 1);
+  assert.ok(beside.actors[0].spot.x < VIEW.vanishX);
+  assert.ok(beside.car.x > VIEW.vanishX);
+
   const session = createSession(mission, { seed: 3 });
   session.phase = "drive";
   session.sim.s = 12;
   const fingerprint = simFingerprint(session.sim);
   render(mockCtx().ctx, playState(session, 0.4));
   assert.equal(simFingerprint(session.sim), fingerprint);
+});
+
+test("upright bodies stay tall, and the player sprite is not resized to the chassis", () => {
+  const nose = project(CFG.carHalfFront, 0);
+  const paintedPx = CAR_BODY_H * CAR_SPRITE_SCALE;
+  const tailY = nose.y + paintedPx;
+  const zTail = VIEW.camLift / (tailY - VIEW.vanishY);
+  const paintedM = CFG.carHalfFront - (zTail - VIEW.camBack);
+  const chassisM = CFG.carHalfFront + CFG.carHalfBack;
+  assert.ok(paintedM > 7.4 && paintedM < 7.9, paintedM);
+  assert.ok(Math.abs(chassisM - 3.4) < 1e-9);
+  const paintedW = CAR_BODY_W * CAR_SPRITE_SCALE;
+  const hitW = (CFG.carHalfW * 2 * VIEW.focal) / nose.z;
+  assert.ok(hitW - paintedW > 50 && hitW - paintedW < 70, hitW - paintedW);
+  const origin = carDrawOrigin(nose.x, nose.y, 0, 0);
+  assert.ok(Math.abs(origin.y + CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE - nose.y) < 1e-6);
+
+  const sc = Math.max(0.62, Math.min(1.45, nose.scale * 1.55));
+  const personPx = (PED_FOOT_LOCAL_Y + 62 + 26) * sc;
+  const dogPx = (DOG_PAW_LOCAL_Y + 16 + 14) * sc;
+  const personGround = nose.y - project(CFG.carHalfFront + 1.1, 0).y;
+  const dogGround = nose.y - project(CFG.carHalfFront + 1.6, 0).y;
+  assert.ok(personGround > 10 && personGround < 25, personGround);
+  assert.ok(personPx > personGround * 8, personPx);
+  assert.ok(dogPx > dogGround * 3, dogPx);
+  assert.equal(pedestrianFootShift(), -PED_FOOT_LOCAL_Y);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

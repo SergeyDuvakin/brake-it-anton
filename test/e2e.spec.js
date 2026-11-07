@@ -1260,68 +1260,298 @@ test("pointermove from the captured pedal onto Anton does not wake", async ({ pa
   expect(errors).toEqual([]);
 });
 
-test("anchored lesson-1 approach and the other families at near and far range", async ({ page }) => {
+test("the crossing before, at and past the bumper, old anchors beside the new", async ({ page }) => {
   await page.goto(gameURL("debug=1"));
   await page.waitForFunction(() => window.__anton);
-  const png = await page.evaluate(async () => {
-    const { render } = await import("./js/draw.js");
+  const drawn = await page.evaluate(async () => {
+    const { render, placedScene } = await import("./js/draw.js");
     const { createSim } = await import("./js/sim.js");
+    const { screenFootprint } = await import("./js/anchors.js");
     const { freshSave } = await import("./js/storage.js");
-    const { getMission, LESSONS } = await import("./js/missions.js");
+    const { LESSONS } = await import("./js/missions.js");
+    const { CFG } = await import("./js/config.js");
     await document.fonts.ready;
     const save = freshSave();
     const canvas = document.createElement("canvas");
     canvas.width = 1600;
     canvas.height = 900;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const sheet = document.createElement("canvas");
     sheet.width = 1010 * 2;
-    sheet.height = 852 * 2;
+    sheet.height = 852 * 5;
     const out = sheet.getContext("2d");
-    function frame(sim, col, row) {
-      const session = {
-        sim,
+    function pose(lead, x) {
+      const sim = createSim({
+        id: "cross",
+        seed: 11,
+        cruise: 12,
+        length: 200,
+        cargo: null,
+        slippery: [],
+        hazards: [{ id: "ped", type: "pedestrian", s: 0, x, halfW: 0.42, halfL: 0.55 }],
+      }, 11);
+      sim.s = 40;
+      sim.x = 1.8;
+      sim.prevS = 39.6;
+      const ped = sim.hazards[0];
+      ped.crossT = 0.45 * ped.crossDur;
+      ped.s = sim.s + CFG.carHalfFront + ped.halfL + lead;
+      ped.x = x;
+      return sim;
+    }
+    function frame(sim, col, row, legacy, notice) {
+      render(ctx, {
+        screen: "play",
+        session: {
+          sim,
+          phase: "drive",
+          mission: { id: "cross", objective: notice, lesson: 1, length: 200, infinite: false },
+          countdown: 0,
+          keysDown: new Set(),
+          brakeHeld: false,
+          result: null,
+        },
+        save,
+        now: 1000,
+        hint: false,
+        debug: false,
+        notice,
+        preview: null,
+        missions: LESSONS,
+        selected: "lesson1",
+        pose: null,
+        alpha: 1,
+        legacyAnchors: legacy,
+      });
+      out.drawImage(canvas, 24, 24, 1010, 852, col * 1010, row * 852, 1010, 852);
+    }
+    const rows = [
+      [4, 1.8, "4 м до бампера, та же полоса"],
+      [0, 1.8, "ближняя грань на бампере"],
+      [-1.2, 1.8, "грань уже внутри машины"],
+      [0, -1.6, "грань на бампере, другая сторона"],
+    ];
+    rows.forEach(([lead, x, notice], row) => {
+      const sim = pose(lead, x);
+      frame(sim, 0, row, true, `было · ${notice}`);
+      frame(sim, 1, row, false, `стало · ${notice}`);
+    });
+    const crowd = createSim({
+      id: "cross",
+      seed: 11,
+      cruise: 12,
+      length: 200,
+      cargo: null,
+      slippery: [],
+      hazards: [
+        { id: "dog", type: "dog", s: 52, x: -1.4, halfW: 0.55, halfL: 0.8 },
+        { id: "bin", type: "bin", s: 54, x: 1.8, halfW: 0.55, halfL: 0.7 },
+        { id: "lid", type: "roller", s: 62, x: -1.2, halfW: 0.55, halfL: 0.55 },
+        { id: "park", type: "stopped", s: 70, x: 0.3, halfW: 0.95, halfL: 2.2 },
+        { id: "hole", type: "pothole", s: 48, x: 0.2, halfW: 0.72, halfL: 1.15 },
+      ],
+    }, 11);
+    crowd.s = 40;
+    crowd.x = 1.8;
+    frame(crowd, 0, 4, true, "было · бак, крышка, собака, машина, яма");
+    frame(crowd, 1, 4, false, "стало · бак, крышка, собака, машина, яма");
+    const solo = createSim({
+      id: "cross",
+      seed: 11,
+      cruise: 12,
+      length: 200,
+      cargo: null,
+      slippery: [],
+      hazards: [{ id: "park", type: "stopped", s: 70, x: 0.3, halfW: 0.95, halfL: 2.2, telegraph: -1, trust: false }],
+    }, 11);
+    solo.s = 40;
+    solo.x = 1.8;
+    render(ctx, {
+      screen: "play",
+      session: {
+        sim: solo,
         phase: "drive",
-        mission: sim.missionId ? getMission("lesson1") : { id: "anchors", objective: "Якоря", lesson: 1, length: 400, infinite: false },
+        mission: { id: "cross", objective: "след", lesson: 1, length: 200, infinite: false },
         countdown: 0,
         keysDown: new Set(),
         brakeHeld: false,
         result: null,
-      };
-      render(ctx, {
-        screen: "play", session, save, now: 1000, hint: false, debug: false, notice: null,
-        preview: null, missions: LESSONS, selected: "lesson1", pose: null, alpha: 1,
-      });
-      out.drawImage(canvas, 24, 24, 1010, 852, col * 1010, row * 852, 1010, 852);
+      },
+      save,
+      now: 1000,
+      hint: false,
+      debug: false,
+      notice: null,
+      preview: null,
+      missions: LESSONS,
+      selected: "lesson1",
+      pose: null,
+      alpha: 1,
+    });
+    const park = solo.hazards[0];
+    const view = placedScene(solo, 1);
+    const actor = view.actors.find((item) => item.id === "park");
+    const foot = screenFootprint(actor.groundDs, actor.farDs, actor.hx, park.halfW);
+    function rgb(x, y) {
+      const px = ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data;
+      return `${px[0]},${px[1]},${px[2]}`;
     }
-    const lesson = createSim(getMission("lesson1"), 11);
-    lesson.s = 30;
-    lesson.v = 12;
-    frame(lesson, 0, 0);
-    lesson.s = 44;
-    frame(lesson, 1, 0);
-    const crowd = {
-      id: "anchors", seed: 3, cruise: 12, length: 400, cargo: null, slippery: [], lesson: 1,
-      objective: "Якоря", infinite: false,
-      hazards: [
-        { id: "ped", type: "pedestrian", s: 18, x: 1.1, halfW: 0.42, halfL: 0.55 },
-        { id: "dog", type: "dog", s: 28, x: -1.3, halfW: 0.55, halfL: 0.8 },
-        { id: "bin", type: "bin", s: 16, x: -1.8, halfW: 0.55, halfL: 0.7 },
-        { id: "lid", type: "roller", s: 22, x: 1.7, halfW: 0.55, halfL: 0.55 },
-        { id: "park", type: "stopped", s: 40, x: 0.2, halfW: 0.95, halfL: 2.2, trust: true },
-        { id: "cut", type: "cutin", s: 34, x: -0.8, halfW: 0.95, halfL: 2.15 },
-        { id: "hole", type: "pothole", s: 12, x: 0.4, halfW: 0.72, halfL: 1.15, trust: true },
-      ],
+    const families = [
+      { id: "bin", type: "bin", s: 40, x: 1.2, halfW: 0.55, halfL: 0.7, carX: -1.8 },
+      { id: "lid", type: "roller", s: 40, x: 1.2, halfW: 0.55, halfL: 0.55, carX: -1.8 },
+      { id: "hole", type: "pothole", s: 70, x: 0.3, halfW: 0.72, halfL: 1.15, carX: 1.8 },
+    ];
+    const patches = [sample(park, foot)];
+    for (const spec of families) {
+      const one = createSim({
+        id: "cross",
+        seed: 11,
+        cruise: 12,
+        length: 200,
+        cargo: null,
+        slippery: [],
+        hazards: [{ ...spec, telegraph: -1, trust: false }],
+      }, 11);
+      one.s = 40;
+      one.x = spec.carX;
+      render(ctx, {
+        screen: "play",
+        session: {
+          sim: one,
+          phase: "drive",
+          mission: { id: "cross", objective: "след", lesson: 1, length: 200, infinite: false },
+          countdown: 0,
+          keysDown: new Set(),
+          brakeHeld: false,
+          result: null,
+        },
+        save,
+        now: 1000,
+        hint: false,
+        debug: false,
+        notice: null,
+        preview: null,
+        missions: LESSONS,
+        selected: "lesson1",
+        pose: null,
+        alpha: 1,
+      });
+      const hazard = one.hazards[0];
+      const actor = placedScene(one, 1).actors.find((item) => item.id === spec.id);
+      patches.push(sample(hazard, screenFootprint(actor.groundDs, actor.farDs, actor.hx, hazard.halfW)));
+    }
+    function sample(hazard, box) {
+      return {
+        id: hazard.id,
+        near: rgb(box.cx, box.bottomY - 3),
+        far: rgb(box.cx, box.topY + 3),
+        beyond: rgb(box.cx, box.topY - 12),
+        closer: rgb(box.cx, box.bottomY + 12),
+      };
+    }
+    const { actorTravel } = await import("./js/sim.js");
+    const { gaitOffset } = await import("./js/gait.js");
+    function contact(lead) {
+      const sim = pose(lead, 1.8);
+      const before = JSON.stringify({ s: sim.s, x: sim.x, hits: sim.stats.collisions, resolved: sim.hazards[0].resolved });
+      render(ctx, {
+        screen: "play",
+        session: {
+          sim,
+          phase: "drive",
+          mission: { id: "cross", objective: "след", lesson: 1, length: 200, infinite: false },
+          countdown: 0,
+          keysDown: new Set(),
+          brakeHeld: false,
+          result: null,
+        },
+        save,
+        now: 1000,
+        hint: false,
+        debug: false,
+        notice: null,
+        preview: null,
+        missions: LESSONS,
+        selected: "lesson1",
+        pose: null,
+        alpha: 1,
+        legacyAnchors: false,
+      });
+      const after = JSON.stringify({ s: sim.s, x: sim.x, hits: sim.stats.collisions, resolved: sim.hazards[0].resolved });
+      const ped = sim.hazards[0];
+      const actor = placedScene(sim, 1).actors[0];
+      const sc = Math.max(0.62, Math.min(1.45, actor.spot.scale * 1.55));
+      const step = gaitOffset(actorTravel(ped, sim), "pedestrian", false);
+      const fx = actor.spot.x + (20 - step) * sc;
+      const fy = actor.spot.y;
+      const leg = 0.25;
+      const lx = (20 - step) + (12 - (20 - step)) * leg;
+      const ly = (10 - 48) * leg;
+      return {
+        lead,
+        same: before === after,
+        foot: rgb(fx, fy),
+        leg: rgb(actor.spot.x + lx * sc, fy + ly * sc),
+        below: rgb(actor.spot.x, fy + 12),
+        gap: rgb(actor.spot.x, (fy + placedScene(sim, 1).car.y) / 2),
+      };
+    }
+    const road = "88,96,120";
+    const zoom = document.createElement("canvas");
+    zoom.width = 560 * 3;
+    zoom.height = 340 * 2;
+    const zctx = zoom.getContext("2d");
+    zctx.fillStyle = "#F4EFE4";
+    zctx.fillRect(0, 0, zoom.width, zoom.height);
+    const labels = ["4 м впереди", "на бампере", "уже внутри"];
+    rows.slice(0, 3).forEach((_, index) => {
+      for (const col of [0, 1]) {
+        zctx.drawImage(sheet, col * 1010 + 430, index * 852 + 470, 520, 300, index * 560 + 8, col * 340 + 28, 544, 300);
+        zctx.fillStyle = "#1C161E";
+        zctx.font = "16px sans-serif";
+        zctx.fillText(`${labels[index]} · ${col === 0 ? "было" : "стало"}`, index * 560 + 12, col * 340 + 20);
+      }
+    });
+    return {
+      sheet: sheet.toDataURL("image/png"),
+      zoom: zoom.toDataURL("image/png"),
+      patches,
+      contacts: [4, 0, -1.2].map(contact),
+      road,
     };
-    const near = createSim(crowd, 3);
-    near.s = 10;
-    frame(near, 0, 1);
-    near.s = 0;
-    frame(near, 1, 1);
-    return sheet.toDataURL("image/png");
   });
+  for (const patch of drawn.patches) {
+    expect(patch.near, patch.id).not.toBe(drawn.road);
+    expect(patch.far, patch.id).not.toBe(drawn.road);
+    expect(patch.beyond, patch.id).toBe(drawn.road);
+    expect(patch.closer, patch.id).not.toBe(patch.near);
+  }
+  const dark = (value) => {
+    const [r, g, b] = value.split(",").map(Number);
+    return r < 80 && g < 70 && b < 80;
+  };
+  const carPaint = (value) => {
+    const [r, g, b] = value.split(",").map(Number);
+    const yellow = r > 180 && g > 140 && b < 130 && r > b;
+    const glass = b > 160 && g > 150 && r > 120;
+    return yellow || glass || dark(value);
+  };
+  for (const row of drawn.contacts) expect(row.same, String(row.lead)).toBe(true);
+  const ahead = drawn.contacts[0];
+  const touch = drawn.contacts[1];
+  const inside = drawn.contacts[2];
+  expect(dark(ahead.foot), ahead.foot).toBe(true);
+  expect(dark(ahead.leg), ahead.leg).toBe(true);
+  expect(ahead.gap).toBe(drawn.road);
+  expect(carPaint(ahead.below), ahead.below).toBe(false);
+  expect(dark(touch.foot), touch.foot).toBe(true);
+  expect(dark(touch.leg), touch.leg).toBe(true);
+  expect(carPaint(touch.below), touch.below).toBe(true);
+  expect(dark(inside.foot), inside.foot).toBe(true);
+  expect(dark(inside.leg), inside.leg).toBe(true);
   fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
-  fs.writeFileSync("/opt/cursor/artifacts/anchors-near-far.png", Buffer.from(png.split(",")[1], "base64"));
+  fs.writeFileSync("/opt/cursor/artifacts/crossing-before-after.png", Buffer.from(drawn.sheet.split(",")[1], "base64"));
+  fs.writeFileSync("/opt/cursor/artifacts/crossing-zoom.png", Buffer.from(drawn.zoom.split(",")[1], "base64"));
 });
 
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {

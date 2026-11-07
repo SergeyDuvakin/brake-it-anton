@@ -6,7 +6,7 @@
 import { CFG, PALETTE as P } from "./config.js";
 import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
 import { VIEW, project } from "./road.js";
-import { anchorKind, farDs, groundDs, paintFarToNear } from "./anchors.js";
+import { anchorKind, farDs, groundDs, paintFarToNear, screenFootprint } from "./anchors.js";
 import { gaitOffset } from "./gait.js";
 import { actorTravel, hazardWorldX, renderPose } from "./sim.js";
 
@@ -52,7 +52,7 @@ export function pedestrianFootShift() {
  */
 export function bumperFootGap(sim, hazard) {
   const bumper = project(CFG.carHalfFront, sim.x);
-  const foot = project(hazard.s - sim.s, hazardWorldX(hazard, sim));
+  const foot = project(hazard.s - (hazard.halfL || 0) - sim.s, hazardWorldX(hazard, sim));
   return {
     world: hazard.s - hazard.halfL - (sim.s + CFG.carHalfFront),
     screen: bumper.y - foot.y,
@@ -291,7 +291,7 @@ function drawPlay(ctx, state) {
 
   ctx.save();
   if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
-  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion);
+  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
   drawCabin(ctx, sim, state, boil, visual);
   drawPatience(ctx, sim, paused);
@@ -369,7 +369,7 @@ function drawHud(ctx, state, sim) {
  * Screen positions are not linear in alpha; the meters are.
  * Pointers and collision do not read this.
  */
-export function placedScene(sim, alpha = 1) {
+export function placedScene(sim, alpha = 1, legacy = false) {
   const pose = renderPose(sim, alpha);
   const car = project(CFG.carHalfFront, pose.x);
   const actors = [];
@@ -378,14 +378,15 @@ export function placedScene(sim, alpha = 1) {
     const hx = pose.hazardX.has(h.id) ? pose.hazardX.get(h.id) : hazardWorldX(h, sim);
     const travel = pose.hazardTravel?.has(h.id) ? pose.hazardTravel.get(h.id) : actorTravel(h, sim);
     const kind = anchorKind(h.type);
-    const near = groundDs(h, pose.s);
-    const far = farDs(h, pose.s);
+    const near = legacy ? dist : groundDs(h, pose.s);
+    const far = legacy ? dist : farDs(h, pose.s);
     actors.push({
       id: h.id,
       dist,
       hx,
       travel,
       kind,
+      legacy,
       groundDs: near,
       farDs: far,
       spot: project(near, hx),
@@ -395,8 +396,8 @@ export function placedScene(sim, alpha = 1) {
   return { pose, car, actors };
 }
 
-function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false) {
-  const scene = placedScene(sim, alpha);
+function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = false) {
+  const scene = placedScene(sim, alpha, legacy);
   const cam = scene.pose.s;
   const actorAt = new Map(scene.actors.map((actor) => [actor.id, actor]));
   const box = VIEW.panel;
@@ -492,15 +493,22 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false) {
     const dist = placed.dist;
     if (h.resolved && dist < -10) continue;
     if (dist < VIEW.near || dist > VIEW.look) continue;
-    props.push({ ds: placed.groundDs, xm: placed.hx, kind: "hazard", h, placed });
+    props.push({ ds: legacy ? dist : placed.groundDs, layer: 1, xm: placed.hx, kind: "hazard", h, placed });
   }
-  props.push({ ds: -CFG.carHalfBack, kind: "car" });
+  // The nose, not the tail. A body whose near face is still ahead of the
+  // bumper is farther up the screen and paints first. A body on the nose
+  // or closer paints after the car: its feet sit on the yellow because
+  // the near face has reached the bumper, and covering them made the
+  // torso look as if it were standing on the roof. The tail stays the
+  // hitbox's near edge; it is not the sort key.
+  if (!legacy) props.push({ ds: CFG.carHalfFront, layer: 0, kind: "car" });
   const ordered = paintFarToNear(props);
   for (const item of ordered) {
     if (item.kind === "prop") drawProp(ctx, item, boil);
     else if (item.kind === "car") drawCar(ctx, sim, boil, scene.pose);
     else drawHazard(ctx, sim, item.h, boil, item.placed, reduced);
   }
+  if (legacy) drawCar(ctx, sim, boil, scene.pose);
 
   if (motion && sim.v > 11) {
     const shift = (cam * 28) % 70;
@@ -723,11 +731,11 @@ function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
   const hop = h.hopped ? -22 * sc : 0;
   shadowAt(ctx, spot.x, spot.y, sc, h.type === "cutin" || h.type === "stopped" ? 34 : 22);
   if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, step, true);
-  else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, step);
-  else if (h.type === "pothole") drawHole(ctx, placed || { spot, farSpot: spot, hx, groundDs: dist, farDs: dist }, h);
-  else if (h.type === "bin") drawBin(ctx, spot.x, spot.y + hop, sc, dist, h.hopped);
-  else if (h.type === "roller") drawRoller(ctx, spot.x, spot.y, sc, h);
-  else drawNpc(ctx, spot.x, spot.y, sc, h, dist, boil);
+  else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, step, !!placed?.legacy);
+  else if (h.type === "pothole") drawHole(ctx, placed || { spot, farSpot: spot, hx, groundDs: dist, farDs: dist, legacy: false }, h, sc);
+  else if (h.type === "bin") drawBin(ctx, placed, h, sc, dist);
+  else if (h.type === "roller") drawRoller(ctx, placed, h, sc);
+  else drawNpc(ctx, placed, h, sc, dist, boil);
 
   if (!h.resolved && dist < (h.telegraph || 60) && dist > 2) {
     const markLift = h.type === "pedestrian" ? 184 : 78;
@@ -797,11 +805,11 @@ function drawPed(ctx, x, y, sc, step, phone) {
   ctx.restore();
 }
 
-function drawDog(ctx, x, y, sc, step = 0) {
+function drawDog(ctx, x, y, sc, step = 0, legacy = false) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
-  ctx.translate(0, -DOG_PAW_LOCAL_Y);
+  if (!legacy) ctx.translate(0, -DOG_PAW_LOCAL_Y);
   ctx.fillStyle = "#8A5A3A";
   roundRect(ctx, -40, -18, 70, 36, 8);
   ctx.fill();
@@ -832,7 +840,20 @@ function drawDog(ctx, x, y, sc, step = 0) {
   ctx.restore();
 }
 
-function drawHole(ctx, placed, h) {
+function drawHole(ctx, placed, h, sc = 1) {
+  if (placed.legacy) {
+    ctx.save();
+    ctx.translate(placed.spot.x, placed.spot.y);
+    ctx.scale(sc, sc);
+    ctx.beginPath();
+    ctx.ellipse(0, 6, 34, 18, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#241C16";
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   const midS = (placed.groundDs + placed.farDs) / 2;
   const halfW = h.halfW || 0.7;
   const left = project(midS, placed.hx - halfW);
@@ -859,59 +880,95 @@ function drawHole(ctx, placed, h) {
   ctx.restore();
 }
 
-function drawBin(ctx, x, y, sc, dist, hopped) {
+function drawBin(ctx, placed, h, sc, dist) {
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sc, sc);
-  ctx.translate(0, -BIN_BOTTOM_LOCAL_Y);
-  ctx.rotate(hopped ? 1.15 : dist < 14 ? 0.7 : 0.18);
-  roundRect(ctx, -20, -36, 40, 54, 5);
-  ctx.fillStyle = "#5E7A52";
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  ctx.fillStyle = P.INK;
-  ctx.fillRect(-24, -40, 48, 8);
+  if (placed?.legacy) {
+    ctx.translate(placed.spot.x, placed.spot.y);
+    ctx.scale(sc, sc);
+    ctx.rotate(h.hopped ? 1.15 : dist < 14 ? 0.7 : 0.18);
+    roundRect(ctx, -20, -36, 40, 54, 5);
+    ctx.fillStyle = "#5E7A52";
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.fillStyle = P.INK;
+    ctx.fillRect(-24, -40, 48, 8);
+  } else {
+    fitGround(ctx, placed, h.halfW || 0.55, 48, 58);
+    if (h.hopped) ctx.rotate(1.15);
+    roundRect(ctx, -20, -54, 40, 54, 5);
+    ctx.fillStyle = "#5E7A52";
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.fillStyle = P.INK;
+    ctx.fillRect(-24, -58, 48, 8);
+  }
   ctx.restore();
 }
 
-function drawRoller(ctx, x, y, sc, h) {
+function drawRoller(ctx, placed, h, sc) {
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sc, sc);
-  ctx.translate(0, -LID_BOTTOM_LOCAL_Y);
-  ctx.rotate((h.crossT > 0 ? h.crossT : 0) * 7);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 28, 16, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "#6E8A62";
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(0, -8);
-  ctx.lineTo(0, -22);
-  ctx.stroke();
+  if (placed?.legacy) {
+    ctx.translate(placed.spot.x, placed.spot.y);
+    ctx.scale(sc, sc);
+    ctx.rotate((h.crossT > 0 ? h.crossT : 0) * 7);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 28, 16, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#6E8A62";
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(0, -22);
+    ctx.stroke();
+  } else {
+    fitGround(ctx, placed, h.halfW || 0.55, 56, 32);
+    ctx.beginPath();
+    ctx.ellipse(0, -16, 28, 16, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#6E8A62";
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -20);
+    ctx.lineTo(0, -30);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
-function drawNpc(ctx, x, y, sc, h, dist, boil) {
+function fitGround(ctx, placed, halfW, localW, localH) {
+  const foot = screenFootprint(placed.groundDs, placed.farDs, placed.hx, halfW);
+  ctx.translate(foot.cx, foot.bottomY);
+  ctx.scale(foot.width / localW, foot.length / localH);
+}
+
+function drawNpc(ctx, placed, h, sc, dist, boil) {
   const colors = [P.BLUE, P.ORANGE, P.TEAL, P.PINK];
   const color = colors[Math.abs(Math.floor(hash(h.s) * 4)) % colors.length];
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sc, sc);
-  ctx.translate(0, -NPC_BOTTOM_LOCAL_Y);
-  if (h.type === "cutin" && h.crossT >= 0 && h.crossT < (h.crossDur || 2)) ctx.rotate(-0.4);
-  roundRect(ctx, -30, -48, 60, 92, 10);
+  if (placed?.legacy) {
+    ctx.translate(placed.spot.x, placed.spot.y);
+    ctx.scale(sc, sc);
+    if (h.type === "cutin" && h.crossT >= 0 && h.crossT < (h.crossDur || 2)) ctx.rotate(-0.4);
+  } else {
+    fitGround(ctx, placed, h.halfW || 0.95, 60, 92);
+  }
+  const bodyY = placed?.legacy ? -48 : -92;
+  const wheelY = placed?.legacy ? 24 : -18;
+  const glassY = placed?.legacy ? -36 : -78;
+  roundRect(ctx, -30, bodyY, 60, 92, 10);
   ctx.fillStyle = color;
   ctx.fill();
   ink(ctx, 5);
   ctx.stroke();
   ctx.fillStyle = P.GLASS;
-  ctx.fillRect(-20, -36, 40, 22);
+  ctx.fillRect(-20, glassY, 40, 22);
   ctx.fillStyle = P.INK;
-  ctx.fillRect(-22, 24, 14, 16);
-  ctx.fillRect(8, 24, 14, 16);
+  ctx.fillRect(-22, wheelY, 14, 16);
+  ctx.fillRect(8, wheelY, 14, 16);
   if (h.type === "cutin" && dist < 40) {
     ctx.strokeStyle = P.YEL;
     ctx.lineWidth = 5;
