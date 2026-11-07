@@ -1,13 +1,61 @@
 /**
- * Original flat ink drawing. No photo textures, no gradients, no external sprites.
- * Calm Anton is a separate face from the angry reference sheet.
+ * Original ink for Brake It, Anton.
+ * One forward projection. Poses and props change with the situation.
  */
 
-import { PALETTE as P } from "./config.js";
+import { CFG, PALETTE as P } from "./config.js";
 import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
+import { VIEW, project } from "./road.js";
 import { hazardWorldX } from "./sim.js";
 
-const ROAD = { x: 24, y: 24, w: 1010, h: 852, carY: 668, top: 52, cx: 528, ppm: 7.2 };
+/** World car scale. Do not shrink this to fake a gap in front of a pedestrian. */
+export const CAR_SPRITE_SCALE = 1.42;
+/** Radians of brake dive at a full press. Shared by the sprite and its anchor. */
+export const CAR_DIVE = 0.14;
+/** Unscaled top of the body. That edge is the bumper. */
+export const CAR_NOSE_LOCAL_Y = -62;
+export const CAR_BODY_W = 80;
+export const CAR_BODY_H = 112;
+/** Unscaled y of the pedestrian's feet before they are parked on the ground point. */
+export const PED_FOOT_LOCAL_Y = 48;
+
+/**
+ * Draw origin that puts the body nose on the bumper after the same
+ * rotate-then-scale the sprite applies. The car is not resized.
+ */
+export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = CAR_SPRITE_SCALE) {
+  const dive = (brakeInput || 0) * CAR_DIVE;
+  const squash = 1 - Math.min(0.16, crashT || 0);
+  const ly = CAR_NOSE_LOCAL_Y * scale * squash;
+  return {
+    x: bumperX + Math.sin(dive) * ly,
+    y: bumperY - Math.cos(dive) * ly,
+  };
+}
+
+/** Local y shift that sits the feet on the projected ground point. */
+export function pedestrianFootShift() {
+  return -PED_FOOT_LOCAL_Y;
+}
+
+/**
+ * Bumper-to-feet separation for a pedestrian.
+ * `screen` is pixels: positive when the bumper is closer to the camera than the feet.
+ * `world` is metres from the bumper to the near face of the hitbox.
+ */
+export function bumperFootGap(sim, hazard) {
+  const bumper = project(CFG.carHalfFront, sim.x);
+  const foot = project(hazard.s - sim.s, hazardWorldX(hazard, sim));
+  return {
+    world: hazard.s - hazard.halfL - (sim.s + CFG.carHalfFront),
+    screen: bumper.y - foot.y,
+    bumperY: bumper.y,
+    footY: foot.y,
+  };
+}
+
+let spots = [];
+let labels = [];
 
 function font(px, display = false) {
   return display ? `${px}px "Rubik Mono One", sans-serif` : `700 ${px}px "Balsamiq Sans", sans-serif`;
@@ -18,14 +66,6 @@ function ink(ctx, width = 6) {
   ctx.lineWidth = width;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-}
-
-function label(ctx, text, x, y, size, color = P.INK, align = "left", display = false) {
-  ctx.font = font(size, display);
-  ctx.fillStyle = color;
-  ctx.textAlign = align;
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, x, y);
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -39,28 +79,29 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function button(ctx, spots, id, x, y, w, h, text, kind = "paper") {
+function paintCenter(ctx, text, x, y, w, h, size, color = P.INK, display = false, record = false) {
+  const shown = String(text);
+  let px = size;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  while (px > 14) {
+    ctx.font = font(px, display);
+    if (ctx.measureText(shown).width <= Math.max(8, w - 18)) break;
+    px -= 1;
+  }
+  ctx.fillStyle = color;
+  ctx.fillText(shown, x + w / 2, y + h / 2);
+  if (record) labels.push({ text: shown, x, y, w, h, cx: x + w / 2, cy: y + h / 2 });
+}
+
+function button(ctx, id, x, y, w, h, text, kind = "paper") {
   spots.push({ id, x, y, w, h });
-  roundRect(ctx, x, y, w, h, 16);
-  ctx.fillStyle = kind === "primary" ? P.TEAL : kind === "ink" ? P.INK : P.PAPER;
+  roundRect(ctx, x, y, w, h, 18);
+  ctx.fillStyle = kind === "primary" ? P.TEAL : kind === "ink" ? P.INK : kind === "red" ? P.RED : P.PAPER;
   ctx.fill();
   ink(ctx, 6);
   ctx.stroke();
-  label(ctx, text, x + w / 2, y + h / 2 + 1, 26, kind === "ink" ? P.YEL : P.INK, "center");
-}
-
-function project(ds, xm) {
-  const y = ROAD.carY - ds * ROAD.ppm;
-  const span = ROAD.carY - ROAD.top;
-  const t = Math.max(0, Math.min(1, (ROAD.carY - y) / span));
-  const half = 200 * (1 - t) + 86 * t;
-  return {
-    x: ROAD.cx + (xm / 4.5) * half,
-    y,
-    half,
-    scale: 1 - t * 0.58,
-    t,
-  };
+  paintCenter(ctx, text, x, y, w, h, h > 90 ? 32 : 24, kind === "ink" || kind === "red" ? P.PAPER : P.INK, false, true);
 }
 
 function hash(n) {
@@ -69,359 +110,525 @@ function hash(n) {
   return (x >>> 0) / 4294967296;
 }
 
+function panel(ctx, x, y, w, h, fill) {
+  roundRect(ctx, x, y, w, h, 18);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ink(ctx, 8);
+  ctx.stroke();
+}
+
 export function render(ctx, state) {
-  const spots = [];
+  spots = [];
+  labels = [];
   ctx.clearRect(0, 0, 1600, 900);
   ctx.fillStyle = P.PAPER;
   ctx.fillRect(0, 0, 1600, 900);
-  if (state.screen === "garage") drawGarage(ctx, spots, state);
-  else if (state.screen === "title") drawTitle(ctx, spots, state);
-  else drawPlay(ctx, spots, state);
+  if (state.screen === "garage") drawGarage(ctx, state);
+  else if (state.screen === "title") drawTitle(ctx, state);
+  else drawPlay(ctx, state);
   if (state.notice) {
-    roundRect(ctx, 360, 18, 880, 42, 12);
+    roundRect(ctx, 360, 18, 880, 44, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    label(ctx, state.notice, 800, 39, 18, P.INK, "center");
+    paintCenter(ctx, state.notice, 360, 18, 880, 44, 18, P.INK, false, true);
   }
-  return spots;
+  return { spots, labels };
 }
 
-function drawTitle(ctx, spots, state) {
-  drawWorld(ctx, state.preview, 0);
-  drawCabin(ctx, state.preview, state, 0, false);
-  drawPatience(ctx, state.preview, false);
-  drawPedal(ctx, 0, false);
-  roundRect(ctx, 70, 250, 900, 340, 22);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 8);
+function drawTitle(ctx, state) {
+  const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
+  drawWorld(ctx, state.preview, boil, false);
+  panel(ctx, 1056, 24, 520, 852, P.CABIN);
+  ctx.fillStyle = P.GLASS;
+  ctx.fillRect(1056, 24, 520, 168);
+  ink(ctx, 6);
+  ctx.beginPath();
+  ctx.moveTo(1056, 192);
+  ctx.lineTo(1576, 192);
   ctx.stroke();
-  label(ctx, "ИНСТРУКТОР", 520, 320, 54, P.INK, "center", true);
-  label(ctx, "Brake It, Anton", 520, 378, 22, P.INK, "center");
-  label(ctx, "Он рулит. Ты только тормозишь.", 520, 430, 26, P.INK, "center");
-  button(ctx, spots, "start", 120, 490, 380, 74, "В урок", "primary");
-  button(ctx, spots, "garage", 530, 490, 380, 74, "Гараж", "paper");
+  paintCenter(ctx, "Brake It, Anton", 1076, 40, 480, 78, 34, P.INK, true, true);
+  paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 1076, 122, 480, 40, 20, P.INK, false, true);
+  ctx.save();
+  ctx.translate(0, 28);
+  drawAnton(ctx, "preen", boil, 0, state.preview);
+  ctx.restore();
+  button(ctx, "start", 1092, 640, 448, 112, "В урок", "primary");
+  button(ctx, "garage", 1092, 768, 448, 76, "Гараж", "paper");
 }
 
-function drawGarage(ctx, spots, state) {
+function drawGarage(ctx, state) {
   const { save } = state;
-  roundRect(ctx, 24, 24, 1552, 852, 22);
-  ctx.fillStyle = P.GRASS;
-  ctx.fill();
-  ink(ctx, 8);
-  ctx.stroke();
-  roundRect(ctx, 48, 48, 760, 96, 16);
+  panel(ctx, 24, 24, 1552, 852, "#B7D48A");
+  roundRect(ctx, 48, 44, 1504, 72, 16);
   ctx.fillStyle = P.INK;
   ctx.fill();
-  label(ctx, "ГАРАЖ", 80, 96, 36, P.YEL, "left", true);
-  label(ctx, "Старый двор", 430, 86, 22, P.PAPER, "left");
-  label(ctx, "Антон · жёлтая «У»", 430, 116, 18, P.YEL, "left");
+  paintCenter(ctx, "Гараж", 48, 44, 1504, 72, 34, P.YEL, true, true);
 
-  drawMiniYard(ctx, 70, 180);
-  roundRect(ctx, 70, 560, 700, 150, 16);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  label(ctx, "Антон, новичок", 96, 598, 26, P.INK);
-  label(ctx, "Газует сам. Обижается, если тормозить зря.", 96, 640, 20, P.INK);
-  label(ctx, "Один район. Других учеников тут нет.", 96, 674, 18, P.INK);
+  drawYardPoster(ctx, 48, 136, 700, 470);
+  paintCenter(ctx, "Антон газует сам.", 48, 618, 700, 40, 22, P.INK, false, true);
 
-  const missions = state.missions;
-  missions.forEach((mission, index) => {
-    const y = 170 + index * 108;
-    const unlocked = mission.lesson <= save.unlocked;
-    const best = save.best[mission.id] || 0;
-    roundRect(ctx, 860, y, 660, 96, 16);
-    const picked = state.selected === mission.id;
-    ctx.fillStyle = !unlocked ? "#E4D8C4" : picked ? P.YEL : P.PAPER;
-    ctx.fill();
-    ink(ctx, 5);
-    ctx.stroke();
-    label(ctx, `${mission.lesson}. ${mission.title}`, 884, y + 32, 24, P.INK);
-    label(ctx, unlocked ? mission.objective : "Сначала предыдущий урок", 884, y + 66, 18, P.INK);
-    label(ctx, unlocked ? "★".repeat(best) + "☆".repeat(3 - best) : "закрыт", 1450, y + 48, 22, P.INK, "right");
-    if (unlocked) spots.push({ id: `mission-${mission.id}`, x: 860, y, w: 660, h: 96 });
+  state.missions.forEach((mission, index) => {
+    drawMissionCard(ctx, state, mission, 780, 136 + index * 112);
   });
+  drawInfiniteCard(ctx, state, 780, 136 + 4 * 112);
 
-  const infY = 170 + 4 * 108;
-  if (save.infinite) {
-    const bestM = save.bestMeters.infinite || 0;
-    roundRect(ctx, 860, infY, 660, 96, 16);
-    ctx.fillStyle = state.selected === "infinite" ? P.ORANGE : P.YEL;
-    ctx.fill();
-    ink(ctx, 5);
-    ctx.stroke();
-    label(ctx, "Последний урок", 884, infY + 32, 24, P.INK);
-    label(ctx, bestM ? `рекорд ${bestM} м` : "Пока машина едет", 884, infY + 66, 18, P.INK);
-    spots.push({ id: "mission-infinite", x: 860, y: infY, w: 660, h: 96 });
-  } else {
-    label(ctx, "Бесконечный урок откроется после первого.", 884, infY + 28, 18, P.INK);
-  }
-
-  button(ctx, spots, "sound", 70, 760, 220, 68, save.settings.sound ? "Звук: вкл" : "Звук: выкл", "paper");
-  button(ctx, spots, "shake", 310, 760, 280, 68, save.settings.shake ? "Тряска: вкл" : "Тряска: выкл", "paper");
-  button(ctx, spots, "go", 1180, 790, 340, 68, "В урок", "primary");
+  button(ctx, "sound", 48, 780, 250, 72, save.settings.sound ? "Звук: вкл" : "Звук: выкл", "paper");
+  button(ctx, "shake", 316, 780, 270, 72, save.settings.shake ? "Тряска: вкл" : "Тряска: выкл", "paper");
+  button(ctx, "go", 1188, 776, 340, 80, "В урок", "primary");
 }
 
-function drawMiniYard(ctx, x, y) {
-  roundRect(ctx, x, y, 700, 350, 16);
-  ctx.fillStyle = P.GRASS;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  const tiles = [
-    [40, 30, P.PINK],
-    [200, 40, P.BLUE],
-    [40, 180, P.ORANGE],
-    [210, 190, P.YEL],
-  ];
-  for (const [dx, dy, color] of tiles) {
-    roundRect(ctx, x + dx, y + dy, 140, 110, 10);
-    ctx.fillStyle = color;
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-  }
-  roundRect(ctx, x + 400, y + 30, 250, 280, 12);
+function drawYardPoster(ctx, x, y, w, h) {
+  ctx.save();
+  roundRect(ctx, x, y, w, h, 16);
+  ctx.clip();
+  ctx.fillStyle = "#A9CF86";
+  ctx.fillRect(x, y, w, h);
+  drawBuilding(ctx, x + 90, y + 120, 1.05, 0, P.PINK, 0, false);
+  drawBuilding(ctx, x + 250, y + 150, 0.95, 1, P.ORANGE, 0, false);
+  drawBuilding(ctx, x + 70, y + 280, 1, 2, P.BLUE, 0, false);
+  drawTree(ctx, x + 300, y + 300, 0.9, 0, 3);
+  ctx.beginPath();
+  ctx.moveTo(x + 390, y + h - 8);
+  ctx.lineTo(x + 500, y + 28);
+  ctx.lineTo(x + 590, y + 28);
+  ctx.lineTo(x + w - 16, y + h - 8);
+  ctx.closePath();
   ctx.fillStyle = P.ROAD;
   ctx.fill();
-  ink(ctx, 4);
+  ink(ctx, 5);
   ctx.stroke();
-  label(ctx, "двор", x + 70, y + 84, 22, P.INK, "center");
-  label(ctx, "только он", x + 250, y + 250, 18, P.INK, "center");
+  ctx.strokeStyle = P.PAPER;
+  ctx.lineWidth = 4;
+  ctx.setLineDash([12, 14]);
+  ctx.beginPath();
+  ctx.moveTo(x + 470, y + h - 16);
+  ctx.lineTo(x + 545, y + 40);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  drawPed(ctx, x + 620, y + 210, 0.85, 0, true);
+  drawCarSprite(ctx, x + 530, y + h - 90, 1.15, 0, null);
+  ctx.restore();
+  ink(ctx, 5);
+  roundRect(ctx, x, y, w, h, 16);
+  ctx.stroke();
 }
 
-function drawPlay(ctx, spots, state) {
+function missionInk(mission) {
+  if (mission.cargo === "cake") return P.PINK;
+  if (mission.cargo === "fish") return P.GLASS;
+  if (mission.lesson === 2) return P.YEL;
+  return P.PAPER;
+}
+
+function drawMissionCard(ctx, state, mission, x, y) {
+  const unlocked = mission.lesson <= state.save.unlocked;
+  const best = state.save.best[mission.id] || 0;
+  const picked = unlocked && state.selected === mission.id;
+  roundRect(ctx, x, y, 740, 100, 16);
+  ctx.fillStyle = picked ? P.YEL : missionInk(mission);
+  ctx.fill();
+  if (!unlocked) {
+    ctx.fillStyle = "rgba(28,22,30,0.08)";
+    ctx.fill();
+  }
+  ink(ctx, unlocked ? 5 : 4);
+  ctx.stroke();
+  const sub = unlocked ? mission.objective : "Сначала пройди предыдущий урок";
+  paintCenter(ctx, `${mission.lesson}. ${mission.title}`, x + 70, y + 10, 430, 36, 22, P.INK, false, true);
+  paintCenter(ctx, sub, x + 70, y + 50, 650, 36, 18, P.INK, false, true);
+  if (unlocked && best > 0) paintCenter(ctx, "★".repeat(best) + "☆".repeat(3 - best), x + 510, y + 12, 200, 32, 18, P.INK, false, true);
+  if (!unlocked) drawLock(ctx, x + 22, y + 40);
+  if (unlocked) spots.push({ id: `mission-${mission.id}`, x, y, w: 740, h: 100 });
+}
+
+function drawInfiniteCard(ctx, state, x, y) {
+  const open = state.save.infinite === true;
+  const picked = open && state.selected === "infinite";
+  const meters = state.save.bestMeters.infinite || 0;
+  roundRect(ctx, x, y, 740, 100, 16);
+  ctx.fillStyle = picked ? P.ORANGE : P.YEL;
+  ctx.fill();
+  if (!open) {
+    ctx.fillStyle = "rgba(28,22,30,0.08)";
+    ctx.fill();
+  }
+  ink(ctx, 5);
+  ctx.stroke();
+  paintCenter(ctx, "Последний урок", x + 70, y + 10, 650, 36, 22, P.INK, false, true);
+  paintCenter(ctx, open ? (meters ? `${meters} м` : "Пока машина едет") : "После первого урока", x + 70, y + 50, 650, 36, 18, P.INK, false, true);
+  if (!open) drawLock(ctx, x + 22, y + 40);
+  if (open) spots.push({ id: "mission-infinite", x, y, w: 740, h: 100 });
+}
+
+function drawLock(ctx, x, y) {
+  ctx.strokeStyle = P.INK;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(x + 12, y + 10, 8, Math.PI, 0);
+  ctx.stroke();
+  ctx.strokeRect(x, y + 10, 24, 18);
+}
+
+function drawPlay(ctx, state) {
   const session = state.session;
   const sim = session.sim;
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
-  const mag = state.save.settings.shake && !state.save.settings.reducedMotion ? sim.shake : 0;
+  const motion = !state.save.settings.reducedMotion;
+  const mag = state.save.settings.shake && motion ? Math.min(sim.shake, 5) : 0;
   const held = session.phase === "drive" && (session.brakeHeld || session.keysDown.has("Space"));
-  const visual = held ? Math.max(sim.brakeInput, 0.22) : 0;
+  const visual = held ? Math.max(sim.brakeInput, 0.2) : 0;
   const paused = session.phase === "pause" || session.phase === "result";
 
   ctx.save();
-  if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.6);
-  drawWorld(ctx, sim, boil);
+  if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
+  drawWorld(ctx, sim, boil, motion);
   ctx.restore();
   drawCabin(ctx, sim, state, boil, visual);
   drawPatience(ctx, sim, paused);
   drawPedal(ctx, paused ? 0 : visual, paused);
-  drawHud(ctx, spots, state, sim);
-
-  if (session.phase === "drive" && !paused) {
-    spots.push({ id: "pedal", x: 1088, y: 742, w: 460, h: 140 });
+  drawHud(ctx, state, sim);
+  if (session.phase === "drive" && !paused) spots.push({ id: "pedal", x: 1080, y: 730, w: 480, h: 150 });
+  if (session.phase === "countdown") {
+    roundRect(ctx, 44, 124, 120, 84, 14);
+    ctx.fillStyle = P.PAPER;
+    ctx.fill();
+    ink(ctx, 6);
+    ctx.stroke();
+    paintCenter(ctx, String(session.countdown || 1), 44, 124, 120, 84, 42, P.INK, true, false);
   }
-  if (session.phase === "countdown") drawCountdown(ctx, session);
-  if (session.phase === "pause") drawPause(ctx, spots, state);
-  if (session.phase === "result") drawResult(ctx, spots, state);
-  if (state.debug && session.phase === "drive") {
-    label(
-      ctx,
-      `v ${Math.round(sim.v * 3.6)}  p ${sim.patience.toFixed(0)}  x ${sim.x.toFixed(2)}  ${sim.intent}`,
-      50,
-      820,
-      16,
-      P.INK,
-    );
+  if (session.phase === "pause") drawPause(ctx, state);
+  if (session.phase === "result") drawResult(ctx, state);
+  if (state.hint && session.phase === "drive") {
+    roundRect(ctx, 1092, 596, 448, 40, 12);
+    ctx.fillStyle = P.YEL;
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 1092, 596, 448, 40, 18, P.INK, false, true);
   }
 }
 
-function drawHud(ctx, spots, state, sim) {
+function drawHud(ctx, state, sim) {
   const mission = state.session.mission;
-  roundRect(ctx, 44, 44, 230, 64, 12);
+  roundRect(ctx, 44, 40, 210, 60, 12);
   ctx.fillStyle = P.INK;
   ctx.fill();
   const lesson = mission.infinite ? "∞" : String(mission.lesson).padStart(2, "0");
-  label(ctx, `УРОК ${lesson}`, 159, 76, 26, P.YEL, "center", true);
+  paintCenter(ctx, `УРОК ${lesson}`, 44, 40, 210, 60, 22, P.YEL, true, false);
 
-  roundRect(ctx, 290, 50, 430, 52, 12);
+  roundRect(ctx, 268, 40, 500, 60, 12);
   ctx.fillStyle = P.PAPER;
   ctx.fill();
   ink(ctx, 4);
   ctx.stroke();
   const goal = mission.infinite ? `${Math.floor(sim.s)} м` : mission.objective;
-  label(ctx, goal, 308, 70, 22, P.INK);
+  paintCenter(ctx, goal, 280, 46, 360, 28, 20, P.INK, false, false);
   if (!mission.infinite) {
     const p = Math.max(0, Math.min(1, sim.s / mission.length));
     ctx.fillStyle = "#E7DCC6";
-    ctx.fillRect(306, 88, 390, 8);
+    ctx.fillRect(292, 80, 360, 8);
     ctx.fillStyle = P.PAT_GREEN;
-    ctx.fillRect(306, 88, Math.max(0, 390 * p), 8);
+    ctx.fillRect(292, 80, Math.max(0, 360 * p), 8);
   }
-  if (mission.cargo === "cake" || mission.cargo === "fish") {
-    drawCargoIcon(ctx, 680, 76, mission.cargo, 0.5);
-  }
+  if (mission.cargo === "cake" || mission.cargo === "fish") drawCargoIcon(ctx, 720, 70, mission.cargo, 0.7, sim);
 
-  roundRect(ctx, 948, 40, 64, 64, 12);
+  roundRect(ctx, 940, 34, 72, 72, 14);
   ctx.fillStyle = P.PAPER;
   ctx.fill();
   ink(ctx, 5);
   ctx.stroke();
   ctx.fillStyle = P.INK;
-  ctx.fillRect(968, 56, 8, 32);
-  ctx.fillRect(984, 56, 8, 32);
-  spots.push({ id: "pause", x: 940, y: 36, w: 76, h: 76 });
-
-  if (state.hint && state.session.phase === "drive") {
-    roundRect(ctx, 300, 790, 460, 48, 12);
-    ctx.fillStyle = P.YEL;
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-    label(ctx, "Он рулит. Ты только тормозишь.", 530, 814, 18, P.INK, "center");
-  }
+  ctx.fillRect(962, 50, 8, 40);
+  ctx.fillRect(982, 50, 8, 40);
+  spots.push({ id: "pause", x: 928, y: 26, w: 96, h: 90 });
 }
 
-function drawCountdown(ctx, session) {
-  ctx.fillStyle = "rgba(28,22,30,0.28)";
-  ctx.fillRect(24, 24, 1010, 852);
-  roundRect(ctx, 250, 280, 540, 280, 20);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 8);
-  ctx.stroke();
-  label(ctx, String(session.countdown || 1), 520, 390, 92, P.INK, "center", true);
-  const line = session.mission.blurb[session.countdown > 1 ? 0 : 1] || session.mission.blurb[0];
-  label(ctx, line, 520, 490, 22, P.INK, "center");
-}
-
-function drawWorld(ctx, sim, boil) {
+function drawWorld(ctx, sim, boil, motion) {
+  const box = VIEW.panel;
+  const far = 1600;
   ctx.save();
   ctx.beginPath();
-  ctx.rect(ROAD.x, ROAD.y, ROAD.w, ROAD.h);
+  ctx.rect(box.x, box.y, box.w, box.h);
   ctx.clip();
-  ctx.fillStyle = P.GRASS;
-  ctx.fillRect(ROAD.x, ROAD.y, ROAD.w, ROAD.h);
+  ctx.fillStyle = "#9BC56F";
+  ctx.fillRect(box.x, box.y, box.w, box.h);
+  ctx.fillStyle = P.GLASS;
+  ctx.fillRect(box.x, box.y, box.w, VIEW.vanishY - box.y + 8);
 
-  const far = project(88, 0);
-  const nearL = project(-8, -4.6);
-  const nearR = project(-8, 4.6);
-  const farL = project(88, -4.6);
-  const farR = project(88, 4.6);
-  ctx.beginPath();
-  ctx.moveTo(project(-8, -6.4).x, nearL.y);
-  ctx.lineTo(project(88, -6.4).x, far.y);
-  ctx.lineTo(project(88, 6.4).x, far.y);
-  ctx.lineTo(project(-8, 6.4).x, nearR.y);
-  ctx.closePath();
-  ctx.fillStyle = P.SIDEWALK;
-  ctx.fill();
+  fillQuad(ctx, VIEW.near, far, -VIEW.sideHalf, -VIEW.roadHalf, "#E4D7C4");
+  fillQuad(ctx, VIEW.near, far, VIEW.roadHalf, VIEW.sideHalf, "#E4D7C4");
+  fillQuad(ctx, VIEW.near, far, -VIEW.roadHalf, VIEW.roadHalf, P.ROAD);
+  strokeRay(ctx, -VIEW.roadHalf, far, P.INK, 7);
+  strokeRay(ctx, VIEW.roadHalf, far, P.INK, 7);
 
-  ctx.beginPath();
-  ctx.moveTo(nearL.x, nearL.y);
-  ctx.lineTo(farL.x, farL.y);
-  ctx.lineTo(farR.x, farR.y);
-  ctx.lineTo(nearR.x, nearR.y);
-  ctx.closePath();
-  ctx.fillStyle = P.ROAD;
-  ctx.fill();
-  ctx.strokeStyle = P.PAPER;
-  ctx.lineWidth = 5;
-  ctx.stroke();
+  const curb = 5;
+  for (let s = Math.floor((sim.s + VIEW.near) / curb) * curb; s < sim.s + VIEW.look; s += curb) {
+    for (const side of [-1, 1]) {
+      const spot = project(s - sim.s, side * (VIEW.roadHalf + 0.08));
+      if (spot.y < 40 || spot.y > 900) continue;
+      ctx.fillStyle = P.PAPER;
+      ctx.fillRect(spot.x - 5 * spot.scale, spot.y, 10 * spot.scale, 7 * spot.scale);
+    }
+  }
 
   for (const zone of sim.slippery || []) {
-    if (zone.s1 < sim.s - 10 || zone.s0 > sim.s + 90) continue;
-    const a = project(zone.s0 - sim.s, 0);
-    const b = project(zone.s1 - sim.s, 0);
-    ctx.fillStyle = "rgba(90,150,180,0.28)";
-    ctx.fillRect(ROAD.x, Math.min(a.y, b.y), ROAD.w, Math.abs(a.y - b.y));
-    if (a.y > ROAD.top && a.y < 860) {
-      roundRect(ctx, a.x - 70, a.y - 18, 140, 32, 8);
+    const ds0 = zone.s0 - sim.s;
+    const ds1 = zone.s1 - sim.s;
+    if (ds1 < VIEW.near || ds0 > VIEW.look) continue;
+    fillQuad(ctx, Math.max(ds0, VIEW.near), Math.min(ds1, VIEW.look), -VIEW.roadHalf * 0.92, VIEW.roadHalf * 0.92, "rgba(120,170,190,0.45)");
+    if (ds0 > 2 && ds0 < VIEW.look - 6) {
+      const spot = project(ds0, 0);
+      roundRect(ctx, spot.x - 52, spot.y - 16, 104, 32, 8);
       ctx.fillStyle = P.YEL;
       ctx.fill();
       ink(ctx, 3);
       ctx.stroke();
-      label(ctx, "МОКРО", a.x, a.y - 2, 14, P.INK, "center");
+      paintCenter(ctx, "МОКРО", spot.x - 52, spot.y - 16, 104, 32, 16, P.INK, false, false);
     }
   }
 
-  ctx.strokeStyle = P.PAPER;
-  ctx.lineWidth = 4;
-  ctx.setLineDash([16, 18]);
-  ctx.beginPath();
-  ctx.moveTo(project(-6, 0).x, project(-6, 0).y);
-  ctx.lineTo(project(86, 0).x, project(86, 0).y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  const start = Math.floor((sim.s - 12) / 26) * 26;
-  for (let s = start; s < sim.s + 92; s += 26) {
+  for (let s = Math.floor((sim.s + VIEW.near) / 9) * 9; s < sim.s + VIEW.look; s += 9) {
+    fillQuad(ctx, s - sim.s, s - sim.s + 3.4, -0.18, 0.18, P.PAPER);
+  }
+  for (let s = Math.floor((sim.s - 6) / 17) * 17; s < sim.s + VIEW.look; s += 17) {
     const ds = s - sim.s;
-    const n = Math.round(s / 26);
-    const color = [P.PINK, P.BLUE, P.YEL, P.ORANGE][Math.abs(n) % 4];
-    const kind = Math.abs(n) % 5;
+    const a = project(ds, -0.9);
+    const b = project(ds + 1.4, 0.4);
+    ctx.strokeStyle = "rgba(28,22,30,0.35)";
+    ctx.lineWidth = Math.max(1, 2 * a.scale);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  for (let s = Math.floor((sim.s - 4) / 36) * 36; s < sim.s + VIEW.look; s += 36) {
+    const spot = project(s - sim.s, 0.55);
+    if (spot.y < 50 || spot.y > 880) continue;
+    ctx.beginPath();
+    ctx.ellipse(spot.x, spot.y, 16 * spot.scale, 8 * spot.scale, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#3E4658";
+    ctx.fill();
+    ink(ctx, 2);
+    ctx.stroke();
+  }
+
+  const props = [];
+  for (let s = Math.floor((sim.s - 8) / 14) * 14; s < sim.s + VIEW.look; s += 14) {
+    const n = Math.round(s / 14);
     for (const side of [-1, 1]) {
-      const spot = project(ds, side * 7.5);
-      if (spot.y < 10 || spot.y > 900) continue;
-      if (kind === 0) drawTree(ctx, spot.x, spot.y, spot.scale, boil, n + side);
-      else if (kind === 1 && side > 0) drawBench(ctx, spot.x, spot.y, spot.scale);
-      else drawHouse(ctx, spot.x, spot.y, spot.scale, color, n * side, boil, Math.abs(n) % 7 === 0);
+      props.push({ ds: s - sim.s, xm: side * 4.55, n, side, band: districtAt(s), kind: "prop" });
     }
+  }
+  for (const h of sim.hazards) {
+    const dist = h.s - sim.s;
+    if (h.resolved && dist < -10) continue;
+    if (dist < VIEW.near || dist > VIEW.look) continue;
+    props.push({ ds: dist, xm: hazardWorldX(h, sim), kind: "hazard", h });
+  }
+  props.sort((a, b) => b.ds - a.ds);
+  for (const item of props) {
+    if (item.kind === "prop") drawProp(ctx, item, boil);
+    else drawHazard(ctx, sim, item.h, boil);
   }
 
   for (const skid of sim.skids || []) {
     const spot = project(skid.s - sim.s, skid.x);
-    if (spot.y < 20 || spot.y > 890) continue;
+    if (spot.y < 40 || spot.y > 880) continue;
     ctx.strokeStyle = "rgba(28,22,30,0.45)";
-    ctx.lineWidth = 4 * spot.scale;
+    ctx.lineWidth = 5 * spot.scale;
     ctx.beginPath();
-    ctx.moveTo(spot.x - 10 * spot.scale, spot.y);
-    ctx.lineTo(spot.x - 8 * spot.scale, spot.y + 18 * spot.scale);
-    ctx.moveTo(spot.x + 10 * spot.scale, spot.y);
-    ctx.lineTo(spot.x + 8 * spot.scale, spot.y + 18 * spot.scale);
+    ctx.moveTo(spot.x - 14 * spot.scale, spot.y);
+    ctx.lineTo(spot.x - 10 * spot.scale, spot.y + 26 * spot.scale);
+    ctx.moveTo(spot.x + 14 * spot.scale, spot.y);
+    ctx.lineTo(spot.x + 10 * spot.scale, spot.y + 26 * spot.scale);
     ctx.stroke();
   }
 
-  for (const h of sim.hazards) {
-    const dist = h.s - sim.s;
-    if (h.resolved && dist < -6) continue;
-    if (dist < -8 || dist > 90) continue;
-    drawHazard(ctx, sim, h, boil);
+  if (motion && sim.v > 11) {
+    const shift = (sim.s * 28) % 70;
+    ctx.strokeStyle = "rgba(28,22,30,0.22)";
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 3; i++) {
+      const y = 800 - ((i * 80 + shift) % 220);
+      ctx.beginPath();
+      ctx.moveTo(34, y);
+      ctx.lineTo(58, y + 8);
+      ctx.moveTo(1024, y + 6);
+      ctx.lineTo(1000, y + 14);
+      ctx.stroke();
+    }
   }
-
   drawCar(ctx, sim, boil);
   ctx.restore();
-
-  roundRect(ctx, ROAD.x, ROAD.y, ROAD.w, ROAD.h, 8);
+  roundRect(ctx, box.x, box.y, box.w, box.h, 8);
   ink(ctx, 8);
   ctx.stroke();
 }
 
-function drawHouse(ctx, x, y, sc, color, seed, boil, laundry) {
+function fillQuad(ctx, ds0, ds1, x0, x1, color) {
+  const a = project(ds0, x0);
+  const b = project(ds0, x1);
+  const c = project(ds1, x1);
+  const d = project(ds1, x0);
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.lineTo(c.x, c.y);
+  ctx.lineTo(d.x, d.y);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function strokeRay(ctx, xm, far, color, width) {
+  const a = project(VIEW.near, xm);
+  const b = project(far, xm);
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
+function districtAt(worldS) {
+  return ["yard", "market", "edge"][Math.abs(Math.floor(worldS / 220)) % 3];
+}
+
+function shadowAt(ctx, x, y, sc, rx) {
+  ctx.save();
+  ctx.translate(x, y + 4 * sc);
+  ctx.scale(1, 0.42);
+  ctx.fillStyle = "rgba(28,22,30,0.2)";
+  ctx.beginPath();
+  ctx.ellipse(0, 0, rx * sc, 16 * sc, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawProp(ctx, item, boil) {
+  const spot = project(item.ds, item.xm);
+  if (spot.y < -30 || spot.y > 940) return;
+  const sc = Math.max(0.42, Math.min(1.2, spot.scale));
+  const color = [P.PINK, P.BLUE, P.ORANGE, P.YEL, P.TEAL][Math.abs(item.n + item.side) % 5];
+  const cycle = Math.abs(item.n * 2 + (item.side > 0 ? 1 : 4)) % 7;
+  shadowAt(ctx, spot.x, spot.y, sc, 46);
+  if (item.band === "market") {
+    drawBuilding(ctx, spot.x, spot.y, sc, cycle % 2 === 0 ? 1 : 4, color, boil, true);
+    return;
+  }
+  if (item.band === "edge") {
+    if (cycle % 3 === 0) drawTree(ctx, spot.x, spot.y, sc, boil, item.n);
+    else drawBuilding(ctx, spot.x, spot.y, sc * 1.1, 3, color, boil, false);
+    return;
+  }
+  if (cycle === 0 || cycle === 5) drawTree(ctx, spot.x, spot.y, sc, boil, item.n);
+  else if (cycle === 1) drawBuilding(ctx, spot.x, spot.y, sc, 0, color, boil, Math.abs(item.n) % 3 === 0);
+  else if (cycle === 2) drawBuilding(ctx, spot.x, spot.y, sc, 1, color, boil, false);
+  else if (cycle === 3) drawBuilding(ctx, spot.x, spot.y, sc, 4, color, boil, false);
+  else if (cycle === 4) drawBuilding(ctx, spot.x, spot.y, sc, 0, color, boil, true);
+  else drawBuilding(ctx, spot.x, spot.y, sc, 2, color, boil, false);
+}
+
+function drawBuilding(ctx, x, y, sc, kind, color, boil, laundry) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
-  const ox = boil ? Math.sin(seed) * 1.2 : 0;
-  roundRect(ctx, -48 + ox, -28, 96, 74, 4);
-  ctx.fillStyle = color;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(-56, -22);
-  ctx.lineTo(-4, -64);
-  ctx.lineTo(58, -20);
-  ctx.closePath();
-  ctx.fillStyle = color === P.YEL ? P.ORANGE : P.INK;
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  ctx.fillStyle = P.PAPER;
-  roundRect(ctx, -30, -8, 22, 18, 3);
-  ctx.fill();
-  roundRect(ctx, 8, -6, 18, 16, 3);
-  ctx.fill();
-  ink(ctx, 3);
-  ctx.stroke();
-  if (laundry) {
-    ctx.fillStyle = P.PINK;
-    ctx.fillRect(20, -58, 16, 12);
+  const bob = boil ? 1.2 : 0;
+  if (kind === 1) {
+    roundRect(ctx, -62, -8, 124, 70, 4);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ink(ctx, 5);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-70, -6);
+    ctx.lineTo(-78, -36);
+    ctx.lineTo(78, -28 + bob);
+    ctx.lineTo(70, -4);
+    ctx.closePath();
+    ctx.fillStyle = P.RED;
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.fillStyle = P.PAPER;
+    roundRect(ctx, -20, 16, 40, 46, 3);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-40, -48);
+    ctx.quadraticCurveTo(0, -34, 40, -46);
+    ctx.stroke();
+  } else if (kind === 2) {
+    ctx.strokeStyle = P.INK;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    for (let i = -3; i <= 3; i++) {
+      ctx.moveTo(i * 16, -28);
+      ctx.lineTo(i * 16, 24);
+    }
+    ctx.moveTo(-52, -8);
+    ctx.lineTo(52, -8);
+    ctx.stroke();
+    roundRect(ctx, -14, -6, 28, 32, 2);
+    ctx.fillStyle = P.ORANGE;
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+  } else if (kind === 3) {
+    roundRect(ctx, -78, -20, 156, 58, 3);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ink(ctx, 5);
+    ctx.stroke();
+    ctx.fillStyle = P.INK;
+    ctx.fillRect(-18, -4, 30, 42);
+    ctx.beginPath();
+    ctx.arc(48, 8, 12, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (kind === 4) {
+    roundRect(ctx, -34, -70, 68, 110, 4);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ink(ctx, 5);
+    ctx.stroke();
     ctx.fillStyle = P.GLASS;
-    ctx.fillRect(38, -54, 14, 10);
+    ctx.fillRect(-18, -52, 16, 18);
+    ctx.fillRect(6, -28, 16, 18);
+    ink(ctx, 3);
+    ctx.strokeRect(-18, -52, 16, 18);
+  } else {
+    roundRect(ctx, -50 + bob, -24, 100, 86, 4);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ink(ctx, 5);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-60, -20);
+    ctx.lineTo(-8, -78);
+    ctx.lineTo(62, -16);
+    ctx.closePath();
+    ctx.fillStyle = color === P.YEL ? P.ORANGE : P.INK;
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.fillStyle = P.PAPER;
+    roundRect(ctx, -32, -4, 22, 18, 2);
+    ctx.fill();
+    roundRect(ctx, 8, 6, 16, 28, 2);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+    if (laundry) {
+      ctx.fillStyle = P.PINK;
+      ctx.fillRect(18, -58, 14, 12);
+      ctx.fillStyle = P.GLASS;
+      ctx.fillRect(34, -54, 12, 10);
+    }
   }
   ctx.restore();
 }
@@ -430,38 +637,22 @@ function drawTree(ctx, x, y, sc, boil, seed) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
-  ctx.fillStyle = "#6E4A32";
-  roundRect(ctx, -6, -4, 12, 28, 3);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(boil ? 2 : 0, -24, 26, 0, Math.PI * 2);
-  ctx.fillStyle = "#7EAA55";
+  ctx.fillStyle = "#6A432C";
+  roundRect(ctx, -8, -4, 16, 40, 3);
   ctx.fill();
   ink(ctx, 4);
   ctx.stroke();
   ctx.beginPath();
-  ctx.arc((seed % 2 ? -8 : 8), -30, 8, 0, Math.PI * 2);
-  ctx.fillStyle = P.GRASS;
-  ctx.fill();
-  ctx.restore();
-}
-
-function drawBench(ctx, x, y, sc) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sc, sc);
-  ctx.fillStyle = P.ORANGE;
-  roundRect(ctx, -28, -8, 56, 14, 3);
+  ctx.arc(boil ? 4 : -3, -36, 34, 0, Math.PI * 2);
+  ctx.fillStyle = "#5E9440";
   ctx.fill();
   ink(ctx, 4);
   ctx.stroke();
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(-20, 6);
-  ctx.lineTo(-20, 18);
-  ctx.moveTo(20, 6);
-  ctx.lineTo(20, 18);
+  ctx.arc(seed % 2 ? -12 : 14, -48, 10, 0, Math.PI * 2);
+  ctx.fillStyle = "#7CB85A";
+  ctx.fill();
+  ink(ctx, 3);
   ctx.stroke();
   ctx.restore();
 }
@@ -470,29 +661,31 @@ function drawHazard(ctx, sim, h, boil) {
   const dist = h.s - sim.s;
   const hx = hazardWorldX(h, sim);
   const spot = project(dist, hx);
-  if (spot.y < 0 || spot.y > 900) return;
-  const sc = Math.max(0.35, spot.scale);
-  if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y, sc, boil);
+  if (spot.y < -40 || spot.y > 940) return;
+  const sc = Math.max(0.62, Math.min(1.45, spot.scale * 1.55));
+  const hop = h.hopped ? -22 * sc : 0;
+  shadowAt(ctx, spot.x, spot.y, sc, h.type === "cutin" || h.type === "stopped" ? 34 : 22);
+  if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, boil, true);
   else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, boil);
-  else if (h.type === "pothole") drawHole(ctx, spot.x, spot.y, sc, boil);
-  else if (h.type === "bin") drawBin(ctx, spot.x, spot.y, sc, dist);
+  else if (h.type === "pothole") drawHole(ctx, spot.x, spot.y, sc);
+  else if (h.type === "bin") drawBin(ctx, spot.x, spot.y + hop, sc, dist, h.hopped);
+  else if (h.type === "roller") drawRoller(ctx, spot.x, spot.y, sc, h);
   else drawNpc(ctx, spot.x, spot.y, sc, h, dist, boil);
 
-  if (!h.resolved && dist < h.telegraph && dist > 2) {
-    const bang = project(dist, hx);
-    const by = bang.y - 34 * sc;
+  if (!h.resolved && dist < (h.telegraph || 60) && dist > 2) {
+    const markLift = h.type === "pedestrian" ? 184 : 78;
+    const by = spot.y - markLift * sc;
     ctx.beginPath();
-    ctx.arc(bang.x, by, 16 * sc + 6, 0, Math.PI * 2);
+    ctx.arc(spot.x, by, 18 * Math.min(sc, 1.1) + 4, 0, Math.PI * 2);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    label(ctx, "!", bang.x, by + 1, Math.max(16, 22 * sc), P.INK, "center", true);
+    paintCenter(ctx, "!", spot.x - 16, by - 16, 32, 32, 22, P.INK, true, false);
   }
-
-  if (h.trust && !h.resolved && dist < h.telegraph && dist > 0 && h.committed !== "lunge") {
-    const free = -Math.sign(h.x || 1) * 1.8;
-    const chev = project(Math.max(6, Math.min(dist * 0.45, 22)), free);
+  if (h.trust && !h.resolved && h.committed !== "lunge" && dist < (h.telegraph || 60) && dist > 2) {
+    const free = -Math.sign(h.x || 1) * 1.6;
+    const chev = project(Math.max(4, Math.min(dist * 0.35, 14)), free);
     ctx.fillStyle = P.YEL;
     ctx.beginPath();
     ctx.moveTo(chev.x, chev.y - 16);
@@ -505,41 +698,46 @@ function drawHazard(ctx, sim, h, boil) {
   }
 }
 
-function drawPed(ctx, x, y, sc, boil) {
+function drawPed(ctx, x, y, sc, boil, phone) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
-  const step = boil ? 4 : -4;
+  ctx.translate(0, pedestrianFootShift());
+  const step = boil ? 8 : -8;
   ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 6;
   ctx.beginPath();
-  ctx.moveTo(-8, 10);
-  ctx.lineTo(-12, 36 + step);
-  ctx.moveTo(8, 10);
-  ctx.lineTo(14, 36 - step);
+  ctx.moveTo(-12, 10);
+  ctx.lineTo(-18 + step, PED_FOOT_LOCAL_Y);
+  ctx.moveTo(12, 10);
+  ctx.lineTo(20 - step, PED_FOOT_LOCAL_Y);
   ctx.stroke();
-  roundRect(ctx, -18, -18, 36, 34, 8);
+  roundRect(ctx, -26, -34, 52, 50, 10);
   ctx.fillStyle = P.PINK;
   ctx.fill();
-  ink(ctx, 4);
+  ink(ctx, 5);
   ctx.stroke();
   ctx.beginPath();
-  ctx.arc(0, -36, 16, 0, Math.PI * 2);
+  ctx.arc(2, -62, 26, 0, Math.PI * 2);
   ctx.fillStyle = P.SKIN;
   ctx.fill();
-  ink(ctx, 4);
+  ink(ctx, 5);
   ctx.stroke();
   ctx.fillStyle = P.WHITE;
   ctx.beginPath();
-  ctx.arc(-2, -38, 7, 0, Math.PI * 2);
+  ctx.ellipse(-4, -64, 12, 10, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = P.INK;
   ctx.beginPath();
-  ctx.arc(-1, -38, 3, 0, Math.PI * 2);
+  ctx.arc(-2, -64, 5, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = P.INK;
-  roundRect(ctx, 10, -8, 10, 16, 2);
-  ctx.fill();
+  if (phone) {
+    roundRect(ctx, 18, -8, 16, 24, 3);
+    ctx.fillStyle = P.INK;
+    ctx.fill();
+    ctx.fillStyle = P.GLASS;
+    ctx.fillRect(21, -4, 10, 12);
+  }
   ctx.restore();
 }
 
@@ -548,19 +746,31 @@ function drawDog(ctx, x, y, sc, boil) {
   ctx.translate(x, y);
   ctx.scale(sc, sc);
   ctx.fillStyle = "#8A5A3A";
-  roundRect(ctx, -28, -16, 56, 28, 4);
+  roundRect(ctx, -40, -18, 70, 36, 8);
   ctx.fill();
   ink(ctx, 4);
   ctx.stroke();
-  ctx.fillStyle = P.INK;
-  const leg = boil ? 4 : 0;
-  ctx.fillRect(-20, 10, 6, 12 + leg);
-  ctx.fillRect(-6, 10, 6, 14 - leg);
-  ctx.fillRect(8, 10, 6, 12 + leg);
-  ctx.fillRect(18, 10, 6, 10);
   ctx.beginPath();
-  ctx.arc(24, -8, 4, 0, Math.PI * 2);
+  ctx.arc(36, -16, 14, 0, Math.PI * 2);
   ctx.fill();
+  ink(ctx, 4);
+  ctx.stroke();
+  ctx.fillStyle = P.WHITE;
+  ctx.beginPath();
+  ctx.arc(40, -18, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = P.INK;
+  ctx.beginPath();
+  ctx.arc(41, -18, 2, 0, Math.PI * 2);
+  ctx.fill();
+  const leg = boil ? 6 : 0;
+  ctx.fillRect(-28, 14, 8, 16 + leg);
+  ctx.fillRect(-8, 14, 8, 18 - leg);
+  ctx.fillRect(10, 14, 8, 16 + leg);
+  ctx.beginPath();
+  ctx.moveTo(-36, -8);
+  ctx.quadraticCurveTo(-52, boil ? -24 : -8, -34, 6);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -568,118 +778,143 @@ function drawHole(ctx, x, y, sc) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
-  ctx.strokeStyle = P.YEL;
-  ctx.lineWidth = 4;
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(a) * 18, Math.sin(a) * 12);
-    ctx.lineTo(Math.cos(a) * 30, Math.sin(a) * 20);
-    ctx.stroke();
-  }
   ctx.beginPath();
-  ctx.ellipse(0, 0, 20, 12, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "#2A241C";
+  ctx.ellipse(0, 6, 34, 18, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "#241C16";
   ctx.fill();
   ink(ctx, 4);
+  ctx.stroke();
+  ctx.strokeStyle = P.YEL;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(-24, -6);
+  ctx.lineTo(-36, -18);
+  ctx.moveTo(18, -4);
+  ctx.lineTo(32, -16);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawBin(ctx, x, y, sc, dist) {
+function drawBin(ctx, x, y, sc, dist, hopped) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
-  ctx.rotate(dist < 18 ? 0.5 : 0.15);
-  roundRect(ctx, -16, -28, 32, 40, 4);
-  ctx.fillStyle = "#6E8A62";
+  ctx.rotate(hopped ? 1.15 : dist < 14 ? 0.7 : 0.18);
+  roundRect(ctx, -20, -36, 40, 54, 5);
+  ctx.fillStyle = "#5E7A52";
   ctx.fill();
   ink(ctx, 4);
   ctx.stroke();
   ctx.fillStyle = P.INK;
-  ctx.fillRect(-18, -32, 36, 6);
+  ctx.fillRect(-24, -40, 48, 8);
+  ctx.restore();
+}
+
+function drawRoller(ctx, x, y, sc, h) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(sc, sc);
+  ctx.rotate((h.crossT > 0 ? h.crossT : 0) * 7);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 28, 16, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "#6E8A62";
+  ctx.fill();
+  ink(ctx, 4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, -8);
+  ctx.lineTo(0, -22);
+  ctx.stroke();
   ctx.restore();
 }
 
 function drawNpc(ctx, x, y, sc, h, dist, boil) {
   const colors = [P.BLUE, P.ORANGE, P.TEAL, P.PINK];
-  const color = colors[Math.abs(hash(h.s) * 4 | 0) % colors.length];
+  const color = colors[Math.abs(Math.floor(hash(h.s) * 4)) % colors.length];
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
-  if (h.type === "cutin" && dist > 8) ctx.rotate(-0.4);
-  roundRect(ctx, -22, -36, 44, 70, 8);
+  if (h.type === "cutin" && h.crossT >= 0 && h.crossT < (h.crossDur || 2)) ctx.rotate(-0.4);
+  roundRect(ctx, -30, -48, 60, 92, 10);
   ctx.fillStyle = color;
   ctx.fill();
-  ink(ctx, 4);
+  ink(ctx, 5);
   ctx.stroke();
   ctx.fillStyle = P.GLASS;
-  ctx.fillRect(-14, -28, 28, 16);
+  ctx.fillRect(-20, -36, 40, 22);
   ctx.fillStyle = P.INK;
-  ctx.fillRect(-16, 20, 10, 12);
-  ctx.fillRect(6, 20, 10, 12);
+  ctx.fillRect(-22, 24, 14, 16);
+  ctx.fillRect(8, 24, 14, 16);
   if (h.type === "cutin" && dist < 40) {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 4;
+    ctx.strokeStyle = P.YEL;
+    ctx.lineWidth = 5;
     ctx.beginPath();
-    ctx.moveTo(22, -10);
-    ctx.lineTo(40, -24 + (boil ? 2 : 0));
+    ctx.moveTo(28, -6);
+    ctx.lineTo(52, -24 + (boil ? 4 : 0));
     ctx.stroke();
   }
   ctx.restore();
 }
 
 function drawCar(ctx, sim, boil) {
-  const spot = project(0, sim.x);
+  const bumper = project(CFG.carHalfFront, sim.x);
+  const origin = carDrawOrigin(bumper.x, bumper.y, sim.brakeInput, sim.crashT);
+  drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil);
+}
+
+function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0) {
   ctx.save();
-  ctx.translate(spot.x, spot.y);
-  ctx.rotate(sim.brakeInput * 0.16);
-  const squash = 1 - Math.min(0.28, sim.crashT);
-  ctx.scale(1.05, squash);
-  // Flat ink puddle. No translucent ellipse: that read as a soft shine under the roof.
-  roundRect(ctx, -26, 34, 58, 14, 4);
-  ctx.fillStyle = P.INK;
+  ctx.translate(x, y);
+  const live = sim || { s: 0, cargoType: null, cargo: 100, body: 100, t: 0, cargoFlash: 0, nearT: 0, crashT: 0, lastSelfBrake: 0 };
+  const dive = (brake || 0) * CAR_DIVE;
+  ctx.rotate(dive);
+  ctx.scale(sc, sc * (1 - Math.min(0.16, live.crashT || 0)));
+  ctx.fillStyle = "rgba(28,22,30,0.22)";
+  ctx.beginPath();
+  ctx.ellipse(0, 42, 40, 12, 0, 0, Math.PI * 2);
   ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  roundRect(ctx, -32, -48, 64, 92, 12);
-  ctx.fillStyle = P.YEL;
+  roundRect(ctx, -CAR_BODY_W / 2, CAR_NOSE_LOCAL_Y, CAR_BODY_W, CAR_BODY_H, 16);
+  ctx.fillStyle = live.body < 45 ? "#CDB56A" : P.YEL;
   ctx.fill();
   ink(ctx, 5);
   ctx.stroke();
   ctx.fillStyle = P.GLASS;
-  ctx.fillRect(-22, -36, 44, 22);
-  roundRect(ctx, -16, -20, 32, 22, 3);
+  roundRect(ctx, -28, -50, 56, 30, 6);
+  ctx.fill();
+  ink(ctx, 3);
+  ctx.stroke();
+  roundRect(ctx, -18, -16, 36, 26, 4);
   ctx.fillStyle = P.RED;
   ctx.fill();
   ink(ctx, 3);
   ctx.stroke();
-  label(ctx, "У", 0, -9, 16, P.PAPER, "center", true);
-  const lamps = sim.brakeInput > 0.2 || sim.lastSelfBrake > 0.12;
-  ctx.fillStyle = lamps ? P.ORANGE : P.INK;
-  ctx.fillRect(-22, -46, 12, 8);
-  ctx.fillRect(10, -46, 12, 8);
-  const spin = sim.s * 2.2 + (boil ? 0.3 : 0);
-  drawWheel(ctx, -24, -24, spin);
-  drawWheel(ctx, 24, -24, spin);
-  drawWheel(ctx, -24, 24, spin);
-  drawWheel(ctx, 24, 24, spin);
-  if (sim.body < 66) {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(-10, 8);
-    ctx.lineTo(6, 16);
-    ctx.lineTo(-4, 24);
+  paintCenter(ctx, "У", -16, -18, 32, 26, 16, P.PAPER, true, false);
+  const lamps = (brake || 0) > 0.15 || live.lastSelfBrake > 0.1;
+  ctx.fillStyle = lamps ? P.RED : P.ORANGE;
+  ctx.fillRect(-28, 32, 16, 10);
+  ctx.fillRect(12, 32, 16, 10);
+  const spin = live.s * 2.6 + (boil ? 0.5 : 0);
+  drawWheel(ctx, -28, -30, spin);
+  drawWheel(ctx, 28, -30, spin);
+  drawWheel(ctx, -28, 26, spin);
+  drawWheel(ctx, 28, 26, spin);
+  if (live.cargoType) {
+    const launch = live.cargoFlash || 0;
+    const tilt = Math.sin(live.t * 8) * (brake || 0) * 0.4;
+    ctx.save();
+    ctx.translate(0, -78 - launch * 36);
+    ctx.rotate(tilt + launch * 0.6);
+    drawCargoIcon(ctx, 0, 0, live.cargoType, 1, live);
+    ctx.restore();
+  }
+  if ((brake || 0) > 0.55 && live.v > 8 && live.cargoType) {
+    roundRect(ctx, -36, -118, 72, 26, 8);
+    ctx.fillStyle = P.YEL;
+    ctx.fill();
+    ink(ctx, 3);
     ctx.stroke();
+    paintCenter(ctx, live.cargoType === "fish" ? "РЫБКА" : "КРЕМ", -36, -118, 72, 26, 14, P.INK, false, false);
   }
-  if (sim.body < 33) {
-    ctx.fillStyle = "#D9C27A";
-    ctx.fillRect(8, -4, 16, 10);
-    ctx.strokeStyle = P.INK;
-    ctx.strokeRect(8, -4, 16, 10);
-  }
-  if (sim.cargoType) drawCargoIcon(ctx, 0, -62, sim.cargoType, 0.7);
   ctx.restore();
 }
 
@@ -688,300 +923,338 @@ function drawWheel(ctx, x, y, spin) {
   ctx.translate(x, y);
   ctx.fillStyle = P.INK;
   ctx.beginPath();
-  ctx.arc(0, 0, 9, 0, Math.PI * 2);
+  ctx.arc(0, 0, 11, 0, Math.PI * 2);
   ctx.fill();
   ctx.strokeStyle = P.PAPER;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(Math.cos(spin) * 6, Math.sin(spin) * 6);
-  ctx.lineTo(-Math.cos(spin) * 6, -Math.sin(spin) * 6);
+  ctx.moveTo(Math.cos(spin) * 7, Math.sin(spin) * 7);
+  ctx.lineTo(-Math.cos(spin) * 7, -Math.sin(spin) * 7);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawCargoIcon(ctx, x, y, type, sc) {
+function drawCargoIcon(ctx, x, y, type, sc, sim) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
+  const hurt = sim && sim.cargo < 60;
   if (type === "cake") {
-    roundRect(ctx, -18, -10, 36, 22, 4);
-    ctx.fillStyle = P.PINK;
+    roundRect(ctx, -24, -6, 48, 28, 6);
+    ctx.fillStyle = hurt ? "#E7B89A" : P.PINK;
     ctx.fill();
     ink(ctx, 3);
     ctx.stroke();
     ctx.strokeStyle = P.INK;
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(-6, -10);
-    ctx.lineTo(-6, -22);
-    ctx.moveTo(6, -10);
-    ctx.lineTo(6, -22);
+    ctx.moveTo(-8, -6);
+    ctx.lineTo(-10, hurt ? -16 : -28);
+    ctx.moveTo(8, -6);
+    ctx.lineTo(12, hurt ? -14 : -26);
     ctx.stroke();
+    ctx.fillStyle = P.YEL;
+    ctx.beginPath();
+    ctx.arc(-10, hurt ? -16 : -28, 3, 0, Math.PI * 2);
+    ctx.arc(12, hurt ? -14 : -26, 3, 0, Math.PI * 2);
+    ctx.fill();
   } else {
-    roundRect(ctx, -16, -14, 32, 26, 6);
+    const slosh = sim ? Math.sin((sim.t || 0) * 7) * Math.min(1, (sim.brakeInput || 0) + (sim.cargoFlash || 0)) * 8 : 0;
+    roundRect(ctx, -20, -18, 40, 34, 6);
     ctx.fillStyle = P.GLASS;
     ctx.fill();
     ink(ctx, 3);
     ctx.stroke();
+    ctx.fillStyle = "rgba(90,160,190,0.55)";
+    ctx.fillRect(-16, -4 + slosh * 0.2, 32, 16);
     ctx.fillStyle = P.ORANGE;
     ctx.beginPath();
-    ctx.ellipse(0, 0, 8, 5, 0.4, 0, Math.PI * 2);
+    ctx.ellipse(slosh, 2, 8, 5, 0.3, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
 }
 
 function drawCabin(ctx, sim, state, boil, visual) {
-  roundRect(ctx, 1056, 24, 520, 600, 8);
-  ctx.fillStyle = P.CABIN;
-  ctx.fill();
-  ink(ctx, 8);
-  ctx.stroke();
+  panel(ctx, 1056, 24, 520, 600, P.CABIN);
   ctx.save();
   ctx.beginPath();
   ctx.rect(1056, 24, 520, 600);
   ctx.clip();
   ctx.fillStyle = P.GLASS;
-  ctx.fillRect(1056, 24, 520, 118);
+  ctx.fillRect(1056, 24, 520, 150);
   ink(ctx, 6);
   ctx.beginPath();
-  ctx.moveTo(1056, 142);
-  ctx.lineTo(1576, 142);
+  ctx.moveTo(1056, 174);
+  ctx.lineTo(1576, 174);
+  ctx.stroke();
+  ctx.fillStyle = "#E08A3C";
+  roundRect(ctx, 1140, 470, 360, 150, 24);
+  ctx.fill();
+  ink(ctx, 5);
   ctx.stroke();
   const exp = state.pose || expressionId(sim);
   drawAnton(ctx, exp, boil, visual, sim);
   if (sim.bubble && sim.bubbleT > 0) {
-    roundRect(ctx, 1080, 156, 280, 48, 12);
+    roundRect(ctx, 1088, 186, 250, 48, 12);
     ctx.fillStyle = P.PAPER;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    label(ctx, sim.bubble, 1220, 180, 20, P.INK, "center");
+    paintCenter(ctx, sim.bubble, 1088, 186, 250, 48, 20, P.INK, false, false);
   }
   ctx.restore();
 }
 
 function drawAnton(ctx, exp, boil, lean, sim) {
-  const ox = boil ? 1.6 : 0;
-  const nod = lean * 16 + (exp === "belted" ? 18 : 0);
+  const shift = poseShift(exp);
   ctx.save();
-  ctx.translate(1316 + ox, 250 + nod * 0.25);
+  ctx.translate(1316, 268 + shift.y + lean * 10);
+  ctx.rotate(shift.rot);
 
-  roundRect(ctx, -92, 78, 184, 150, 18);
+  roundRect(ctx, -100, 70, 200, 150, 24);
   ctx.fillStyle = P.TEAL;
   ctx.fill();
   ink(ctx, 6);
   ctx.stroke();
 
   ctx.strokeStyle = P.INK;
-  ctx.lineWidth = exp === "belted" ? 8 : 5;
+  ctx.lineWidth = shift.belt;
   ctx.beginPath();
-  ctx.moveTo(-70, 96);
-  ctx.lineTo(20, 168);
+  ctx.moveTo(-78, 88);
+  ctx.lineTo(30, 150 + (exp === "belted" ? 10 : 0));
   ctx.stroke();
 
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 8;
-  ctx.beginPath();
-  ctx.moveTo(-78, 150);
-  ctx.quadraticCurveTo(-40, 210, 0, 196);
-  ctx.moveTo(78, 150);
-  ctx.quadraticCurveTo(40, 214, 0, 196);
-  ctx.stroke();
-
-  const wheel = Math.max(-0.4, Math.min(0.4, ((sim.targetX || 1.8) - sim.x) * 0.35));
+  const wheel = Math.max(-0.35, Math.min(0.35, ((sim.targetX || 1.8) - (sim.x || 1.8)) * 0.45));
   ctx.save();
-  ctx.translate(0, 198);
+  ctx.translate(0, 188);
   ctx.rotate(wheel);
   ctx.beginPath();
-  ctx.ellipse(0, 0, 54, 22, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 58, 24, 0, 0, Math.PI * 2);
   ctx.fillStyle = P.INK;
   ctx.fill();
   ctx.strokeStyle = P.PAPER;
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(-30, 0);
-  ctx.lineTo(30, 0);
-  ctx.moveTo(0, -12);
-  ctx.lineTo(0, 12);
+  ctx.moveTo(-34, 0);
+  ctx.lineTo(34, 0);
+  ctx.moveTo(0, -14);
+  ctx.lineTo(0, 14);
   ctx.stroke();
-  ctx.fillStyle = P.SKIN;
-  ctx.beginPath();
-  ctx.arc(-34, 4, 12, 0, Math.PI * 2);
-  ctx.arc(34, 4, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ink(ctx, 3);
-  ctx.stroke();
+  if (!shift.hairHand) {
+    ctx.fillStyle = P.SKIN;
+    ctx.beginPath();
+    ctx.arc(-36, 2, 13, 0, Math.PI * 2);
+    ctx.arc(36, 2, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = P.SKIN;
+    ctx.beginPath();
+    ctx.arc(36, 2, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+  }
   ctx.restore();
 
+  if (shift.hairHand) {
+    ctx.strokeStyle = P.INK;
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(-70, 120);
+    ctx.quadraticCurveTo(-90, 20, -20, -70);
+    ctx.stroke();
+    ctx.fillStyle = P.SKIN;
+    ctx.beginPath();
+    ctx.arc(-18, -78, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ink(ctx, 3);
+    ctx.stroke();
+  }
+
   ctx.beginPath();
-  ctx.ellipse(0, 8, 108, 96, 0, 0, Math.PI * 2);
+  ctx.ellipse(shift.head, 0, 112, 100, 0, 0, Math.PI * 2);
   ctx.fillStyle = P.SKIN;
   ctx.fill();
   ink(ctx, 6);
   ctx.stroke();
-
   ctx.fillStyle = P.SKIN;
   ctx.beginPath();
-  ctx.ellipse(-100, 20, 16, 22, 0, 0, Math.PI * 2);
-  ctx.ellipse(100, 28, 14, 18, 0, 0, Math.PI * 2);
+  ctx.ellipse(-104, 18, 16, 22, 0, 0, Math.PI * 2);
+  ctx.ellipse(104, 26, 14, 18, 0, 0, Math.PI * 2);
   ctx.fill();
   ink(ctx, 4);
   ctx.stroke();
 
   ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 5;
   ctx.beginPath();
-  const hairs = [-34, -10, 14, 38];
-  hairs.forEach((hx, i) => {
-    const lift = exp === "furious" ? 8 : 0;
-    ctx.moveTo(hx, -78);
-    ctx.quadraticCurveTo(hx + (i - 1.5) * 6, -118 - lift - (boil && i % 2 ? 4 : 0), hx + 8, -96);
+  [-36, -12, 14, 40].forEach((hx, i) => {
+    const lift = exp === "furious" || exp === "preen" ? 14 : exp === "proud" ? 8 : 0;
+    ctx.moveTo(hx + shift.head, -86);
+    ctx.quadraticCurveTo(hx + (i - 1.5) * 8, -132 - lift - (boil && i % 2 ? 6 : 0), hx + 10, -100);
   });
   ctx.stroke();
 
   const look = lookFor(exp);
-  eye(ctx, -30, -8, 27, 23, 8, look.left);
-  eye(ctx, 28, 10, 15, 13, 5, look.right);
-  brows(ctx, exp);
-  mouth(ctx, exp);
-  if (exp === "angry" || exp === "furious") {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(58, -20);
-    ctx.lineTo(78, -28);
-    ctx.moveTo(62, -4);
-    ctx.lineTo(84, -4);
-    ctx.moveTo(58, 12);
-    ctx.lineTo(76, 18);
-    ctx.stroke();
-  }
+  eye(ctx, -32 + shift.head, -10, exp === "belted" ? 30 : 26, exp === "belted" ? 26 : 22, 8, look.left);
+  eye(ctx, 30 + shift.head, 8, 16, 14, 5, look.right, false);
+  brows(ctx, exp, shift.head);
+  mouth(ctx, exp, shift.head);
+
   if (exp === "furious") {
     ctx.strokeStyle = P.INK;
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(-70, -70);
-    ctx.quadraticCurveTo(-90, -100, -60, -110);
-    ctx.moveTo(70, -64);
-    ctx.quadraticCurveTo(96, -96, 64, -108);
+    ctx.moveTo(-78, -70);
+    ctx.quadraticCurveTo(-110, -110, -60, -120);
+    ctx.moveTo(80, -64);
+    ctx.quadraticCurveTo(112, -104, 64, -116);
+    ctx.stroke();
+  }
+  if (shift.notes) {
+    ctx.strokeStyle = P.INK;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(92, -40, 8, 0, Math.PI * 1.4);
+    ctx.moveTo(100, -40);
+    ctx.lineTo(100, -62);
     ctx.stroke();
   }
   ctx.restore();
 }
 
-function lookFor(exp) {
-  if (exp === "focused") return { left: { x: 2, y: 6 }, right: { x: 1, y: 4 } };
-  if (exp === "belted") return { left: { x: 0, y: -6 }, right: { x: 1, y: -4 } };
-  if (exp === "ashamed") return { left: { x: -6, y: 3 }, right: { x: -4, y: 2 } };
-  if (exp === "angry" || exp === "furious") return { left: { x: 3, y: 2 }, right: { x: 2, y: 1 } };
-  if (exp === "proud") return { left: { x: 2, y: -1 }, right: { x: 0, y: 1 } };
-  return { left: { x: 2, y: 2 }, right: { x: 0, y: 2 } };
+function poseShift(exp) {
+  if (exp === "preen") return { y: -10, rot: -0.06, hairHand: true, belt: 5, head: 6, notes: true };
+  if (exp === "focused") return { y: 12, rot: 0.05, hairHand: false, belt: 5, head: 0, notes: false };
+  if (exp === "belted") return { y: 26, rot: 0.1, hairHand: false, belt: 10, head: -4, notes: false };
+  if (exp === "angry" || exp === "furious") return { y: 2, rot: 0, hairHand: false, belt: 6, head: 0, notes: false };
+  if (exp === "ashamed") return { y: 8, rot: 0.12, hairHand: false, belt: 5, head: -8, notes: false };
+  if (exp === "proud") return { y: -12, rot: -0.04, hairHand: false, belt: 5, head: 4, notes: false };
+  if (exp === "annoyed") return { y: 0, rot: 0.04, hairHand: false, belt: 5, head: 2, notes: false };
+  return { y: 0, rot: -0.02, hairHand: false, belt: 5, head: 0, notes: false };
 }
 
-function eye(ctx, x, y, rx, ry, pupil, look) {
+function lookFor(exp) {
+  if (exp === "focused") return { left: { x: 1, y: 7 }, right: { x: 1, y: 4 } };
+  if (exp === "preen") return { left: { x: -2, y: -6 }, right: { x: 0, y: -4 } };
+  if (exp === "belted") return { left: { x: 0, y: -8 }, right: { x: 1, y: -5 } };
+  if (exp === "ashamed") return { left: { x: -7, y: 4 }, right: { x: -4, y: 2 } };
+  if (exp === "angry" || exp === "furious") return { left: { x: 4, y: 2 }, right: { x: 2, y: 1 } };
+  if (exp === "proud") return { left: { x: 2, y: -3 }, right: { x: 0, y: -1 } };
+  return { left: { x: 3, y: 1 }, right: { x: 0, y: 2 } };
+}
+
+function eye(ctx, x, y, rx, ry, pupil, look, shut) {
   ctx.beginPath();
-  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y, rx, shut ? 4 : ry, 0, 0, Math.PI * 2);
   ctx.fillStyle = P.WHITE;
   ctx.fill();
   ink(ctx, 4);
   ctx.stroke();
+  if (shut) return;
   ctx.beginPath();
   ctx.arc(x + look.x, y + look.y, pupil, 0, Math.PI * 2);
   ctx.fillStyle = P.INK;
   ctx.fill();
 }
 
-function brows(ctx, exp) {
+function brows(ctx, exp, hx) {
   ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 5;
+  ctx.lineWidth = 6;
   ctx.beginPath();
+  const x = hx || 0;
   if (exp === "angry" || exp === "furious") {
-    ctx.moveTo(-58, -40);
-    ctx.lineTo(-8, -28);
-    ctx.moveTo(10, -22);
-    ctx.lineTo(48, -36);
-  } else if (exp === "annoyed") {
-    ctx.moveTo(-58, -36);
-    ctx.lineTo(-12, -44);
-    ctx.moveTo(12, -18);
-    ctx.lineTo(46, -28);
+    ctx.moveTo(-60 + x, -42);
+    ctx.lineTo(-8 + x, -28);
+    ctx.moveTo(12 + x, -20);
+    ctx.lineTo(52 + x, -38);
+  } else if (exp === "preen") {
+    ctx.moveTo(-58 + x, -48);
+    ctx.quadraticCurveTo(-30 + x, -60, -8 + x, -46);
+    ctx.moveTo(14 + x, -24);
+    ctx.quadraticCurveTo(32 + x, -34, 50 + x, -20);
   } else if (exp === "focused") {
-    ctx.moveTo(-56, -34);
-    ctx.lineTo(-10, -38);
-    ctx.moveTo(14, -16);
-    ctx.lineTo(46, -22);
+    ctx.moveTo(-58 + x, -36);
+    ctx.lineTo(-8 + x, -44);
+    ctx.moveTo(14 + x, -16);
+    ctx.lineTo(50 + x, -24);
   } else if (exp === "belted") {
-    ctx.moveTo(-56, -48);
-    ctx.lineTo(-12, -40);
-    ctx.moveTo(12, -28);
-    ctx.lineTo(46, -36);
+    ctx.moveTo(-58 + x, -54);
+    ctx.lineTo(-8 + x, -42);
+    ctx.moveTo(12 + x, -30);
+    ctx.lineTo(50 + x, -40);
+  } else if (exp === "annoyed") {
+    ctx.moveTo(-58 + x, -34);
+    ctx.lineTo(-10 + x, -46);
+    ctx.moveTo(12 + x, -16);
+    ctx.lineTo(50 + x, -28);
   } else {
-    ctx.moveTo(-56, -40);
-    ctx.quadraticCurveTo(-32, -50, -10, -40);
-    ctx.moveTo(14, -18);
-    ctx.quadraticCurveTo(30, -26, 48, -16);
+    ctx.moveTo(-58 + x, -40);
+    ctx.quadraticCurveTo(-32 + x, -54, -8 + x, -40);
+    ctx.moveTo(14 + x, -18);
+    ctx.quadraticCurveTo(32 + x, -28, 52 + x, -16);
   }
   ctx.stroke();
 }
 
-function mouth(ctx, exp) {
+function mouth(ctx, exp, hx) {
+  const x = hx || 0;
   ctx.strokeStyle = P.INK;
   ctx.lineWidth = 5;
   ctx.beginPath();
   if (exp === "angry" || exp === "furious") {
-    ctx.moveTo(-24, 48);
-    ctx.lineTo(26, 48);
-    ctx.lineTo(18, 66);
-    ctx.lineTo(-16, 66);
+    ctx.moveTo(-22 + x, 46);
+    ctx.lineTo(28 + x, 46);
+    ctx.lineTo(18 + x, 66);
+    ctx.lineTo(-14 + x, 66);
     ctx.closePath();
     ctx.fillStyle = "#7A3030";
     ctx.fill();
     ctx.stroke();
-    ctx.strokeStyle = P.PAPER;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(-14, 54);
-    ctx.lineTo(16, 54);
-    ctx.stroke();
     return;
   }
   if (exp === "annoyed") {
-    ctx.moveTo(-20, 52);
-    ctx.quadraticCurveTo(0, 46, 22, 58);
+    ctx.moveTo(-18 + x, 50);
+    ctx.quadraticCurveTo(x, 42, 24 + x, 56);
   } else if (exp === "focused") {
-    ctx.moveTo(-16, 54);
-    ctx.lineTo(18, 54);
+    ctx.moveTo(-16 + x, 52);
+    ctx.lineTo(20 + x, 52);
   } else if (exp === "belted") {
-    ctx.arc(0, 56, 10, 0, Math.PI * 2);
+    ctx.arc(x, 56, 12, 0, Math.PI * 2);
+  } else if (exp === "preen") {
+    ctx.moveTo(-10 + x, 48);
+    ctx.quadraticCurveTo(8 + x, 40, 18 + x, 50);
   } else if (exp === "proud") {
-    ctx.moveTo(-22, 50);
-    ctx.quadraticCurveTo(4, 70, 26, 46);
+    ctx.moveTo(-28 + x, 44);
+    ctx.quadraticCurveTo(4 + x, 78, 32 + x, 40);
   } else if (exp === "ashamed") {
-    ctx.moveTo(-16, 60);
-    ctx.quadraticCurveTo(4, 50, 20, 58);
+    ctx.moveTo(-14 + x, 58);
+    ctx.quadraticCurveTo(4 + x, 48, 20 + x, 56);
   } else {
-    ctx.moveTo(-18, 54);
-    ctx.quadraticCurveTo(0, 62, 20, 52);
+    ctx.moveTo(-24 + x, 48);
+    ctx.quadraticCurveTo(2 + x, 70, 28 + x, 46);
   }
   ctx.stroke();
 }
 
 function drawPatience(ctx, sim, paused) {
-  roundRect(ctx, 1056, 640, 520, 96, 8);
+  roundRect(ctx, 1056, 640, 520, 88, 8);
   ctx.fillStyle = paused ? "#E7DCC6" : P.PAPER;
   ctx.fill();
   ink(ctx, 6);
   ctx.stroke();
   const word = moodWord(sim.patience, sim.outburstT > 0);
   const glyph = moodGlyph(sim.patience, sim.outburstT > 0);
-  label(ctx, word, 1084, 688, 26, P.INK);
-  drawGlyph(ctx, 1200, 688, glyph, sim.patience);
-  const x = 1236;
-  const y = 664;
-  const w = 310;
+  paintCenter(ctx, word, 1072, 652, 150, 64, 22, P.INK, false, false);
+  drawGlyph(ctx, 1238, 684, glyph);
+  const x = 1266;
+  const y = 658;
+  const w = 280;
   const h = 46;
-  const colors = [P.PAT_GREEN, P.PAT_YELLOW, P.PAT_RED];
-  colors.forEach((color, i) => {
+  [P.PAT_GREEN, P.PAT_YELLOW, P.PAT_RED].forEach((color, i) => {
     ctx.fillStyle = color;
     ctx.fillRect(x + (w / 3) * i, y, w / 3 + 1, h);
   });
@@ -1016,61 +1289,49 @@ function drawGlyph(ctx, x, y, glyph) {
 }
 
 function drawPedal(ctx, visual, disabled) {
-  const y = 748 + visual * 22;
-  ctx.fillStyle = "rgba(28,22,30,0.25)";
-  roundRect(ctx, 1168, 812, 250, 36, 10);
+  const y = 752 + visual * 18;
+  ctx.fillStyle = "rgba(28,22,30,0.22)";
+  roundRect(ctx, 1160, 820, 300, 28, 8);
   ctx.fill();
-  roundRect(ctx, 1188, y, 250, 92, 16);
+  roundRect(ctx, 1128, y, 340, 100, 18);
   ctx.fillStyle = disabled ? "#B7A898" : P.RED;
   ctx.fill();
   ink(ctx, 6);
   ctx.stroke();
-  label(ctx, "ТОРМОЗ", 1313, y + 48, 28, disabled ? P.INK : P.PAPER, "center", true);
-  if (visual > 0.4 && !disabled) {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(1160, y + 20);
-    ctx.lineTo(1140, y + 4);
-    ctx.moveTo(1450, y + 24);
-    ctx.lineTo(1472, y + 8);
-    ctx.stroke();
-  }
+  paintCenter(ctx, "ТОРМОЗ", 1128, y, 340, 100, 30, disabled ? P.INK : P.PAPER, true, false);
 }
 
-function drawPause(ctx, spots, state) {
-  ctx.fillStyle = "rgba(28,22,30,0.4)";
+function drawPause(ctx, state) {
+  ctx.fillStyle = "rgba(28,22,30,0.45)";
   ctx.fillRect(0, 0, 1600, 900);
-  roundRect(ctx, 540, 200, 520, 500, 20);
+  roundRect(ctx, 500, 160, 600, 560, 20);
   ctx.fillStyle = P.PAPER;
   ctx.fill();
   ink(ctx, 8);
   ctx.stroke();
-  label(ctx, "ПАУЗА", 800, 260, 40, P.INK, "center", true);
-  label(ctx, "Педаль выключена", 800, 314, 22, P.INK, "center");
-  button(ctx, spots, "resume", 610, 360, 380, 72, "Продолжить", "primary");
-  button(ctx, spots, "retry", 610, 450, 380, 72, "Заново", "paper");
-  button(ctx, spots, "to-garage", 610, 540, 380, 72, "В гараж", "paper");
-  const sound = state.save.settings.sound ? "Звук вкл" : "Звук выкл";
-  const shake = state.save.settings.shake ? "Тряска вкл" : "Тряска выкл";
-  button(ctx, spots, "sound", 610, 620, 180, 56, sound, "paper");
-  button(ctx, spots, "shake", 810, 620, 180, 56, shake, "paper");
+  paintCenter(ctx, "ПАУЗА", 540, 184, 520, 60, 36, P.INK, true, false);
+  paintCenter(ctx, "Педаль отпущена", 540, 250, 520, 36, 22, P.INK, false, false);
+  button(ctx, "resume", 590, 310, 420, 80, "Продолжить", "primary");
+  button(ctx, "retry", 590, 406, 420, 80, "Ещё раз", "paper");
+  button(ctx, "to-garage", 590, 502, 420, 76, "В гараж", "paper");
+  button(ctx, "sound", 590, 600, 200, 72, state.save.settings.sound ? "Звук вкл" : "Звук выкл", "paper");
+  button(ctx, "shake", 810, 600, 200, 72, state.save.settings.shake ? "Тряска вкл" : "Тряска выкл", "paper");
 }
 
-function drawResult(ctx, spots, state) {
+function drawResult(ctx, state) {
   const sim = state.session.sim;
   const graded = state.session.result;
   ctx.fillStyle = P.PAPER;
   ctx.fillRect(0, 0, 1600, 900);
-  roundRect(ctx, 24, 24, 1552, 852, 18);
-  ctx.fillStyle = P.GRASS;
+  panel(ctx, 24, 24, 1552, 852, "#B7D48A");
+  roundRect(ctx, 80, 48, 1440, 84, 16);
+  ctx.fillStyle = P.PAPER;
   ctx.fill();
-  ink(ctx, 8);
+  ink(ctx, 5);
   ctx.stroke();
-  const line = resultPhrase(sim, graded);
-  label(ctx, line, 800, 78, 36, P.INK, "center", true);
+  paintCenter(ctx, resultPhrase(sim, graded), 80, 48, 1440, 84, 32, P.INK, true, false);
   ctx.save();
-  ctx.translate(-860, 30);
+  ctx.translate(-760, 40);
   drawAnton(ctx, resultPose(sim, graded), 0, 0, sim);
   ctx.restore();
   const rows = [
@@ -1079,41 +1340,39 @@ function drawResult(ctx, spots, state) {
     [sim.cargoType ? "Груз" : "Комфорт", graded.comfort],
   ];
   rows.forEach((row, i) => {
-    const y = 180 + i * 110;
-    label(ctx, row[0], 860, y, 26, P.INK);
-    roundRect(ctx, 1060, y - 18, 420, 40, 10);
+    const y = 200 + i * 110;
+    paintCenter(ctx, row[0], 860, y, 200, 40, 24, P.INK, false, false);
+    roundRect(ctx, 1080, y, 360, 40, 10);
     ctx.fillStyle = "#E7DCC6";
     ctx.fill();
-    roundRect(ctx, 1060, y - 18, Math.max(8, 4.2 * row[1]), 40, 10);
+    roundRect(ctx, 1080, y, Math.max(12, 3.6 * row[1]), 40, 10);
     ctx.fillStyle = row[1] >= 70 ? P.PAT_GREEN : row[1] >= 40 ? P.PAT_YELLOW : P.PAT_RED;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    label(ctx, String(Math.round(row[1])), 1500, y, 22, P.INK, "right");
+    paintCenter(ctx, String(Math.round(row[1])), 1460, y, 80, 40, 20, P.INK, false, false);
   });
   if (!sim.infinite) {
     const stars = "★".repeat(graded.stars) + "☆".repeat(3 - graded.stars);
-    label(ctx, stars, 1180, 520, 42, P.INK, "left");
-    label(ctx, `${Math.round(graded.percent)}%`, 1420, 524, 22, P.INK, "left");
+    paintCenter(ctx, stars, 980, 540, 300, 56, 40, P.INK, false, false);
   }
   if (graded.badge) {
-    roundRect(ctx, 860, 560, 520, 48, 12);
+    roundRect(ctx, 900, 610, 520, 48, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    label(ctx, "Почти не понадобился", 1120, 584, 22, P.INK, "center");
+    paintCenter(ctx, "Почти не понадобился", 900, 610, 520, 48, 20, P.INK, false, false);
   }
   if (sim.infinite) {
     const bill = repairInvoice(sim.stats, sim.t);
     bill.lines.slice(0, 4).forEach((entry, i) => {
-      label(ctx, `${entry[0]}  ${entry[1]}`, 880, 560 + i * 28, 16, P.INK);
+      paintCenter(ctx, `${entry[0]}  ${entry[1]}`, 900, 560 + i * 30, 520, 28, 16, P.INK, false, false);
     });
-    label(ctx, `Итого ${bill.total}`, 880, 680, 22, P.INK);
+    paintCenter(ctx, `Итого ${bill.total}`, 900, 690, 520, 32, 22, P.INK, false, false);
   }
-  const primary = graded.success ? "paper" : "primary";
-  button(ctx, spots, "retry", 200, 760, 340, 78, "Ещё раз", primary);
-  button(ctx, spots, "next", 1040, 760, 340, 78, graded.success && !sim.infinite ? "Дальше" : "В гараж", "primary");
+  button(ctx, "retry", 80, 736, 420, 120, "Ещё раз", graded.success ? "paper" : "primary");
+  button(ctx, "next", 1100, 736, 420, 120, graded.success && !sim.infinite ? "Дальше" : "В гараж", graded.success ? "primary" : "paper");
 }
 
 function resultPhrase(sim, graded) {

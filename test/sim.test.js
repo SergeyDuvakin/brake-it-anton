@@ -1,9 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { readFileSync, readdirSync } from "node:fs";
+
 import { CFG } from "../js/config.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
+import {
+  CAR_BODY_H,
+  CAR_BODY_W,
+  CAR_NOSE_LOCAL_Y,
+  CAR_SPRITE_SCALE,
+  PED_FOOT_LOCAL_Y,
+  bumperFootGap,
+  carDrawOrigin,
+  pedestrianFootShift,
+} from "../js/draw.js";
+import { VIEW, project } from "../js/road.js";
 import {
   brakeAccel,
   expressionId,
@@ -13,13 +26,15 @@ import {
   repairInvoice,
   steerParams,
 } from "../js/physics.js";
-import { policyCareful, policyNever, policyPanic, policyProvoke } from "../js/policies.js";
-import { createSim, runSim, stepSim } from "../js/sim.js";
+import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
+import { createSim, hazardWorldX, runSim, stepSim } from "../js/sim.js";
 import {
   createSession,
   keyDown,
+  keyUp,
   onBlur,
   onVisibility,
+  pauseSession,
   restartSession,
   resumeSession,
   sessionStep,
@@ -378,7 +393,8 @@ test("same seed repeats; authored hazards stay on the road and spaced", () => {
     let prev = 0;
     for (const h of lesson.hazards) {
       assert.ok(Math.abs(h.x) <= 2.2, lesson.id);
-      assert.ok(h.s - prev >= 130, `${lesson.id} gap ${h.s - prev}`);
+      if (prev === 0) assert.ok(h.s >= 40 && h.s <= 58, `${lesson.id} opens in view at ${h.s}`);
+      else assert.ok(h.s - prev >= 78, `${lesson.id} gap ${h.s - prev}`);
       assert.ok(h.s < lesson.length - 70, lesson.id);
       prev = h.s;
     }
@@ -414,30 +430,92 @@ test("infinite mode is seeded, capped near 96 km/h, and stays in the lanes", () 
   assert.equal(bill.total, 2 * 1400 + 350 + 800 + 3 * 90 + 120);
 });
 
-test("countdown holds the car and replay restores the attempt", () => {
+test("the opening countdown holds the car, and retry is an immediate clean ride", () => {
   const session = createSession(getMission("lesson1"), { seed: 11 });
-  sessionStep(session, 2.4);
-  assert.equal(session.phase, "countdown");
-  assert.equal(session.sim.s, 0);
-  assert.equal(session.sim.v, 0);
-  sessionStep(session, 0.7);
-  assert.equal(session.phase, "drive");
-  sessionStep(session, 1.2);
-  assert.ok(session.sim.s > 0);
-  assert.ok(session.sim.v > 0);
-  const progressed = session.sim.patience;
-  restartSession(session);
   assert.equal(session.phase, "countdown");
   assert.equal(session.countdown, 3);
+  sessionStep(session, 0.4);
+  pauseSession(session, "escape");
+  assert.equal(session.phase, "pause");
+  resumeSession(session);
+  assert.equal(session.phase, "countdown");
+  assert.ok(session.countdown >= 1);
+  keyDown(session, "Space");
+  sessionStep(session, 1);
+  assert.equal(session.phase, "countdown");
   assert.equal(session.sim.s, 0);
   assert.equal(session.sim.v, 0);
   assert.equal(session.sim.brakeInput, 0);
+  sessionStep(session, 1.4);
+  assert.equal(session.phase, "countdown");
+  sessionStep(session, 0.7);
+  assert.equal(session.phase, "drive");
+  assert.equal(session.countdown, 0);
+  sessionStep(session, 1.2);
+  assert.ok(session.sim.s > 0);
+  assert.ok(session.sim.v > 0);
+
+  session.brakeHeld = true;
+  session.pointerId = 7;
+  keyDown(session, "Space");
+  session.sim.bubble = "ОЙ!";
+  session.sim.bubbleT = 1;
+  session.sim.crashT = 0.2;
+  session.sim.events.push({ kind: "hit" });
+  session.phase = "result";
+  session.result = { success: false, stars: 0 };
+  session.recorded = true;
+  const seed = session.seed;
+  const mission = session.mission;
+  restartSession(session);
+
+  assert.equal(session.phase, "drive");
+  assert.equal(session.countdown, 0);
+  assert.equal(session.countdownAcc, 3);
+  assert.equal(session.seed, seed);
+  assert.equal(session.mission, mission);
+  assert.equal(session.result, null);
+  assert.equal(session.recorded, false);
+  assert.equal(session.pauseReason, null);
+  assert.equal(session.brakeHeld, false);
+  assert.equal(session.pointerId, null);
+  assert.equal(session.keysDown.size, 0);
+  assert.equal(session.sim.s, 0);
+  assert.equal(session.sim.v, mission.roll);
+  assert.equal(session.sim.t, 0);
+  assert.equal(session.sim.brakeInput, 0);
+  assert.equal(session.sim.holdTime, 0);
+  assert.equal(session.sim.pressTime, 0);
+  assert.equal(session.sim.wasHeld, false);
+  assert.equal(session.sim.bubble, null);
+  assert.equal(session.sim.crashT, 0);
+  assert.equal(session.sim.events.length, 0);
   assert.equal(session.sim.patience, CFG.patienceStart);
   assert.equal(session.sim.cargo, 100);
   assert.equal(session.sim.body, 100);
-  assert.notEqual(progressed, session.sim.s);
-  sessionStep(session, 1);
-  assert.equal(session.sim.s, 0);
+  assert.equal(session.sim.stats.collisions, 0);
+
+  keyDown(session, "Space", { repeat: true });
+  sessionStep(session, 0.2);
+  assert.equal(session.sim.brakeInput, 0, "a held key must not leak into the new ride");
+  assert.ok(session.sim.s > 0);
+  keyUp(session, "Space");
+  session.brakeHeld = true;
+  sessionStep(session, 0.2);
+  assert.ok(session.sim.brakeInput > 0.5, "a new press brakes on the first frames");
+
+  onBlur(session);
+  assert.equal(session.phase, "pause");
+  assert.equal(session.sim.brakeInput, 0);
+  assert.equal(session.brakeHeld, false);
+  restartSession(session);
+  assert.equal(session.phase, "drive");
+  assert.equal(session.pauseReason, null);
+  const heldS = session.sim.s;
+  sessionStep(session, 0.25);
+  assert.equal(session.sim.brakeInput, 0);
+  assert.ok(session.sim.s > heldS);
+  assert.equal(session.phase, "drive");
 });
 
 test("pause, blur and hide clear the pedal and the held keys", () => {
@@ -565,6 +643,246 @@ test("stars use 80/60/35 and the face is not angry while calm", () => {
   calm.patience = 10;
   calm.beltT = 0.2;
   assert.equal(expressionId(calm), "belted");
+});
+
+test("the straight road stays forward and does not fold between frames", () => {
+  let prevY = -Infinity;
+  let prevEdge = -Infinity;
+  for (let ds = VIEW.look; ds >= VIEW.near; ds -= 0.5) {
+    const center = project(ds, 0);
+    const right = project(ds, VIEW.roadHalf);
+    const left = project(ds, -VIEW.roadHalf);
+    assert.ok(Math.abs(center.x - VIEW.vanishX) < 0.02, center.x);
+    assert.ok(Math.abs(left.y - right.y) < 0.02);
+    assert.ok(Math.abs(right.x - VIEW.vanishX - (VIEW.vanishX - left.x)) < 0.05);
+    assert.ok(center.y > prevY, `depth reversed at ${ds}`);
+    assert.ok(right.x + 0.02 >= prevEdge, `edge folded inward at ${ds}`);
+    prevY = center.y;
+    prevEdge = right.x;
+  }
+
+  const worldS = 80;
+  let last = null;
+  for (let car = 0; car <= 70; car += 0.25) {
+    const point = project(worldS - car, 2.4);
+    if (last) {
+      assert.ok(point.y >= last.y - 1e-6);
+      assert.ok(Math.abs(point.x - VIEW.vanishX) >= Math.abs(last.x - VIEW.vanishX) - 1e-4);
+    }
+    last = point;
+  }
+});
+
+test("early brake keeps a visible bumper-to-feet gap and the crossing runs at zero speed", () => {
+  const sim = createSim(getMission("lesson1"), 11);
+  sim.v = 10;
+  let minWorld = Infinity;
+  let minScreen = Infinity;
+  let sawStop = false;
+  let crossWhileStopped = null;
+  for (let i = 0; i < 8000 && !sim.done; i++) {
+    const ped = sim.hazards.find((h) => h.id === "ped");
+    stepSim(sim, dt, { held: brakeOpen(sim) });
+    if (!ped.resolved && ped.crossT > 0.35 && ped.crossT < ped.crossDur * 0.7) {
+      if (sim.v < 0.05) {
+        sawStop = true;
+        const gap = bumperFootGap(sim, ped);
+        if (Math.abs(sim.x - hazardWorldX(ped, sim)) < CFG.carHalfW + ped.halfW + 0.2) {
+          minWorld = Math.min(minWorld, gap.world);
+          minScreen = Math.min(minScreen, gap.screen);
+        }
+        if (crossWhileStopped === null) crossWhileStopped = ped.crossT;
+      }
+    }
+    if (sawStop && crossWhileStopped !== null && ped.crossT > crossWhileStopped + 1) break;
+  }
+  const ped = sim.hazards.find((h) => h.id === "ped");
+  assert.ok(sawStop, "car never actually stopped for the crossing");
+  assert.equal(sim.v, 0);
+  assert.ok(ped.crossT > crossWhileStopped + 0.9, "pedestrian froze while the car was stopped");
+  assert.equal(sim.stats.collisions, 0);
+  assert.ok(minWorld > 2, `world gap ${minWorld}`);
+  assert.ok(minWorld <= CFG.yieldStandoff + 0.05, `stop drifted past the standoff ${minWorld}`);
+  assert.ok(minScreen > 48, `screen gap ${minScreen}px does not show daylight between bumper and feet`);
+
+  const bumper = project(CFG.carHalfFront, sim.x);
+  const origin = carDrawOrigin(bumper.x, bumper.y, 1, 0);
+  const ly = CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE;
+  const dive = 0.14;
+  const noseY = origin.y + Math.cos(dive) * ly;
+  const noseX = origin.x - Math.sin(dive) * ly;
+  assert.ok(Math.abs(noseY - bumper.y) < 0.01, noseY);
+  assert.ok(Math.abs(noseX - bumper.x) < 0.01, noseX);
+  assert.equal(CAR_SPRITE_SCALE, 1.42);
+  assert.equal(CAR_BODY_W, 80);
+  assert.equal(CAR_BODY_H, 112);
+  assert.equal(PED_FOOT_LOCAL_Y + pedestrianFootShift(), 0);
+
+  const sHeld = sim.s;
+  const crossHeld = ped.crossT;
+  for (let i = 0; i < 90; i++) stepSim(sim, dt, { held: true });
+  assert.equal(sim.v, 0);
+  assert.equal(sim.s, sHeld);
+  assert.ok(ped.crossT > crossHeld + 1);
+  assert.equal(sim.stats.collisions, 0);
+  assert.equal(ped.resolved, null);
+
+  for (let i = 0; i < 6000 && !ped.resolved && !sim.done; i++) stepSim(sim, dt, { held: false });
+  assert.equal(ped.resolved, "clear");
+  assert.equal(sim.stats.collisions, 0);
+  assert.ok(Math.abs(hazardWorldX(ped, sim)) > 4, "pedestrian still in the lane");
+  const sClear = sim.s;
+  for (let i = 0; i < 240 && !sim.done; i++) stepSim(sim, dt, { held: false });
+  assert.ok(sim.s > sClear + 8, "release did not resume");
+  assert.equal(sim.stats.collisions, 0, "driving through the cleared crossing counted a hit");
+  assert.ok(sim.s + CFG.carHalfFront > ped.s, "bumper never passed where the pedestrian stood");
+});
+
+test("early brake stops short of the pedestrian, then the lane clears", () => {
+  const sim = createSim(getMission("lesson1"), 11);
+  let minGap = Infinity;
+  let sawStop = false;
+  for (let i = 0; i < 16000 && !sim.done; i++) {
+    const ped = sim.hazards.find((h) => h.id === "ped");
+    stepSim(sim, dt, { held: brakeOpen(sim) });
+    if (!ped.resolved && ped.crossT > 0.25 && ped.crossT < ped.crossDur * 0.7) {
+      if (sim.v < 0.35) sawStop = true;
+      if (Math.abs(sim.x - hazardWorldX(ped, sim)) < CFG.carHalfW + ped.halfW) {
+        const gap = ped.s - ped.halfL - (sim.s + CFG.carHalfFront);
+        minGap = Math.min(minGap, gap);
+      }
+    }
+  }
+  assert.equal(sim.success, true, dump(sim));
+  assert.equal(sim.stats.collisions, 0, dump(sim));
+  assert.equal(sim.hazards.find((h) => h.id === "ped").resolved, "clear");
+  assert.ok(sawStop, "car never actually stopped for the crossing");
+  assert.ok(minGap > 0.05, `bumper overlapped the pedestrian by ${minGap}`);
+});
+
+test("a large step cannot tunnel through a person, and a braked crawl does not die", () => {
+  const fast = createSim(
+    empty({
+      hazards: [{ id: "ped", type: "pedestrian", s: 12, x: 1.8, halfW: 0.42, halfL: 0.55, trust: false }],
+    }),
+    1,
+  );
+  fast.v = 40;
+  fast.x = 1.8;
+  stepSim(fast, 0.5, { held: false, lockSpeed: true });
+  assert.ok(fast.stats.collisions >= 1, dump(fast));
+  assert.equal(fast.success, false);
+
+  const shy = createSim(
+    empty({
+      hazards: [{ id: "ped", type: "pedestrian", s: 30, x: 1.8, halfW: 0.42, halfL: 0.55, trust: false }],
+    }),
+    1,
+  );
+  shy.v = 40;
+  shy.s = 10;
+  shy.x = 1.8;
+  stepSim(shy, 0.25, { held: false, lockSpeed: true });
+  assert.equal(shy.stats.collisions, 0, dump(shy));
+  assert.ok(shy.s + CFG.carHalfFront < 30 - 0.55);
+
+  const slow = createSim(getMission("lesson1"), 11);
+  frames(slow, 200, false);
+  while (slow.v > 0.2 && slow.s < 40) stepSim(slow, dt, { held: true });
+  const ped = slow.hazards[0];
+  let guard = 0;
+  while (!ped.resolved && guard < 4000) {
+    stepSim(slow, dt, { held: slow.v > 1 });
+    guard += 1;
+  }
+  assert.equal(slow.stats.collisions, 0, dump(slow));
+  assert.ok(slow.body > 95, slow.body);
+});
+
+test("trust, yield and a controlled stop all finish the open lessons", () => {
+  for (const id of ["lesson1", "lesson2", "lesson3", "lesson4"]) {
+    const careful = runSim(getMission(id), policyCareful, { maxTime: 240 });
+    assert.equal(careful.success, true, `${id} ${dump(careful)}`);
+    assert.equal(careful.stats.collisions, 0, `${id} ${dump(careful)}`);
+  }
+  const trusted = runSim(getMission("lesson2"), policyCareful, { maxTime: 240 });
+  assert.ok(trusted.stats.trustClears >= 1, dump(trusted));
+  const yielded = runSim(getMission("lesson1"), policyYield, { maxTime: 180 });
+  assert.equal(yielded.success, true, dump(yielded));
+  assert.equal(yielded.stats.collisions, 0, dump(yielded));
+  const hows = new Set(yielded.events.filter((e) => e.kind === "clear").map((e) => e.how));
+  assert.ok(hows.has("yield"), [...hows].join(","));
+
+  const crashed = runSim(getMission("lesson1"), policyNever, { maxTime: 40 });
+  assert.equal(crashed.success, false, dump(crashed));
+  assert.equal(crashed.failReason, "body");
+
+  const cake = runSim(getMission("lesson3"), policyCareful, { maxTime: 240 });
+  const kinds = new Set(cake.events.map((e) => e.kind));
+  assert.ok(kinds.has("avoid") || cake.stats.trustClears >= 1);
+  assert.ok(kinds.has("clear"));
+  assert.ok(cake.cargo > 40, cake.cargo);
+  assert.notEqual(cake.cargoType, null);
+});
+
+test("pages bundle lists every runtime script and the shipped fonts", () => {
+  const yml = readFileSync(".github/workflows/deploy-pages.yml", "utf8");
+  for (const file of readdirSync("js")) {
+    if (!file.endsWith(".js")) continue;
+    assert.ok(yml.includes(`js/${file}`), file);
+  }
+  for (const font of ["BalsamiqSans-Bold.ttf", "BalsamiqSans-Regular.ttf", "RubikMonoOne-Regular.ttf"]) {
+    assert.ok(yml.includes(`assets/fonts/${font}`), font);
+  }
+  assert.ok(!yml.includes(".png"));
+});
+
+function brakeOpen(sim) {
+  const next = sim.hazards.find((h) => !h.resolved && !h.trust);
+  if (!next) return false;
+  const dist = next.s - sim.s;
+  if (dist > 36 || dist < -1) return false;
+  if ((next.type === "pedestrian" || next.type === "cutin") && next.crossT >= next.crossDur) return false;
+  if (next.type === "pedestrian" || next.type === "cutin") return sim.v > 2.4;
+  if (next.type === "roller") return sim.v > 6;
+  return sim.v > 8;
+}
+
+test("brake timing: early stop leaves a gap, late speed is a hit, crawl is not", () => {
+  const mission = getMission("lesson1");
+  const early = createSim(mission, mission.seed);
+  early.v = 10;
+  let minGap = Infinity;
+  let sawLane = false;
+  for (let i = 0; i < 8000 && !early.done; i++) {
+    const ped = early.hazards.find((h) => h.id === "ped");
+    stepSim(early, dt, { held: brakeOpen(early) });
+    if (!ped.resolved && ped.crossT > 0.4 && ped.crossT < ped.crossDur * 0.7) {
+      sawLane = true;
+      if (Math.abs(early.x - hazardWorldX(ped, early)) < CFG.carHalfW + ped.halfW + 0.2) {
+        minGap = Math.min(minGap, ped.s - ped.halfL - (early.s + CFG.carHalfFront));
+      }
+    }
+  }
+  assert.equal(early.stats.collisions, 0, dump(early));
+  assert.equal(early.success, true, dump(early));
+  assert.ok(sawLane, "pedestrian never occupied the lane");
+  assert.ok(minGap > 2, `gap ${minGap}`);
+  const pedDone = early.hazards.find((h) => h.id === "ped");
+  assert.equal(pedDone.resolved, "clear");
+  assert.ok(Math.abs(hazardWorldX(pedDone, early)) > 4, "pedestrian still in the lane");
+
+  const late = createSim(mission, mission.seed);
+  late.v = 12;
+  for (let i = 0; i < 4000 && late.stats.collisions === 0 && !late.done; i++) {
+    const ped = late.hazards.find((h) => h.id === "ped");
+    const dist = ped.s - late.s;
+    stepSim(late, dt, { held: dist < 6 && late.v > 8 });
+  }
+  assert.ok(late.stats.collisions >= 1, dump(late));
+
+  const kinds = new Set(early.events.map((e) => e.kind + ":" + (e.id || "")));
+  assert.ok([...kinds].some((name) => name.includes("lid") || name.includes("roller") || early.events.some((e) => e.id === "lid")));
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

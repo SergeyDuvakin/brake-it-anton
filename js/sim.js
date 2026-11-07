@@ -24,7 +24,7 @@ import {
 
 export function createSim(mission, seed = 1) {
   const hazards = (mission.hazards || []).map((h) => ({
-    telegraph: 84,
+    telegraph: 72,
     decision: 58,
     commit: 40,
     halfW: 0.62,
@@ -39,6 +39,10 @@ export function createSim(mission, seed = 1) {
     playerBraked: false,
     rewarded: false,
     commitAt: 0,
+    crossT: -1,
+    crossDur: h.crossDur ?? (h.type === "pedestrian" ? 3.35 : h.type === "cutin" ? 2.65 : h.type === "roller" ? 2.35 : 0),
+    yielded: false,
+    hopped: false,
   }));
   return {
     missionId: mission.id,
@@ -89,6 +93,10 @@ export function createSim(mission, seed = 1) {
     inSlip: false,
     targetX: CFG.defaultX,
     skids: [],
+    gags: (mission.gags || []).map((g) => ({ ...g, fired: false })),
+    gagT: 0,
+    nearT: 0,
+    cargoFlash: 0,
     stats: {
       collisions: 0,
       trustClears: 0,
@@ -100,6 +108,8 @@ export function createSim(mission, seed = 1) {
       mirrors: 0,
       outbursts: 0,
       shortReleases: 0,
+      nearMisses: 0,
+      yields: 0,
       minV: Infinity,
       maxV: 0,
       maxThrottle: 0,
@@ -121,22 +131,60 @@ export function nextHazard(sim) {
   return best;
 }
 
-/** Where the obstacle sits right now. Pedestrians and cut-ins enter late. */
+function sideOf(h, near = 5.15) {
+  return h.x >= 0 ? near : -near;
+}
+
+/**
+ * Lateral position in metres.
+ * People and pulling-out cars cross on a clock once they have started,
+ * so a stopped instructor can wait them out. Until then they stand off
+ * the lane. A body placed on top of the car (tests, a late overlap)
+ * is already in the lane.
+ * Dogs still run in with distance: Anton is supposed to steer around
+ * them, not wait for a crossing.
+ */
 export function hazardWorldX(h, sim) {
   const dist = h.s - sim.s;
-  if (h.type === "pedestrian" || h.type === "dog") {
-    const side = h.x >= 0 ? 4.75 : -4.75;
-    if (dist > 12) return side;
-    const t = clamp(1 - dist / 12, 0, 1);
-    return side + (h.x - side) * t;
+  if (h.type === "pedestrian") return actorX(h, sim, dist, 5.2, -Math.sign(h.x || 1) * 5.35);
+  if (h.type === "cutin") return actorX(h, sim, dist, 5.6, -Math.sign(h.x || 1) * 5.5);
+  if (h.type === "dog") {
+    const side = sideOf(h, 4.9);
+    if (dist > 18) return side + Math.sin(h.s) * 0.15;
+    const t = clamp(1 - dist / 18, 0, 1);
+    const darted = side + (h.x - side) * t + Math.sin(t * Math.PI) * 0.85 * Math.sign(side || 1);
+    return darted;
   }
-  if (h.type === "cutin") {
-    const side = 5.35;
-    if (dist > 14) return side;
-    const t = clamp(1 - Math.max(dist, 0) / 14, 0, 1);
-    return side + (h.x - side) * t;
+  if (h.type === "roller") return actorX(h, sim, dist, 5.35, -Math.sign(h.x || 1) * 5.15);
+  if (h.type === "bin") {
+    const side = sideOf(h, 4.55);
+    if (dist > 16) return side;
+    const t = clamp(1 - Math.max(dist, 0) / 16, 0, 1);
+    return side + (h.x - side) * smooth(t);
   }
   return h.x;
+}
+
+function smooth(t) {
+  return t * t * (3 - 2 * t);
+}
+
+/** Curb, walk to the lane, linger, leave. u is 0..1 of the crossing. */
+function actorX(h, sim, dist, sideAbs, farX) {
+  const side = h.x >= 0 ? sideAbs : -sideAbs;
+  const lane = h.x;
+  if (h.hopped) return farX;
+  if (h.crossT < 0) {
+    if (dist < 2.4) return lane;
+    return side;
+  }
+  const dur = h.crossDur || 3;
+  const u = clamp(h.crossT / dur, 0, 1);
+  if (u < 0.04) return side;
+  if (u < 0.16) return side + (lane - side) * smooth((u - 0.04) / 0.12);
+  if (u < 0.74) return lane;
+  if (u < 1) return lane + (farX - lane) * smooth((u - 0.74) / 0.26);
+  return farX;
 }
 
 function log(sim, entry) {
@@ -195,9 +243,17 @@ function commitHazards(sim, held) {
   for (const h of sim.hazards) {
     if (h.resolved || h.committed) continue;
     const dist = h.s - sim.s;
-    if (dist < h.decision && dist > h.commit && held && sim.brakeInput > CFG.irritationBrake) {
-      h.seenBrake = Math.max(h.seenBrake, sim.brakeInput);
-      h.playerBraked = true;
+    const braking = held && sim.brakeInput > CFG.irritationBrake;
+    if (braking && dist < h.telegraph && dist > 0) {
+      if (h.trust) {
+        if (dist < h.decision && dist > h.commit) {
+          h.seenBrake = Math.max(h.seenBrake, sim.brakeInput);
+          h.playerBraked = true;
+        }
+      } else {
+        h.seenBrake = Math.max(h.seenBrake, sim.brakeInput);
+        h.playerBraked = true;
+      }
     }
     if (dist <= h.commit && dist > -5) {
       h.commitAt = sim.t;
@@ -223,12 +279,24 @@ function commitHazards(sim, held) {
   }
 }
 
-function overlaps(sim, h) {
+function lateralOverlap(sim, h) {
   const hx = hazardWorldX(h, sim);
-  const xHit = Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW;
-  const sHit =
-    sim.s + CFG.carHalfFront > h.s - h.halfL && sim.s - CFG.carHalfBack < h.s + h.halfL;
-  return xHit && sHit;
+  return Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW - 0.04;
+}
+
+function frontOf(s) {
+  return s + CFG.carHalfFront;
+}
+
+/** True when the bumper swept across the hazard's near face this step. */
+function sweptInto(prevS, s, h) {
+  const near = h.s - h.halfL;
+  const far = h.s + h.halfL;
+  const prevFront = frontOf(prevS);
+  const front = frontOf(s);
+  const back = Math.min(prevS, s) - CFG.carHalfBack;
+  const nose = Math.max(prevFront, front);
+  return nose > near && back < far;
 }
 
 function markClear(sim, h, how) {
@@ -240,7 +308,9 @@ function markClear(sim, h, how) {
     if (h.trust && h.committed === "avoid") sim.patience = Math.max(0, sim.patience - CFG.trustReward);
     else if (!h.trust && h.playerBraked) sim.patience = Math.max(0, sim.patience - CFG.saveReward);
   }
-  if (how === "slow") say(sim, "ФУХ.");
+  if (h.type === "roller" && (how === "slow" || how === "scrape" || how === "pass" || how === "yield")) say(sim, "ЦЕЛЫ");
+  else if (how === "slow" || how === "scrape") say(sim, "ФУХ.");
+  else if (how === "yield") say(sim, "НУ ПРОШЁЛ");
   log(sim, { kind: "clear", id: h.id, how });
 }
 
@@ -249,6 +319,12 @@ function resolveHit(sim, h) {
   const excess = Math.max(0, impact - 1.2);
   let bodyLoss = (CFG.bodyPerMs[h.type] || 3) * excess;
   if (bodyLoss < 1 && (h.type === "stopped" || h.type === "cutin") && impact > 0.45) bodyLoss = 6;
+  // A person or a pulling-out car taken at a real pace wrecks a trip that
+  // has no cargo to fail instead. Braking down to a safe speed never gets here.
+  // Cargo trips keep proportional damage so the cake or the fish can be the loss.
+  if (!sim.cargoType && (h.type === "pedestrian" || h.type === "cutin") && impact > 8) {
+    bodyLoss = Math.max(bodyLoss, 100);
+  }
   sim.body = clamp(sim.body - bodyLoss, 0, 100);
   const cargoLoss = collisionCargoLoss(sim.cargoType, impact);
   sim.cargo = clamp(sim.cargo - cargoLoss, 0, 100);
@@ -265,19 +341,126 @@ function resolveHit(sim, h) {
   log(sim, { kind: "hit", id: h.id, type: h.type, impact: round3(impact), bodyLoss: round3(bodyLoss), cargoLoss });
 }
 
-function collide(sim) {
+function pinShort(sim, h) {
+  // Hold the bumper this far short of the body. Drawing places the nose
+  // on that bumper, so the standoff is physical and visible together.
+  const stopAt = h.s - h.halfL - CFG.carHalfFront - CFG.yieldStandoff;
+  if (sim.s > stopAt) sim.s = stopAt;
+  sim.v = 0;
+  h.yielded = true;
+}
+
+/**
+ * People and cars that pull out occupy the lane on a timer.
+ * A car already down to a safe speed is held in front of them.
+ * It does not drive through the body, and it is not punished for having braked.
+ */
+function holdYield(sim, h) {
+  if (h.resolved || h.trust) return false;
+  if (h.type !== "pedestrian" && h.type !== "cutin") return false;
+  if (h.crossT < 0) return false;
+  if (!lateralOverlap(sim, h)) return false;
+  const gap = h.s - h.halfL - frontOf(sim.s);
+  if (gap > 11 || gap < -0.35) return false;
+  if (sim.v > safeSpeed(h.type) + 1.1) return false;
+  pinShort(sim, h);
+  return true;
+}
+
+function collide(sim, prevS) {
   for (const h of sim.hazards) {
     if (h.resolved) continue;
-    if (!overlaps(sim, h)) continue;
+    if (holdYield(sim, h)) continue;
+
+    const lateral = lateralOverlap(sim, h);
+    const entered = lateral && sweptInto(prevS, sim.s, h);
+    if (!entered) continue;
+
+    const near = h.s - h.halfL;
+    const gap = near - frontOf(sim.s);
     const geometric = isGeometric(h.type);
-    if (!geometric && sim.v <= safeSpeed(h.type) + 0.45) markClear(sim, h, "slow");
-    else if (!geometric && sim.v <= 1.25) markClear(sim, h, "scrape");
-    else resolveHit(sim, h);
+    const limit = safeSpeed(h.type);
+
+    if (!geometric && sim.v <= limit) {
+      // Already buried in the body at a crawl: they hop aside. A fresh arrival stops short.
+      if (gap < -0.45 || h.type === "bin") {
+        h.hopped = true;
+        markClear(sim, h, sim.v <= 1.25 ? "scrape" : "slow");
+        if (h.type === "bin") say(sim, "БАК ЛЁГ");
+      } else {
+        if (!h.yielded) log(sim, { kind: "yield", id: h.id });
+        sim.stats.yields += h.yielded ? 0 : 1;
+        pinShort(sim, h);
+      }
+      continue;
+    }
+
+    resolveHit(sim, h);
+    const contact = near - CFG.carHalfFront * 0.15;
+    if (sim.s > contact) sim.s = contact;
+    sim.v = Math.min(sim.v, 1.6);
   }
+
   for (const h of sim.hazards) {
     if (h.resolved) continue;
+    const dur = h.crossDur || 0;
+    const crossed = dur > 0 && h.crossT >= dur && !lateralOverlap(sim, h);
+    if (crossed && sim.s + 12 > h.s) {
+      markClear(sim, h, h.yielded ? "yield" : "pass");
+      continue;
+    }
     if (sim.s <= h.s + h.clearAfter) continue;
-    markClear(sim, h, h.committed === "avoid" ? "avoid" : "pass");
+    if ((h.type === "pedestrian" || h.type === "cutin") && h.crossT >= 0 && h.crossT < dur) continue;
+    const how = h.committed === "avoid" ? "avoid" : h.yielded ? "yield" : "pass";
+    if (how === "pass" && !h.trust && lateralOverlap(sim, h)) continue;
+    const lateralGap = Math.abs(sim.x - hazardWorldX(h, sim)) - CFG.carHalfW - h.halfW;
+    if (how === "pass" && lateralGap < 0.55 && sim.v > 8) noteNear(sim, h);
+    markClear(sim, h, how);
+  }
+}
+
+function noteNear(sim, h) {
+  if (sim.nearT > 0) return;
+  sim.nearT = 0.45;
+  sim.stats.nearMisses += 1;
+  sim.shake = Math.max(sim.shake, 3.2);
+  sim.beltT = Math.max(sim.beltT, 0.22);
+  say(sim, h.type === "dog" ? "ЧУТЬ НЕ" : "ЕЛЕ!");
+  log(sim, { kind: "near", id: h.id });
+}
+
+function advanceActors(sim, dt) {
+  for (const h of sim.hazards) {
+    if (h.resolved) continue;
+    if (h.type !== "pedestrian" && h.type !== "cutin" && h.type !== "roller") continue;
+    const dist = h.s - sim.s;
+    if (h.crossT < 0) {
+      const close = h.type === "cutin" ? 13 : h.type === "roller" ? 22 : 11.5;
+      const arrive = dist < close && dist > 3.2;
+      const waited = h.playerBraked && sim.v < 2.2 && dist < close + 3 && dist > 3.2;
+      if (arrive || waited) {
+        h.crossT = 0;
+        if (sim.v < safeSpeed(h.type) + 0.4) h.yielded = true;
+        const line = h.type === "cutin" ? "ОТКУДА ОН" : h.type === "roller" ? "ВОЛОСЫ" : "ОН В ТЕЛЕФОНЕ";
+        if (dist > 4) say(sim, line);
+      }
+    } else {
+      h.crossT += dt;
+      if (sim.v < safeSpeed(h.type) && h.playerBraked) h.yielded = true;
+    }
+  }
+}
+
+function playGags(sim) {
+  const busy = sim.hazards.some((h) => !h.resolved && Math.abs(h.s - sim.s) < 28);
+  if (busy) return;
+  for (const g of sim.gags) {
+    if (g.fired || sim.s < g.s) continue;
+    g.fired = true;
+    sim.gagT = 1.1;
+    say(sim, g.line);
+    log(sim, { kind: "gag", id: g.kind || "gag" });
+    break;
   }
 }
 
@@ -365,6 +548,7 @@ export function stepSim(sim, dt, input = {}) {
   const playerDecel = brakeAccel(sim.v) * sim.brakeInput * slip;
   sim.lastPlayerDecel = playerDecel;
 
+  const prevS = sim.s;
   if (!input.lockSpeed) {
     const cap = sim.infinite ? CFG.infiniteSpeedCap : CFG.storySpeedCap;
     const accel = netAccel(sim.v, throttle, physBrake, CFG.drag, slip);
@@ -400,7 +584,9 @@ export function stepSim(sim, dt, input = {}) {
     }
   }
 
-  collide(sim);
+  advanceActors(sim, dt);
+  playGags(sim);
+  collide(sim, prevS);
 
   const fair = justified(sim);
   const stoppedHard =
@@ -446,6 +632,8 @@ export function stepSim(sim, dt, input = {}) {
       sim.fullPressLatched = true;
       sim.cargo -= cargoImpulse(sim.cargoType);
       sim.stats.harshFull += 1;
+      sim.cargoFlash = 0.55;
+      say(sim, sim.cargoType === "fish" ? "РЫБКА" : "КРЕМ");
       sim.comfortTarget = clamp(sim.comfortTarget - CFG.comfortDrop, 0, 100);
       log(sim, { kind: "cargo-impulse", type: sim.cargoType, cargo: sim.cargo });
     } else {
@@ -479,6 +667,9 @@ export function stepSim(sim, dt, input = {}) {
   sim.resumeDelay = Math.max(0, sim.resumeDelay - dt);
   sim.shake = Math.max(0, sim.shake - dt * 18);
   sim.crashT = Math.max(0, sim.crashT - dt);
+  sim.nearT = Math.max(0, sim.nearT - dt);
+  sim.cargoFlash = Math.max(0, sim.cargoFlash - dt);
+  sim.gagT = Math.max(0, sim.gagT - dt);
   if (sim.bubbleT > 0) sim.bubbleT -= dt;
   else sim.bubble = null;
   if (sim.bubbleGap > 0) sim.bubbleGap -= dt;

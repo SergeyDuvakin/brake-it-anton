@@ -45,6 +45,7 @@ jobs:
           cp js/physics.js .pages-dist/js/physics.js
           cp js/policies.js .pages-dist/js/policies.js
           cp js/rng.js .pages-dist/js/rng.js
+          cp js/road.js .pages-dist/js/road.js
           cp js/session.js .pages-dist/js/session.js
           cp js/sim.js .pages-dist/js/sim.js
           cp js/storage.js .pages-dist/js/storage.js
@@ -55,6 +56,7 @@ jobs:
           test -f .pages-dist/style.css
           test -f .pages-dist/js/game.js
           test -f .pages-dist/js/draw.js
+          test -f .pages-dist/js/road.js
           test -f .pages-dist/assets/fonts/BalsamiqSans-Bold.ttf
           test ! -e .pages-dist/README.md
           test ! -e .pages-dist/package.json
