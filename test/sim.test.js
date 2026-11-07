@@ -31,7 +31,7 @@ import {
   steerParams,
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
-import { createSim, hazardWorldX, nextHazard, runSim, stepSim } from "../js/sim.js";
+import { createSim, hazardWorldX, isSolidHazard, nextHazard, runSim, stepSim } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -1066,6 +1066,57 @@ test("display rate changes how many 1/60 steps land in a frame, not the step its
   const behind = drainFrame(0.2, 0.1, 1);
   assert.ok(behind.steps <= 8);
   assert.ok(behind.acc < 1 / 60 + 0.2);
+});
+
+test("a touch at the start of a step still hits once, and roadside props do not", () => {
+  assert.equal(isSolidHazard({ id: "tree", kind: "prop", type: "bin" }), false);
+  assert.equal(isSolidHazard({ id: "house", category: "decor", type: "stopped" }), false);
+  assert.equal(isSolidHazard({ id: "ped", type: "pedestrian" }), true);
+
+  const decor = createSim(
+    {
+      id: "decor",
+      cruise: 12,
+      roll: 10,
+      length: 80,
+      cargo: null,
+      slippery: [],
+      hazards: [{ id: "tree", kind: "prop", type: "pedestrian", s: 10, x: 1.8, halfW: 0.42, halfL: 0.55, trust: false }],
+    },
+    1,
+  );
+  decor.s = 6;
+  decor.x = 1.8;
+  decor.v = 12;
+  stepSim(decor, 0.5, { held: false, lockSpeed: true });
+  assert.equal(decor.stats.collisions, 0);
+  assert.equal(decor.hazards[0].resolved, null);
+
+  const slipped = createSim(getMission("lesson1"), 11);
+  const ped = slipped.hazards.find((h) => h.id === "ped");
+  ped.crossT = ped.crossDur * 0.4;
+  ped.committed = "avoid";
+  ped.trust = true;
+  slipped.s = ped.s - 2;
+  slipped.x = ped.x;
+  slipped.v = 10;
+  slipped.patience = 10;
+  stepSim(slipped, 0.5, { held: false, lockSpeed: true });
+  const hits = slipped.events.filter((e) => e.kind === "hit");
+  assert.ok(Math.abs(slipped.x - ped.x) > CFG.carHalfW + ped.halfW - 0.04);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].hitId, "hit:ped");
+  assert.equal(slipped.stats.collisions, 1);
+  stepSim(slipped, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(slipped.stats.collisions, 1);
+  assert.equal(slipped.events.filter((e) => e.hitId === "hit:ped").length, 1);
+
+  const lesson = getMission("lesson1");
+  const missed = runSim(lesson, () => false, { maxTime: 40 });
+  const careful = runSim(lesson, policyCareful, { maxTime: 90 });
+  assert.ok(missed.stats.collisions >= 1);
+  assert.equal(missed.events.filter((e) => e.hitId === "hit:ped").length, 1);
+  assert.equal(careful.stats.collisions, 0, dump(careful));
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

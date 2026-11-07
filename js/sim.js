@@ -55,8 +55,10 @@ export function createSim(mission, seed = 1) {
     seed,
     rng: mulberry32(seed),
     s: 0,
+    prevS: 0,
     v: 0,
     x: CFG.defaultX,
+    prevX: CFG.defaultX,
     brakeInput: 0,
     holdTime: 0,
     pressTime: 0,
@@ -279,9 +281,44 @@ function commitHazards(sim, held) {
   }
 }
 
+/** Houses and trees are props. They are drawn, and they are not solid. */
+export function isSolidHazard(h) {
+  if (!h || h.alive === false) return false;
+  if (h.solid === false) return false;
+  if (h.category === "decor" || h.kind === "prop") return false;
+  return true;
+}
+
+function lateralReach(h) {
+  return CFG.carHalfW + h.halfW - 0.04;
+}
+
+function lateralOverlapAt(carX, hx, h) {
+  return Math.abs(carX - hx) < lateralReach(h);
+}
+
+/** Where the body is now. Yield and "have they left" use only this. */
 function lateralOverlap(sim, h) {
-  const hx = hazardWorldX(h, sim);
-  return Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW - 0.04;
+  return lateralOverlapAt(sim.x, hazardWorldX(h, sim), h);
+}
+
+/**
+ * The step counts if the car and the body shared a lane at either end.
+ * Checking only the end let a body that was touched at the start slip out
+ * of the same step with no contact.
+ */
+function lateralTouched(sim, h) {
+  const now = hazardWorldX(h, sim);
+  if (lateralOverlapAt(sim.x, now, h)) return true;
+  return lateralOverlapAt(sim.prevX ?? sim.x, h.prevX ?? now, h);
+}
+
+function snapshotPose(sim) {
+  sim.prevS = sim.s;
+  sim.prevX = sim.x;
+  for (const h of sim.hazards) {
+    h.prevX = hazardWorldX(h, sim);
+  }
 }
 
 function frontOf(s) {
@@ -315,6 +352,8 @@ function markClear(sim, h, how) {
 }
 
 function resolveHit(sim, h) {
+  const hitId = h.hitId || `hit:${h.id}`;
+  h.hitId = hitId;
   const impact = sim.v;
   const excess = Math.max(0, impact - 1.2);
   let bodyLoss = (CFG.bodyPerMs[h.type] || 3) * excess;
@@ -338,7 +377,7 @@ function resolveHit(sim, h) {
   sim.crashT = 0.24;
   sim.beltT = Math.max(sim.beltT, 0.28);
   say(sim, "ОЙ!");
-  log(sim, { kind: "hit", id: h.id, type: h.type, impact: round3(impact), bodyLoss: round3(bodyLoss), cargoLoss });
+  log(sim, { kind: "hit", id: h.id, hitId, type: h.type, impact: round3(impact), bodyLoss: round3(bodyLoss), cargoLoss });
 }
 
 function pinShort(sim, h) {
@@ -370,10 +409,10 @@ function holdYield(sim, h) {
 function collide(sim, prevS) {
   for (const h of sim.hazards) {
     if (h.resolved) continue;
+    if (!isSolidHazard(h)) continue;
     if (holdYield(sim, h)) continue;
 
-    const lateral = lateralOverlap(sim, h);
-    const entered = lateral && sweptInto(prevS, sim.s, h);
+    const entered = lateralTouched(sim, h) && sweptInto(prevS, sim.s, h);
     if (!entered) continue;
 
     const near = h.s - h.halfL;
@@ -474,6 +513,7 @@ function fail(sim, reason) {
 
 export function stepSim(sim, dt, input = {}) {
   if (sim.done) return sim;
+  snapshotPose(sim);
   const held = !!input.held;
 
   if (input.snapBrake && held) sim.brakeInput = 1;
