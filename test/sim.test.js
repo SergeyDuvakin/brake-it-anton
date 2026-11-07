@@ -31,7 +31,7 @@ import {
   steerParams,
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
-import { createSim, hazardWorldX, isSolidHazard, nextHazard, runSim, stepSim } from "../js/sim.js";
+import { contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -1117,6 +1117,74 @@ test("a touch at the start of a step still hits once, and roadside props do not"
   assert.ok(missed.stats.collisions >= 1);
   assert.equal(missed.events.filter((e) => e.hitId === "hit:ped").length, 1);
   assert.equal(careful.stats.collisions, 0, dump(careful));
+});
+
+test("lane contact is the overlap of the two time windows, not the two endpoints", () => {
+  const reach = CFG.carHalfW + 0.42 - 0.04;
+  const maxSteer = steerParams(0, false).rate / 60;
+  const maxStory = CFG.storySpeedCap / 60;
+  assert.ok(maxSteer < reach, `steer per step ${maxSteer} already crosses a lane`);
+  assert.ok(2 * maxSteer < 2 * reach);
+  assert.ok(maxStory < 0.4);
+
+  const through = {
+    prevX: -3,
+    x: 3,
+    prevS: 8,
+    s: 16,
+  };
+  const body = { s: 12, halfL: 0.55, halfW: 0.42, prevX: 0, x: 0 };
+  assert.ok(Math.abs(through.prevX) > reach && Math.abs(through.x) > reach);
+  assert.equal(contactDuringStep(through, body, through.prevS), true);
+
+  const earlyLane = overlapTimes(0, 3, -reach, reach);
+  const lateNose = overlapTimes(0, 10, 6, 9);
+  assert.ok(earlyLane && lateNose && earlyLane[1] < lateNose[0]);
+  assert.equal(windowsOverlap(earlyLane, lateNose), false);
+  const missed = { prevX: 1.8, x: 1.8 + 3, prevS: 0, s: 10 };
+  const ahead = { s: 8, halfL: 0.55, halfW: 0.42, prevX: 1.8, x: 1.8 };
+  assert.equal(contactDuringStep(missed, ahead, missed.prevS), false);
+
+  const dart = { prevX: 0, x: 0, prevS: 10, s: 14 };
+  const walker = { s: 12, halfL: 0.55, halfW: 0.42, prevX: -3, x: 3 };
+  assert.equal(contactDuringStep(dart, walker, dart.prevS), true);
+
+  const side = createSim(
+    empty({
+      hazards: [{ id: "ped", type: "pedestrian", s: 20, x: 1.8, halfW: 0.42, halfL: 0.55, trust: true }],
+    }),
+    1,
+  );
+  const ped = side.hazards[0];
+  ped.crossT = ped.crossDur * 0.4;
+  ped.committed = "avoid";
+  side.v = CFG.storySpeedCap;
+  side.patience = 0;
+  side.x = 1.8 - (reach - 0.02);
+  side.s = ped.s - ped.halfL - CFG.carHalfFront - 0.25;
+  const noseGap = ped.s - ped.halfL - (side.s + CFG.carHalfFront);
+  assert.ok(noseGap > 0.2 && noseGap < side.v / 60, `nose gap ${noseGap} is not inside one story step`);
+  assert.ok(Math.abs(side.x - 1.8) < reach);
+  stepSim(side, 1 / 60, { held: false, lockSpeed: true });
+  assert.ok(Math.abs(side.x - 1.8) > reach, dump(side));
+  assert.equal(side.stats.collisions, 0, dump(side));
+  assert.equal(side.hazards[0].hitId, undefined);
+
+  const wide = createSim(
+    empty({
+      hazards: [{ id: "ped", type: "pedestrian", s: 12, x: -0.2, halfW: 0.42, halfL: 0.55, trust: false }],
+    }),
+    1,
+  );
+  wide.hazards[0].crossT = wide.hazards[0].crossDur * 0.2;
+  wide.x = -3;
+  wide.v = 20;
+  wide.s = 0;
+  stepSim(wide, 1.2, { held: false, lockSpeed: true });
+  const wideReach = CFG.carHalfW + 0.42 - 0.04;
+  assert.ok(Math.abs(wide.x - (-0.2)) > wideReach, dump(wide));
+  assert.equal(wide.stats.collisions, 1, dump(wide));
+  assert.equal(wide.events.filter((e) => e.hitId === "hit:ped").length, 1);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

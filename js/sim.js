@@ -303,14 +303,47 @@ function lateralOverlap(sim, h) {
 }
 
 /**
- * The step counts if the car and the body shared a lane at either end.
- * Checking only the end let a body that was touched at the start slip out
- * of the same step with no contact.
+ * Times in [0, 1] when a straight move from a0 to a1 sits strictly inside (lo, hi).
+ * The whole step is one line, so the answer is a single interval.
  */
-function lateralTouched(sim, h) {
-  const now = hazardWorldX(h, sim);
-  if (lateralOverlapAt(sim.x, now, h)) return true;
-  return lateralOverlapAt(sim.prevX ?? sim.x, h.prevX ?? now, h);
+export function overlapTimes(a0, a1, lo, hi) {
+  const inside = (value) => value > lo && value < hi;
+  if (a0 === a1) return inside(a0) ? [0, 1] : null;
+  let t0 = (lo - a0) / (a1 - a0);
+  let t1 = (hi - a0) / (a1 - a0);
+  if (t0 > t1) {
+    const swap = t0;
+    t0 = t1;
+    t1 = swap;
+  }
+  const start = Math.max(0, t0);
+  const end = Math.min(1, t1);
+  if (!(end > start)) return null;
+  const mid = a0 + (a1 - a0) * ((start + end) / 2);
+  if (!inside(mid)) return null;
+  return [start, end];
+}
+
+export function windowsOverlap(left, right) {
+  if (!left || !right) return false;
+  return left[0] < right[1] && right[0] < left[1];
+}
+
+/**
+ * Contact only while the lane overlap and the bumper overlap happen together.
+ * Endpoints alone miss a crossing through the middle, and they also count a
+ * miss when the car leaves the lane before the nose arrives.
+ * Actor x is the straight line between the two samples this step produced.
+ */
+export function contactDuringStep(sim, h, prevS) {
+  const hx0 = h.prevX ?? hazardWorldX(h, sim);
+  const hx1 = hazardWorldX(h, sim);
+  const reach = lateralReach(h);
+  const lateral = overlapTimes((sim.prevX ?? sim.x) - hx0, sim.x - hx1, -reach, reach);
+  const near = h.s - h.halfL;
+  const far = h.s + h.halfL;
+  const along = overlapTimes(prevS, sim.s, near - CFG.carHalfFront, far + CFG.carHalfBack);
+  return windowsOverlap(lateral, along);
 }
 
 function snapshotPose(sim) {
@@ -323,17 +356,6 @@ function snapshotPose(sim) {
 
 function frontOf(s) {
   return s + CFG.carHalfFront;
-}
-
-/** True when the bumper swept across the hazard's near face this step. */
-function sweptInto(prevS, s, h) {
-  const near = h.s - h.halfL;
-  const far = h.s + h.halfL;
-  const prevFront = frontOf(prevS);
-  const front = frontOf(s);
-  const back = Math.min(prevS, s) - CFG.carHalfBack;
-  const nose = Math.max(prevFront, front);
-  return nose > near && back < far;
 }
 
 function markClear(sim, h, how) {
@@ -412,7 +434,7 @@ function collide(sim, prevS) {
     if (!isSolidHazard(h)) continue;
     if (holdYield(sim, h)) continue;
 
-    const entered = lateralTouched(sim, h) && sweptInto(prevS, sim.s, h);
+    const entered = contactDuringStep(sim, h, prevS);
     if (!entered) continue;
 
     const near = h.s - h.halfL;
