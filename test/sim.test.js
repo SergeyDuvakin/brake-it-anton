@@ -27,10 +27,11 @@ import {
   irritationRate,
   netAccel,
   repairInvoice,
+  safeSpeed,
   steerParams,
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
-import { createSim, hazardWorldX, runSim, stepSim } from "../js/sim.js";
+import { createSim, hazardWorldX, nextHazard, runSim, stepSim } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -431,6 +432,87 @@ test("infinite mode is seeded, capped near 96 km/h, and stays in the lanes", () 
   assert.ok(sim.v <= CFG.infiniteSpeedCap + 1e-6, sim.v);
   const bill = repairInvoice({ collisions: 2, mirrors: 1, harshFull: 1, honks: 3 }, 10);
   assert.equal(bill.total, 2 * 1400 + 350 + 800 + 3 * 90 + 120);
+});
+
+function brakeOnly(sim) {
+  const hazard = nextHazard(sim);
+  if (!hazard || hazard.trust) return false;
+  const dist = hazard.s - sim.s;
+  if (dist > (hazard.telegraph || 72) || dist < -2) return false;
+  if ((hazard.type === "pedestrian" || hazard.type === "cutin") && hazard.crossDur && hazard.crossT >= hazard.crossDur) {
+    return false;
+  }
+  return sim.v > Math.max(0.4, safeSpeed(hazard.type) - 1.2);
+}
+
+function driveTo(mission, policy, limitS, maxSec = 900) {
+  const sim = createSim(mission, mission.seed || 1);
+  let stuck = 0;
+  let prev = sim.s;
+  for (let i = 0; i < 60 * maxSec && sim.s < limitS && sim.body > 0 && sim.cargo > 0; i++) {
+    stepSim(sim, dt, { held: !!policy(sim) });
+    if (sim.v < 0.05 && sim.s < prev + 0.002) stuck += 1;
+    else stuck = 0;
+    prev = sim.s;
+    if (stuck > 240) break;
+  }
+  return { sim, stuck: stuck > 240 };
+}
+
+test("a brake-only player can pass every generated road, and a parked car is trust", () => {
+  for (let seed = 1; seed <= 24; seed += 1) {
+    const road = buildInfinite(seed);
+    const again = buildInfinite(seed);
+    assert.deepEqual(
+      road.hazards.map((hazard) => [hazard.s, hazard.type, hazard.trust]),
+      again.hazards.map((hazard) => [hazard.s, hazard.type, hazard.trust]),
+    );
+    for (let i = 0; i < road.hazards.length; i += 1) {
+      const hazard = road.hazards[i];
+      if (hazard.type === "stopped" || hazard.type === "dog" || hazard.type === "pothole") {
+        assert.equal(hazard.trust, true, `${seed} ${hazard.id}`);
+      }
+      if (hazard.type === "pedestrian" || hazard.type === "cutin" || hazard.type === "bin" || hazard.type === "roller") {
+        assert.equal(hazard.trust, false, `${seed} ${hazard.id}`);
+      }
+      if (i > 0) assert.ok(hazard.s - road.hazards[i - 1].s >= 108, `${seed} gap`);
+      assert.notEqual(hazard.type, road.hazards[i - 1]?.type);
+    }
+  }
+
+  for (const seed of [1, 4, 9, 22]) {
+    const road = buildInfinite(seed);
+    const trip = driveTo(road, brakeOnly, road.hazards.at(-1).s + 40);
+    assert.equal(trip.stuck, false, `stuck on seed ${seed} at ${trip.sim.s}`);
+    assert.equal(trip.sim.stats.collisions, 0, `hits on seed ${seed}: ${trip.sim.events.filter((e) => e.kind === "hit").map((e) => e.id).join(",")}`);
+    assert.ok(trip.sim.body > 99, trip.sim.body);
+    assert.ok(trip.sim.s > road.hazards.at(-1).s, trip.sim.s);
+  }
+
+  const parked = {
+    id: "park",
+    seed: 3,
+    cruise: 12.5,
+    roll: 10,
+    length: 240,
+    cargo: null,
+    slippery: [],
+    hazards: [{ id: "car", type: "stopped", s: 90, trust: true, halfW: 0.95, halfL: 2.2, x: 1.8, telegraph: 72, decision: 58, commit: 40 }],
+  };
+  const hands = driveTo(parked, () => false, 200, 40);
+  assert.equal(hands.sim.stats.collisions, 0, dump(hands.sim));
+  assert.equal(hands.sim.hazards[0].resolved, "clear");
+  assert.equal(hands.sim.hazards[0].committed, "avoid");
+  const provoked = driveTo(parked, policyProvoke, 200, 40);
+  assert.ok(provoked.sim.stats.collisions >= 1, dump(provoked.sim));
+  assert.equal(provoked.sim.hazards[0].committed, "lunge");
+
+  const person = getMission("lesson1");
+  const missed = driveTo(person, () => false, person.length, 40);
+  assert.ok(missed.sim.stats.collisions >= 1);
+  const stopped = driveTo(person, brakeOnly, person.length - 5, 80);
+  assert.equal(stopped.sim.stats.collisions, 0, dump(stopped.sim));
+  assert.equal(stopped.stuck, false);
 });
 
 test("the opening countdown holds the car, and retry is an immediate clean ride", () => {

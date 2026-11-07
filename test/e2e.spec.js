@@ -209,6 +209,54 @@ test("844×390 and a Pixel landscape keep a stable 16:9 canvas when height jitte
   }
 });
 
+test("an address-bar collapse settles, and a 1px flicker does not slide the canvas", async ({ page }) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto(gameURL());
+  await page.waitForFunction(() => window.__anton?.frameBox);
+  const open = await page.evaluate(() => window.__anton.frameBox());
+  expect(open.height).toBeLessThanOrEqual(390);
+  expect(Math.abs(open.width / open.height - 16 / 9)).toBeLessThan(0.03);
+
+  await page.setViewportSize({ width: 844, height: 340 });
+  await page.waitForTimeout(40);
+  const bar = await page.evaluate(() => window.__anton.frameBox());
+  expect(bar.height).toBeLessThanOrEqual(340);
+  expect(bar.width).toBeLessThanOrEqual(844);
+  expect(Math.abs(bar.width / bar.height - 16 / 9)).toBeLessThan(0.03);
+  expect(bar.top).toBeGreaterThanOrEqual(-0.5);
+  expect(bar.top + bar.height).toBeLessThanOrEqual(340.5);
+
+  const samples = [];
+  for (const height of [341, 340, 339, 340]) {
+    await page.setViewportSize({ width: 844, height });
+    await page.waitForTimeout(40);
+    samples.push(await page.evaluate(() => window.__anton.frameBox()));
+  }
+  for (const sample of samples) {
+    expect(Math.abs(sample.top - samples[0].top)).toBeLessThan(1.5);
+    expect(Math.abs(sample.left - samples[0].left)).toBeLessThan(1.5);
+    expect(sample.height).toBeLessThanOrEqual(341);
+    expect(sample.top + sample.height).toBeLessThanOrEqual(341.5);
+  }
+
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.waitForTimeout(40);
+  const back = await page.evaluate(() => window.__anton.frameBox());
+  expect(back.height).toBeLessThanOrEqual(390);
+  expect(back.height).toBeGreaterThan(bar.height);
+  expect(Math.abs(back.width / back.height - 16 / 9)).toBeLessThan(0.03);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(40);
+  await expect(page.locator("#rotate")).toBeVisible();
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.waitForTimeout(40);
+  await expect(page.locator("#wrap")).toBeVisible();
+  const landscape = await page.evaluate(() => window.__anton.frameBox());
+  expect(landscape.height).toBeLessThanOrEqual(390);
+  expect(Math.abs(landscape.width / landscape.height - 16 / 9)).toBeLessThan(0.03);
+});
+
 test("title scenery and wheels stay still while people may idle", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(gameURL());

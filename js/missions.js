@@ -139,7 +139,13 @@ export function buildInfinite(seed = 1) {
     let type = types[Math.floor(rng() * types.length)];
     if (type === last) type = types[(types.indexOf(type) + 1) % types.length];
     last = type;
-    const trust = type === "dog" || type === "pothole" || (type === "stopped" && rng() > 0.45);
+    // A parked car stays in the lane and will not step aside. The player
+    // cannot steer, so a non-trust copy is either a guaranteed hit or a
+    // stop that never ends. Anton goes around it, the same way he goes
+    // around a dog or a hole, unless the pedal is held in the decision window.
+    // The discarded roll keeps later gaps on the same stream.
+    if (type === "stopped") rng();
+    const trust = type === "dog" || type === "pothole" || type === "stopped";
     hazards.push(
       H({
         id: `inf-${guard}`,
