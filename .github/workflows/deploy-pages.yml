@@ -42,6 +42,7 @@ jobs:
           cp icons/icon-192.png .pages-dist/icons/icon-192.png
           cp icons/icon-512.png .pages-dist/icons/icon-512.png
           cp js/audio.js .pages-dist/js/audio.js
+          cp js/clock.js .pages-dist/js/clock.js
           cp js/config.js .pages-dist/js/config.js
           cp js/draw.js .pages-dist/js/draw.js
           cp js/game.js .pages-dist/js/game.js
@@ -54,6 +55,7 @@ jobs:
           cp js/session.js .pages-dist/js/session.js
           cp js/sim.js .pages-dist/js/sim.js
           cp js/storage.js .pages-dist/js/storage.js
+          cp js/viewport.js .pages-dist/js/viewport.js
           cp assets/fonts/BalsamiqSans-Bold.ttf .pages-dist/assets/fonts/BalsamiqSans-Bold.ttf
           cp assets/fonts/BalsamiqSans-Regular.ttf .pages-dist/assets/fonts/BalsamiqSans-Regular.ttf
           cp assets/fonts/RubikMonoOne-Regular.ttf .pages-dist/assets/fonts/RubikMonoOne-Regular.ttf

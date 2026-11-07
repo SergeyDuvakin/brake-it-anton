@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 
 import { CFG } from "../js/config.js";
+import { drainFrame } from "../js/clock.js";
+import { contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
 import {
@@ -25,10 +27,11 @@ import {
   irritationRate,
   netAccel,
   repairInvoice,
+  safeSpeed,
   steerParams,
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
-import { createSim, hazardWorldX, runSim, stepSim } from "../js/sim.js";
+import { createSim, hazardWorldX, nextHazard, runSim, stepSim } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -429,6 +432,87 @@ test("infinite mode is seeded, capped near 96 km/h, and stays in the lanes", () 
   assert.ok(sim.v <= CFG.infiniteSpeedCap + 1e-6, sim.v);
   const bill = repairInvoice({ collisions: 2, mirrors: 1, harshFull: 1, honks: 3 }, 10);
   assert.equal(bill.total, 2 * 1400 + 350 + 800 + 3 * 90 + 120);
+});
+
+function brakeOnly(sim) {
+  const hazard = nextHazard(sim);
+  if (!hazard || hazard.trust) return false;
+  const dist = hazard.s - sim.s;
+  if (dist > (hazard.telegraph || 72) || dist < -2) return false;
+  if ((hazard.type === "pedestrian" || hazard.type === "cutin") && hazard.crossDur && hazard.crossT >= hazard.crossDur) {
+    return false;
+  }
+  return sim.v > Math.max(0.4, safeSpeed(hazard.type) - 1.2);
+}
+
+function driveTo(mission, policy, limitS, maxSec = 900) {
+  const sim = createSim(mission, mission.seed || 1);
+  let stuck = 0;
+  let prev = sim.s;
+  for (let i = 0; i < 60 * maxSec && sim.s < limitS && sim.body > 0 && sim.cargo > 0; i++) {
+    stepSim(sim, dt, { held: !!policy(sim) });
+    if (sim.v < 0.05 && sim.s < prev + 0.002) stuck += 1;
+    else stuck = 0;
+    prev = sim.s;
+    if (stuck > 240) break;
+  }
+  return { sim, stuck: stuck > 240 };
+}
+
+test("a brake-only player can pass every generated road, and a parked car is trust", () => {
+  for (let seed = 1; seed <= 24; seed += 1) {
+    const road = buildInfinite(seed);
+    const again = buildInfinite(seed);
+    assert.deepEqual(
+      road.hazards.map((hazard) => [hazard.s, hazard.type, hazard.trust]),
+      again.hazards.map((hazard) => [hazard.s, hazard.type, hazard.trust]),
+    );
+    for (let i = 0; i < road.hazards.length; i += 1) {
+      const hazard = road.hazards[i];
+      if (hazard.type === "stopped" || hazard.type === "dog" || hazard.type === "pothole") {
+        assert.equal(hazard.trust, true, `${seed} ${hazard.id}`);
+      }
+      if (hazard.type === "pedestrian" || hazard.type === "cutin" || hazard.type === "bin" || hazard.type === "roller") {
+        assert.equal(hazard.trust, false, `${seed} ${hazard.id}`);
+      }
+      if (i > 0) assert.ok(hazard.s - road.hazards[i - 1].s >= 108, `${seed} gap`);
+      assert.notEqual(hazard.type, road.hazards[i - 1]?.type);
+    }
+  }
+
+  for (const seed of [1, 4, 9, 22]) {
+    const road = buildInfinite(seed);
+    const trip = driveTo(road, brakeOnly, road.hazards.at(-1).s + 40);
+    assert.equal(trip.stuck, false, `stuck on seed ${seed} at ${trip.sim.s}`);
+    assert.equal(trip.sim.stats.collisions, 0, `hits on seed ${seed}: ${trip.sim.events.filter((e) => e.kind === "hit").map((e) => e.id).join(",")}`);
+    assert.ok(trip.sim.body > 99, trip.sim.body);
+    assert.ok(trip.sim.s > road.hazards.at(-1).s, trip.sim.s);
+  }
+
+  const parked = {
+    id: "park",
+    seed: 3,
+    cruise: 12.5,
+    roll: 10,
+    length: 240,
+    cargo: null,
+    slippery: [],
+    hazards: [{ id: "car", type: "stopped", s: 90, trust: true, halfW: 0.95, halfL: 2.2, x: 1.8, telegraph: 72, decision: 58, commit: 40 }],
+  };
+  const hands = driveTo(parked, () => false, 200, 40);
+  assert.equal(hands.sim.stats.collisions, 0, dump(hands.sim));
+  assert.equal(hands.sim.hazards[0].resolved, "clear");
+  assert.equal(hands.sim.hazards[0].committed, "avoid");
+  const provoked = driveTo(parked, policyProvoke, 200, 40);
+  assert.ok(provoked.sim.stats.collisions >= 1, dump(provoked.sim));
+  assert.equal(provoked.sim.hazards[0].committed, "lunge");
+
+  const person = getMission("lesson1");
+  const missed = driveTo(person, () => false, person.length, 40);
+  assert.ok(missed.sim.stats.collisions >= 1);
+  const stopped = driveTo(person, brakeOnly, person.length - 5, 80);
+  assert.equal(stopped.sim.stats.collisions, 0, dump(stopped.sim));
+  assert.equal(stopped.stuck, false);
 });
 
 test("the opening countdown holds the car, and retry is an immediate clean ride", () => {
@@ -902,6 +986,86 @@ test("brake timing: early stop leaves a gap, late speed is a hit, crawl is not",
 
   const kinds = new Set(early.events.map((e) => e.kind + ":" + (e.id || "")));
   assert.ok([...kinds].some((name) => name.includes("lid") || name.includes("roller") || early.events.some((e) => e.id === "lid")));
+});
+
+test("the mobile frame stays on whole pixels when the toolbar jitters", () => {
+  const phone = frameSize(844, 390);
+  assert.equal(phone.width, Math.floor(phone.width));
+  assert.equal(phone.height, Math.floor(phone.height));
+  assert.ok(phone.height <= 390);
+  assert.ok(phone.width <= 844);
+  assert.ok(Math.abs(phone.width / phone.height - 16 / 9) < 0.02);
+
+  const held = stableFrame(phone, 844, 391);
+  assert.equal(held.width, phone.width);
+  assert.equal(held.height, phone.height);
+  const shrunk = stableFrame(phone, 844, 389);
+  assert.ok(shrunk.height <= 389);
+  assert.ok(shrunk.width <= phone.width);
+  const back = stableFrame(shrunk, 844, 390);
+  assert.equal(back.width, shrunk.width);
+  assert.equal(back.height, shrunk.height);
+
+  const placed = stablePlacement(null, 844, 390);
+  assert.equal(placed.width, phone.width);
+  assert.equal(placed.height, phone.height);
+  assert.equal(placed.left + placed.width <= 844, true);
+  assert.equal(placed.top + placed.height <= 390, true);
+  const nudged = stablePlacement(placed, 844, 391);
+  assert.equal(nudged.left, placed.left);
+  assert.equal(nudged.top, placed.top);
+  assert.equal(nudged.width, placed.width);
+  assert.equal(nudged.height, placed.height);
+  const clipped = stablePlacement(placed, 844, 389);
+  assert.ok(clipped.height <= 389);
+  assert.ok(clipped.top >= 0);
+  assert.ok(clipped.top + clipped.height <= 389);
+  assert.ok(clipped.left >= 0);
+  assert.ok(clipped.left + clipped.width <= 844);
+
+  const padded = contentBox(844, 390, { top: 0, right: 47, bottom: 21, left: 47 });
+  assert.equal(padded.width, 750);
+  assert.equal(padded.height, 369);
+  const fitted = frameSize(padded.width, padded.height);
+  assert.ok(fitted.width <= padded.width);
+  assert.ok(fitted.height <= padded.height);
+  assert.ok(Math.abs(fitted.width / fitted.height - 16 / 9) < 0.02);
+  const squashed = 693 / 369;
+  assert.ok(Math.abs(fitted.width / fitted.height - 16 / 9) < Math.abs(squashed - 16 / 9));
+
+  const android = frameSize(915, 412);
+  const shorter = stableFrame(android, 915, 360);
+  assert.ok(shorter.height < android.height);
+  assert.equal(shorter.width, Math.floor(shorter.width));
+
+  // The old 100vh formula centers a changing canvas in a fixed screen.
+  function legacyTop(outerW, outerH, cssVh) {
+    const height = Math.min(cssVh, (outerW * 9) / 16);
+    return (outerH - height) / 2;
+  }
+  const a = legacyTop(932, 430, 430);
+  const b = legacyTop(932, 430, 414);
+  assert.ok(Math.abs(b - a) > 5);
+});
+
+test("display rate changes how many 1/60 steps land in a frame, not the step itself", () => {
+  for (const hz of [30, 60, 90, 120]) {
+    let acc = 0;
+    let steps = 0;
+    for (let i = 0; i < hz; i++) {
+      const drained = drainFrame(acc, 1 / hz, 1);
+      acc = drained.acc;
+      steps += drained.steps;
+    }
+    assert.ok(Math.abs(steps - 60) <= 1, `${hz} Hz produced ${steps} steps`);
+    assert.ok(acc < 1 / 60, `${hz} Hz leftover ${acc}`);
+  }
+  const stall = drainFrame(0, 0.5, 1);
+  assert.equal(stall.raw, 0.1);
+  assert.equal(stall.steps, 6);
+  const behind = drainFrame(0.2, 0.1, 1);
+  assert.ok(behind.steps <= 8);
+  assert.ok(behind.acc < 1 / 60 + 0.2);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {
