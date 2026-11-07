@@ -1,0 +1,26 @@
+{
+  "status": "sample-v3-not-accepted",
+  "production": "unchanged",
+  "rejected_previous": [
+    "art/proposals",
+    "art/proposals-v2"
+  ],
+  "source": "art/proposals-v3/sample.html",
+  "completed_sample": [
+    "anton-drive",
+    "ped-one",
+    "dog",
+    "car-forward"
+  ],
+  "missing": [
+    "дома и деревья",
+    "педаль, терпение, титры, гараж, пауза, итог",
+    "торт и рыба",
+    "Антон: phone, drowsy, asleep, earnest, wake, stow, preen, furious и остальные лица",
+    "другие пешеходы и кадры шага",
+    "собака в других фазах",
+    "чужая машина, бак, крышка, яма",
+    "походка внутри симуляции"
+  ],
+  "note": "Только четыре крупных образца и их уменьшенные копии. В игру не встроены."
+}
