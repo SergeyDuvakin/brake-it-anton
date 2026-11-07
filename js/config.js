@@ -74,6 +74,12 @@ export const CFG = {
   carHalfW: 0.85,
   carHalfFront: 2.05,
   carHalfBack: 1.35,
+  /**
+   * Metres kept between the bumper and a yielding body.
+   * The sprite nose is drawn on the bumper and the pedestrian's feet on
+   * the ground point, so this standoff is the gap the player sees.
+   */
+  yieldStandoff: 8.4,
   defaultX: 1.8,
   roadEdge: 3.35,
 

@@ -303,7 +303,9 @@ async function driveWithPedal(page, decide, shots = {}) {
     const phase = window.__anton.getState().phase;
     return phase === "drive" || phase === "countdown" || phase === "result";
   });
-  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.waitForFunction(
+    () => window.__anton.getState().phase === "drive" && window.__anton.hotspots().some((spot) => spot.id === "pedal"),
+  );
   const pedal = await pedalPoint(page);
   let down = false;
   let sawRescue = !shots.rescue;
@@ -358,6 +360,193 @@ async function driveWithPedal(page, decide, shots = {}) {
   }
   throw new Error("pedal drive timed out");
 }
+
+test("clicked retry, hotkey R and a stale space: the ride starts now", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await page.evaluate(() => window.__anton.setTimeScale(1));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "result", null, { timeout: 30000 });
+
+  const retryCss = await page.evaluate(() => {
+    const spot = window.__anton.hotspots().find((item) => item.id === "retry");
+    const rect = document.querySelector("canvas").getBoundingClientRect();
+    return spot.h * (rect.height / 900);
+  });
+  expect(retryCss).toBeGreaterThanOrEqual(48);
+  await page.keyboard.down("Space");
+  await clickId(page, "retry");
+  const clicked = await page.evaluate(() => window.__anton.getState());
+  expect(clicked.phase).toBe("drive");
+  expect(clicked.countdown).toBe(0);
+  expect(clicked.v).toBeGreaterThan(5);
+  expect(clicked.brake).toBe(0);
+  expect(clicked.held).toBe(false);
+  expect(clicked.collisions).toBe(0);
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", repeat: true, bubbles: true }));
+  });
+  await page.screenshot({ path: shot("after-retry") });
+
+  await page.waitForTimeout(300);
+  const leaked = await page.evaluate(() => window.__anton.getState());
+  expect(leaked.phase).toBe("drive");
+  expect(leaked.countdown).toBe(0);
+  expect(leaked.brake).toBe(0);
+  expect(leaked.held).toBe(false);
+  expect(leaked.s).toBeGreaterThan(0.4);
+
+  await page.keyboard.up("Space");
+  await page.keyboard.down("Space");
+  await page.waitForFunction(() => window.__anton.getState().brake > 0.35);
+  await page.keyboard.up("Space");
+
+  await page.evaluate(() => window.__anton.setTimeScale(8));
+  await page.waitForFunction(() => window.__anton.getState().phase === "result", null, { timeout: 20000 });
+  await page.evaluate(() => window.__anton.setTimeScale(1));
+  await page.keyboard.press("KeyR");
+  const hotkey = await page.evaluate(() => window.__anton.getState());
+  expect(hotkey.phase).toBe("drive");
+  expect(hotkey.countdown).toBe(0);
+  expect(hotkey.v).toBeGreaterThan(5);
+  expect(hotkey.brake).toBe(0);
+  expect(hotkey.held).toBe(false);
+});
+
+test("touch retry on 844×390 is immediate and the pedal is a real target", async ({ browser }) => {
+  test.setTimeout(60000);
+  const context = await browser.newContext({
+    viewport: { width: 844, height: 390 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await page.evaluate(() => window.__anton.setTimeScale(8));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "result", null, { timeout: 20000 });
+  await page.evaluate(() => window.__anton.setTimeScale(1));
+  const point = await page.evaluate(() => {
+    const spot = window.__anton.hotspots().find((item) => item.id === "retry");
+    const rect = document.querySelector("canvas").getBoundingClientRect();
+    return {
+      x: rect.left + (spot.x + spot.w / 2) * (rect.width / 1600),
+      y: rect.top + (spot.y + spot.h / 2) * (rect.height / 900),
+      cssH: spot.h * (rect.height / 900),
+      cssW: spot.w * (rect.width / 1600),
+    };
+  });
+  expect(point.cssH).toBeGreaterThanOrEqual(48);
+  expect(point.cssW).toBeGreaterThanOrEqual(72);
+  await page.touchscreen.tap(point.x, point.y);
+  const state = await page.evaluate(() => window.__anton.getState());
+  expect(state.phase).toBe("drive");
+  expect(state.countdown).toBe(0);
+  expect(state.v).toBeGreaterThan(5);
+  expect(state.brake).toBe(0);
+  expect(state.held).toBe(false);
+  const box = await page.locator("canvas").boundingBox();
+  expect(box.width / box.height).toBeCloseTo(16 / 9, 1);
+  await page.screenshot({ path: shot("after-retry-844") });
+
+  const touched = await page.evaluate(() => {
+    const spot = window.__anton.hotspots().find((item) => item.id === "pedal");
+    const canvas = document.querySelector("canvas");
+    const rect = canvas.getBoundingClientRect();
+    const x = rect.left + (spot.x + spot.w / 2) * (rect.width / 1600);
+    const y = rect.top + (spot.y + spot.h / 2) * (rect.height / 900);
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        clientX: x,
+        clientY: y,
+        pointerId: 8,
+        pointerType: "touch",
+        button: 0,
+        isPrimary: true,
+      }),
+    );
+    const down = window.__anton.getState();
+    return { held: down.held, cssH: spot.h * (rect.height / 900) };
+  });
+  expect(touched.held).toBe(true);
+  expect(touched.cssH).toBeGreaterThanOrEqual(48);
+  await page.waitForFunction(() => window.__anton.getState().brake > 0.3);
+  await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(
+      new PointerEvent("pointerup", { bubbles: true, pointerId: 8, pointerType: "touch", button: 0 }),
+    );
+    window.dispatchEvent(new Event("blur"));
+  });
+  const blurred = await page.evaluate(() => window.__anton.getState());
+  expect(blurred.phase).toBe("pause");
+  expect(blurred.brake).toBe(0);
+  expect(blurred.held).toBe(false);
+  expect(blurred.pauseReason).toBe("blur");
+  await context.close();
+});
+
+async function captureEarlyStop(page, file) {
+  await page.goto(gameURL());
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive" && window.__anton.getState().v > 4);
+  const opening = await page.evaluate(() => window.__anton.getState());
+  expect(opening.countdown).toBe(0);
+  const pedal = await pedalPoint(page);
+  let down = false;
+  const started = Date.now();
+  let caught = null;
+  while (Date.now() - started < 20000) {
+    const state = await page.evaluate(() => window.__anton.getState());
+    if (
+      state.phase === "drive" &&
+      state.v < 0.4 &&
+      state.collisions === 0 &&
+      state.hazard?.type === "pedestrian" &&
+      state.hazard.cross > 0.45 &&
+      state.hazard.cross < 2.2 &&
+      state.stopGap
+    ) {
+      caught = state;
+      await page.screenshot({ path: file });
+      break;
+    }
+    const want =
+      state.phase === "drive" &&
+      state.hazard?.type === "pedestrian" &&
+      state.hazard.dist < 40 &&
+      state.hazard.cross < 3.2 &&
+      state.v > 2.2;
+    if (want && !down) {
+      await page.mouse.move(pedal.x, pedal.y);
+      await page.mouse.down();
+      down = true;
+    } else if (!want && down) {
+      await page.mouse.up();
+      down = false;
+    }
+    await page.waitForTimeout(40);
+  }
+  if (down) await page.mouse.up();
+  expect(caught, "normal-speed stop was not reached").toBeTruthy();
+  expect(caught.stopGap.world).toBeGreaterThan(2);
+  expect(caught.stopGap.screen).toBeGreaterThan(48);
+  expect(caught.collisions).toBe(0);
+  const box = await page.locator("canvas").boundingBox();
+  expect(box.width / box.height).toBeCloseTo(16 / 9, 1);
+}
+
+test("normal speed: early brake leaves a visible gap on desktop and on 844×390", async ({ page }) => {
+  test.setTimeout(90000);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await captureEarlyStop(page, shot("after-pedestrian-gap"));
+  await page.setViewportSize({ width: 844, height: 390 });
+  await captureEarlyStop(page, shot("after-pedestrian-gap-844"));
+});
 
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {
   const errors = watchErrors(page);
