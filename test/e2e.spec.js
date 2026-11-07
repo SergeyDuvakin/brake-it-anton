@@ -1223,6 +1223,107 @@ test("one tap and the brake are different fingers", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("pointermove from the captured pedal onto Anton does not wake", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton);
+  await page.evaluate(() => {
+    window.__anton.debugStart("lesson1");
+    window.__anton.setTimeScale(6);
+  });
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.evaluate(() => window.__anton.setTimeScale(0));
+  const pedal = await pedalPoint(page);
+  const anton = await page.evaluate(() => {
+    const spot = window.__anton.hotspots().find((item) => item.id === "anton");
+    const rect = document.querySelector("canvas").getBoundingClientRect();
+    return {
+      x: rect.left + (spot.x + spot.w / 2) * (rect.width / 1600),
+      y: rect.top + (spot.y + spot.h / 2) * (rect.height / 900),
+    };
+  });
+  await page.mouse.move(pedal.x, pedal.y);
+  await page.mouse.down();
+  await page.waitForFunction(() => window.__anton.getState().held);
+  await page.evaluate(({ x, y }) => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(new PointerEvent("pointermove", {
+      pointerId: 1, clientX: x, clientY: y, bubbles: true,
+    }));
+  }, anton);
+  const moved = await page.evaluate(() => window.__anton.getState());
+  expect(moved.held).toBe(true);
+  expect(moved.pokes).toBe(0);
+  expect(moved.wakePointer).toBe(null);
+  expect(moved.attention).toBe("road");
+  await page.mouse.up();
+  expect(errors).toEqual([]);
+});
+
+test("anchored lesson-1 approach and the other families at near and far range", async ({ page }) => {
+  await page.goto(gameURL("debug=1"));
+  await page.waitForFunction(() => window.__anton);
+  const png = await page.evaluate(async () => {
+    const { render } = await import("./js/draw.js");
+    const { createSim } = await import("./js/sim.js");
+    const { freshSave } = await import("./js/storage.js");
+    const { getMission, LESSONS } = await import("./js/missions.js");
+    await document.fonts.ready;
+    const save = freshSave();
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 900;
+    const ctx = canvas.getContext("2d");
+    const sheet = document.createElement("canvas");
+    sheet.width = 1010 * 2;
+    sheet.height = 852 * 2;
+    const out = sheet.getContext("2d");
+    function frame(sim, col, row) {
+      const session = {
+        sim,
+        phase: "drive",
+        mission: sim.missionId ? getMission("lesson1") : { id: "anchors", objective: "Якоря", lesson: 1, length: 400, infinite: false },
+        countdown: 0,
+        keysDown: new Set(),
+        brakeHeld: false,
+        result: null,
+      };
+      render(ctx, {
+        screen: "play", session, save, now: 1000, hint: false, debug: false, notice: null,
+        preview: null, missions: LESSONS, selected: "lesson1", pose: null, alpha: 1,
+      });
+      out.drawImage(canvas, 24, 24, 1010, 852, col * 1010, row * 852, 1010, 852);
+    }
+    const lesson = createSim(getMission("lesson1"), 11);
+    lesson.s = 30;
+    lesson.v = 12;
+    frame(lesson, 0, 0);
+    lesson.s = 44;
+    frame(lesson, 1, 0);
+    const crowd = {
+      id: "anchors", seed: 3, cruise: 12, length: 400, cargo: null, slippery: [], lesson: 1,
+      objective: "Якоря", infinite: false,
+      hazards: [
+        { id: "ped", type: "pedestrian", s: 18, x: 1.1, halfW: 0.42, halfL: 0.55 },
+        { id: "dog", type: "dog", s: 28, x: -1.3, halfW: 0.55, halfL: 0.8 },
+        { id: "bin", type: "bin", s: 16, x: -1.8, halfW: 0.55, halfL: 0.7 },
+        { id: "lid", type: "roller", s: 22, x: 1.7, halfW: 0.55, halfL: 0.55 },
+        { id: "park", type: "stopped", s: 40, x: 0.2, halfW: 0.95, halfL: 2.2, trust: true },
+        { id: "cut", type: "cutin", s: 34, x: -0.8, halfW: 0.95, halfL: 2.15 },
+        { id: "hole", type: "pothole", s: 12, x: 0.4, halfW: 0.72, halfL: 1.15, trust: true },
+      ],
+    };
+    const near = createSim(crowd, 3);
+    near.s = 10;
+    frame(near, 0, 1);
+    near.s = 0;
+    frame(near, 1, 1);
+    return sheet.toDataURL("image/png");
+  });
+  fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
+  fs.writeFileSync("/opt/cursor/artifacts/anchors-near-far.png", Buffer.from(png.split(",")[1], "base64"));
+});
+
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto(gameURL("e2e=1"));

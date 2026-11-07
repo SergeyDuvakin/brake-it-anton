@@ -41,6 +41,7 @@ jobs:
           cp icons/apple-touch-icon.png .pages-dist/icons/apple-touch-icon.png
           cp icons/icon-192.png .pages-dist/icons/icon-192.png
           cp icons/icon-512.png .pages-dist/icons/icon-512.png
+          cp js/anchors.js .pages-dist/js/anchors.js
           cp js/audio.js .pages-dist/js/audio.js
           cp js/clock.js .pages-dist/js/clock.js
           cp js/config.js .pages-dist/js/config.js

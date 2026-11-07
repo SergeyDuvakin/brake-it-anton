@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 
+import { anchorKind, farDs, groundDs, paintFarToNear } from "../js/anchors.js";
 import { CFG } from "../js/config.js";
 import { drainFrame } from "../js/clock.js";
 import { contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
@@ -1944,6 +1945,74 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   assert.equal(back.labels.some((label) => label.text.includes("Ткни") || label.text.includes("Разбуди")), false);
   shown.sim.attention = "road";
   assert.equal(render(mockCtx().ctx, playState(shown, 1)).labels.some((label) => label.text.includes("Ткни")), false);
+});
+
+test("every family shares its hitbox ground, and nearer bodies paint in front", () => {
+  const mission = {
+    id: "anchors",
+    seed: 3,
+    cruise: 12,
+    length: 400,
+    cargo: null,
+    slippery: [],
+    hazards: [
+      { id: "ped", type: "pedestrian", s: 30, x: 1.2, halfW: 0.42, halfL: 0.55 },
+      { id: "dog", type: "dog", s: 36, x: -1.1, halfW: 0.55, halfL: 0.8 },
+      { id: "bin", type: "bin", s: 44, x: 1.6, halfW: 0.55, halfL: 0.7 },
+      { id: "lid", type: "roller", s: 52, x: -1.4, halfW: 0.55, halfL: 0.55 },
+      { id: "park", type: "stopped", s: 64, x: 0.4, halfW: 0.95, halfL: 2.2 },
+      { id: "cut", type: "cutin", s: 78, x: -0.6, halfW: 0.95, halfL: 2.15 },
+      { id: "hole", type: "pothole", s: 90, x: 1.8, halfW: 0.72, halfL: 1.15 },
+    ],
+  };
+  const sim = createSim(mission, 3);
+  sim.prevS = 10;
+  sim.s = 12;
+  const at = (alpha) => placedScene(sim, alpha);
+  const end = at(1);
+  const start = at(0);
+  const mid = at(0.5);
+  for (const scene of [start, end]) {
+    for (const actor of scene.actors) {
+      const hazard = sim.hazards.find((item) => item.id === actor.id);
+      const near = groundDs(hazard, scene.pose.s);
+      const spot = project(near, actor.hx);
+      assert.equal(actor.kind, anchorKind(hazard.type));
+      assert.ok(Math.abs(actor.groundDs - near) < 1e-9);
+      assert.ok(Math.abs(actor.farDs - farDs(hazard, scene.pose.s)) < 1e-9);
+      assert.ok(Math.abs(actor.spot.x - spot.x) < 1e-6);
+      assert.ok(Math.abs(actor.spot.y - spot.y) < 1e-6);
+      const expectNear = actor.kind === "feet" ? hazard.s - scene.pose.s : hazard.s - hazard.halfL - scene.pose.s;
+      assert.ok(Math.abs(near - expectNear) < 1e-9);
+      assert.equal(Math.sign(actor.spot.x - VIEW.vanishX), Math.sign(hazard.x) || 0);
+    }
+    assert.ok(Math.abs(scene.car.y - project(CFG.carHalfFront, scene.pose.x).y) < 1e-6);
+  }
+  const pedMid = mid.actors.find((actor) => actor.id === "ped");
+  const ped0 = start.actors.find((actor) => actor.id === "ped");
+  const ped1 = end.actors.find((actor) => actor.id === "ped");
+  assert.ok(Math.abs(pedMid.groundDs - (ped0.groundDs + ped1.groundDs) / 2) < 1e-6);
+
+  const order = paintFarToNear([
+    { id: "ped", ds: 8 },
+    { id: "car", ds: -CFG.carHalfBack },
+    { id: "close", ds: -3 },
+  ]).map((item) => item.id);
+  assert.deepEqual(order, ["ped", "car", "close"]);
+
+  sim.s = 20;
+  const ped = sim.hazards.find((item) => item.id === "ped");
+  const gap = bumperFootGap(sim, ped);
+  assert.ok(gap.world > 0);
+  const ahead = placedScene(sim, 1);
+  assert.ok(ahead.actors.find((actor) => actor.id === "ped").spot.y < ahead.car.y);
+
+  const session = createSession(mission, { seed: 3 });
+  session.phase = "drive";
+  session.sim.s = 12;
+  const fingerprint = simFingerprint(session.sim);
+  render(mockCtx().ctx, playState(session, 0.4));
+  assert.equal(simFingerprint(session.sim), fingerprint);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

@@ -6,6 +6,7 @@
 import { CFG, PALETTE as P } from "./config.js";
 import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
 import { VIEW, project } from "./road.js";
+import { anchorKind, farDs, groundDs, paintFarToNear } from "./anchors.js";
 import { gaitOffset } from "./gait.js";
 import { actorTravel, hazardWorldX, renderPose } from "./sim.js";
 
@@ -19,6 +20,11 @@ export const CAR_BODY_W = 80;
 export const CAR_BODY_H = 112;
 /** Unscaled y of the pedestrian's feet before they are parked on the ground point. */
 export const PED_FOOT_LOCAL_Y = 48;
+/** Unscaled y of each family's road contact, before it is parked on the anchor. */
+export const DOG_PAW_LOCAL_Y = 32;
+export const BIN_BOTTOM_LOCAL_Y = 18;
+export const LID_BOTTOM_LOCAL_Y = 16;
+export const NPC_BOTTOM_LOCAL_Y = 44;
 
 /**
  * Draw origin that puts the body nose on the bumper after the same
@@ -371,7 +377,20 @@ export function placedScene(sim, alpha = 1) {
     const dist = h.s - pose.s;
     const hx = pose.hazardX.has(h.id) ? pose.hazardX.get(h.id) : hazardWorldX(h, sim);
     const travel = pose.hazardTravel?.has(h.id) ? pose.hazardTravel.get(h.id) : actorTravel(h, sim);
-    actors.push({ id: h.id, dist, hx, travel, spot: project(dist, hx) });
+    const kind = anchorKind(h.type);
+    const near = groundDs(h, pose.s);
+    const far = farDs(h, pose.s);
+    actors.push({
+      id: h.id,
+      dist,
+      hx,
+      travel,
+      kind,
+      groundDs: near,
+      farDs: far,
+      spot: project(near, hx),
+      farSpot: project(far, hx),
+    });
   }
   return { pose, car, actors };
 }
@@ -448,6 +467,19 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false) {
     ctx.stroke();
   }
 
+  for (const skid of sim.skids || []) {
+    const spot = project(skid.s - cam, skid.x);
+    if (spot.y < 40 || spot.y > 880) continue;
+    ctx.strokeStyle = "rgba(28,22,30,0.45)";
+    ctx.lineWidth = 5 * spot.scale;
+    ctx.beginPath();
+    ctx.moveTo(spot.x - 14 * spot.scale, spot.y);
+    ctx.lineTo(spot.x - 10 * spot.scale, spot.y + 26 * spot.scale);
+    ctx.moveTo(spot.x + 14 * spot.scale, spot.y);
+    ctx.lineTo(spot.x + 10 * spot.scale, spot.y + 26 * spot.scale);
+    ctx.stroke();
+  }
+
   const props = [];
   for (let s = Math.floor((cam - 8) / 14) * 14; s < cam + VIEW.look; s += 14) {
     const n = Math.round(s / 14);
@@ -460,25 +492,14 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false) {
     const dist = placed.dist;
     if (h.resolved && dist < -10) continue;
     if (dist < VIEW.near || dist > VIEW.look) continue;
-    props.push({ ds: dist, xm: placed.hx, kind: "hazard", h, placed });
+    props.push({ ds: placed.groundDs, xm: placed.hx, kind: "hazard", h, placed });
   }
-  props.sort((a, b) => b.ds - a.ds);
-  for (const item of props) {
+  props.push({ ds: -CFG.carHalfBack, kind: "car" });
+  const ordered = paintFarToNear(props);
+  for (const item of ordered) {
     if (item.kind === "prop") drawProp(ctx, item, boil);
+    else if (item.kind === "car") drawCar(ctx, sim, boil, scene.pose);
     else drawHazard(ctx, sim, item.h, boil, item.placed, reduced);
-  }
-
-  for (const skid of sim.skids || []) {
-    const spot = project(skid.s - cam, skid.x);
-    if (spot.y < 40 || spot.y > 880) continue;
-    ctx.strokeStyle = "rgba(28,22,30,0.45)";
-    ctx.lineWidth = 5 * spot.scale;
-    ctx.beginPath();
-    ctx.moveTo(spot.x - 14 * spot.scale, spot.y);
-    ctx.lineTo(spot.x - 10 * spot.scale, spot.y + 26 * spot.scale);
-    ctx.moveTo(spot.x + 14 * spot.scale, spot.y);
-    ctx.lineTo(spot.x + 10 * spot.scale, spot.y + 26 * spot.scale);
-    ctx.stroke();
   }
 
   if (motion && sim.v > 11) {
@@ -495,7 +516,6 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false) {
       ctx.stroke();
     }
   }
-  drawCar(ctx, sim, boil, scene.pose);
   ctx.restore();
   roundRect(ctx, box.x, box.y, box.w, box.h, 8);
   ink(ctx, 8);
@@ -704,7 +724,7 @@ function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
   shadowAt(ctx, spot.x, spot.y, sc, h.type === "cutin" || h.type === "stopped" ? 34 : 22);
   if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, step, true);
   else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, step);
-  else if (h.type === "pothole") drawHole(ctx, spot.x, spot.y, sc);
+  else if (h.type === "pothole") drawHole(ctx, placed || { spot, farSpot: spot, hx, groundDs: dist, farDs: dist }, h);
   else if (h.type === "bin") drawBin(ctx, spot.x, spot.y + hop, sc, dist, h.hopped);
   else if (h.type === "roller") drawRoller(ctx, spot.x, spot.y, sc, h);
   else drawNpc(ctx, spot.x, spot.y, sc, h, dist, boil);
@@ -781,6 +801,7 @@ function drawDog(ctx, x, y, sc, step = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
+  ctx.translate(0, -DOG_PAW_LOCAL_Y);
   ctx.fillStyle = "#8A5A3A";
   roundRect(ctx, -40, -18, 70, 36, 8);
   ctx.fill();
@@ -811,12 +832,18 @@ function drawDog(ctx, x, y, sc, step = 0) {
   ctx.restore();
 }
 
-function drawHole(ctx, x, y, sc) {
+function drawHole(ctx, placed, h) {
+  const midS = (placed.groundDs + placed.farDs) / 2;
+  const halfW = h.halfW || 0.7;
+  const left = project(midS, placed.hx - halfW);
+  const right = project(midS, placed.hx + halfW);
+  const cx = (placed.spot.x + placed.farSpot.x) / 2;
+  const cy = (placed.spot.y + placed.farSpot.y) / 2;
+  const rx = Math.max(8, Math.abs(right.x - left.x) / 2);
+  const ry = Math.max(6, Math.abs(placed.spot.y - placed.farSpot.y) / 2);
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sc, sc);
   ctx.beginPath();
-  ctx.ellipse(0, 6, 34, 18, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
   ctx.fillStyle = "#241C16";
   ctx.fill();
   ink(ctx, 4);
@@ -824,10 +851,10 @@ function drawHole(ctx, x, y, sc) {
   ctx.strokeStyle = P.YEL;
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(-24, -6);
-  ctx.lineTo(-36, -18);
-  ctx.moveTo(18, -4);
-  ctx.lineTo(32, -16);
+  ctx.moveTo(cx - rx * 0.4, cy);
+  ctx.lineTo(cx - rx * 0.7, cy - ry * 0.6);
+  ctx.moveTo(cx + rx * 0.3, cy);
+  ctx.lineTo(cx + rx * 0.65, cy - ry * 0.55);
   ctx.stroke();
   ctx.restore();
 }
@@ -836,6 +863,7 @@ function drawBin(ctx, x, y, sc, dist, hopped) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
+  ctx.translate(0, -BIN_BOTTOM_LOCAL_Y);
   ctx.rotate(hopped ? 1.15 : dist < 14 ? 0.7 : 0.18);
   roundRect(ctx, -20, -36, 40, 54, 5);
   ctx.fillStyle = "#5E7A52";
@@ -851,6 +879,7 @@ function drawRoller(ctx, x, y, sc, h) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
+  ctx.translate(0, -LID_BOTTOM_LOCAL_Y);
   ctx.rotate((h.crossT > 0 ? h.crossT : 0) * 7);
   ctx.beginPath();
   ctx.ellipse(0, 0, 28, 16, 0, 0, Math.PI * 2);
@@ -871,6 +900,7 @@ function drawNpc(ctx, x, y, sc, h, dist, boil) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
+  ctx.translate(0, -NPC_BOTTOM_LOCAL_Y);
   if (h.type === "cutin" && h.crossT >= 0 && h.crossT < (h.crossDur || 2)) ctx.rotate(-0.4);
   roundRect(ctx, -30, -48, 60, 92, 10);
   ctx.fillStyle = color;
