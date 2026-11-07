@@ -408,6 +408,8 @@ window.__anton = {
       pose: session ? expressionId(session.sim) : expressionId(preview),
       attention: session?.sim.attention ?? null,
       pokes: session?.sim.stats.attentionPokes ?? 0,
+      brakePointer: session?.pointerId ?? null,
+      wakePointer: session?.wakeId ?? null,
     };
   },
   hotspots() {

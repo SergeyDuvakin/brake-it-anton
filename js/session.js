@@ -88,12 +88,17 @@ export function onBlur(session) {
  */
 export function pointerDown(session, id, pointerId) {
   if (!session || session.phase !== "drive") return "ignore";
+  if (pointerId === null || pointerId === undefined) return "ignore";
+  // One finger cannot own both targets. A second down from that finger,
+  // or a drag from one control onto the other, does not move ownership.
   if (id === "pedal" && (session.pointerId === null || session.pointerId === undefined)) {
+    if (session.wakeId === pointerId) return "ignore";
     session.pointerId = pointerId;
     session.brakeHeld = true;
     return "brake";
   }
   if (id === "anton" && (session.wakeId === null || session.wakeId === undefined)) {
+    if (session.pointerId === pointerId) return "ignore";
     session.wakeId = pointerId;
     session.tapQueued = true;
     return "wake";

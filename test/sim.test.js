@@ -1718,6 +1718,234 @@ test("one tap wakes Anton, the brake does not, and a late hole stays his", () =>
   assert.equal(session.sim.stats.attentionPokes, 0);
 });
 
+test("attention fingers, cues and both lessons stay fair at every frame rate", () => {
+  const lesson1 = getMission("lesson1");
+  const lesson2 = getMission("lesson2");
+  assert.equal(lesson1.phoneAt, 92);
+  assert.equal(lesson1.hazards.find((h) => h.id === "hole").s, 176);
+  assert.equal(lesson1.length, 470);
+  assert.equal(lesson2.sleepDrowsyAt, 390);
+  assert.equal(lesson2.sleepAt, 430);
+  assert.equal(lesson2.hazards.find((h) => h.id === "nap").s, 520);
+  assert.equal(lesson2.length, 640);
+  for (const lesson of [lesson1, lesson2]) {
+    let prev = 0;
+    for (const hazard of lesson.hazards) {
+      if (prev) assert.ok(hazard.s - prev >= 78, `${lesson.id} ${hazard.id}`);
+      prev = hazard.s;
+    }
+    assert.ok(lesson.hazards.at(-1).s < lesson.length - 70);
+  }
+
+  const session = createSession(lesson1, { seed: 11 });
+  session.phase = "drive";
+  session.countdownAcc = 3;
+  assert.equal(pointerDown(session, "pedal", 1), "brake");
+  assert.equal(pointerDown(session, "anton", 1), "ignore");
+  assert.equal(session.wakeId, null);
+  assert.equal(session.tapQueued, false);
+  assert.equal(pointerDown(session, "anton", 2), "wake");
+  assert.equal(pointerDown(session, "anton", 3), "ignore");
+  assert.equal(pointerDown(session, "pedal", 4), "ignore");
+  assert.equal(session.pointerId, 1);
+  assert.equal(session.wakeId, 2);
+  assert.equal(session.tapQueued, true);
+  releasePointer(session, 2);
+  assert.equal(session.brakeHeld, true);
+  assert.equal(session.pointerId, 1);
+  assert.equal(session.wakeId, null);
+  releasePointer(session, 1);
+  assert.equal(session.brakeHeld, false);
+
+  assert.equal(pointerDown(session, "anton", 5), "wake");
+  assert.equal(pointerDown(session, "pedal", 5), "ignore");
+  assert.equal(pointerDown(session, "pedal", 6), "brake");
+  releasePointer(session, 6);
+  assert.equal(session.wakeId, 5);
+  assert.equal(session.brakeHeld, false);
+  assert.equal(session.tapQueued, true);
+  session.tapQueued = false;
+  pointerDown(session, "pedal", 7);
+  releasePointer(session, 5);
+  assert.equal(session.brakeHeld, true);
+  assert.equal(session.wakeId, null);
+
+  session.sim.attention = "phone";
+  session.sim.phonePlayed = true;
+  keyDown(session, "KeyF", { repeat: false });
+  keyDown(session, "KeyF", { repeat: true });
+  assert.equal(session.tapQueued, true);
+  assert.equal(session.keysDown.has("Space"), false);
+  keyDown(session, "Space", { repeat: false });
+  assert.equal(session.keysDown.has("Space"), true);
+  sessionStep(session, 1 / 60);
+  assert.equal(session.sim.attention, "stow");
+  assert.equal(session.sim.stats.attentionPokes, 1);
+  assert.ok(session.sim.brakeInput > 0);
+  keyDown(session, "KeyF", { repeat: true });
+  assert.equal(session.tapQueued, false);
+  keyDown(session, "KeyF", { repeat: false });
+  sessionStep(session, 1 / 60);
+  assert.equal(session.sim.stats.attentionPokes, 1);
+
+  for (const state of ["phone", "stow", "drowsy", "asleep", "wake"]) {
+    const ride = createSession(lesson1, { seed: 11 });
+    ride.phase = "drive";
+    ride.countdownAcc = 3;
+    ride.sim.attention = state;
+    ride.sim.phonePlayed = true;
+    ride.sim.sleepPlayed = true;
+    ride.sim.stowT = 0.2;
+    ride.sim.wakeT = 0.2;
+    pointerDown(ride, "pedal", 1);
+    pointerDown(ride, "anton", 2);
+    const timer = state === "wake" ? ride.sim.wakeT : ride.sim.stowT;
+    pauseSession(ride, "pause");
+    sessionStep(ride, 1);
+    assert.equal(ride.phase, "pause", state);
+    assert.equal(ride.sim.attention, state, state);
+    assert.equal(ride.pointerId, null, state);
+    assert.equal(ride.wakeId, null, state);
+    assert.equal(ride.tapQueued, false, state);
+    assert.equal(ride.sim.brakeInput, 0, state);
+    assert.equal(state === "wake" ? ride.sim.wakeT : ride.sim.stowT, timer, state);
+    resumeSession(ride);
+    onBlur(ride);
+    assert.equal(ride.pauseReason, "blur");
+    resumeSession(ride);
+    onVisibility(ride, true);
+    assert.equal(ride.pauseReason, "hidden");
+    assert.equal(ride.sim.attention, state);
+    restartSession(ride);
+    assert.equal(ride.sim.attention, "road");
+    assert.equal(ride.sim.phonePlayed, false);
+    assert.equal(ride.pointerId, null);
+  }
+
+  function atDistance(dist) {
+    const sim = createSim({
+      id: "edge",
+      seed: 1,
+      cruise: 10,
+      length: 400,
+      cargo: null,
+      slippery: [],
+      hazards: [{ id: "hole", type: "pothole", s: 100 + dist, trust: true, x: 1.8, halfW: 0.7, halfL: 1.2 }],
+    }, 1);
+    sim.s = 100;
+    sim.v = 0;
+    sim.x = 1.8;
+    sim.attention = "asleep";
+    sim.sleepPlayed = true;
+    stepSim(sim, 1 / 60, { held: false, lockSpeed: true });
+    return sim;
+  }
+  const onEdge = atDistance(14);
+  assert.equal(onEdge.hazards[0].committed, "asleep");
+  pokeAttention(onEdge);
+  stepSim(onEdge, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(onEdge.hazards[0].committed, "asleep");
+  const justFar = atDistance(14.25);
+  pokeAttention(justFar);
+  stepSim(justFar, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(justFar.hazards[0].committed, "avoid");
+  const inside = atDistance(10);
+  pokeAttention(inside);
+  stepSim(inside, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(inside.hazards[0].committed, "asleep");
+
+  const nodding = createSim(lesson2, 22);
+  nodding.s = 400;
+  nodding.v = 8;
+  nodding.attention = "drowsy";
+  nodding.sleepPlayed = true;
+  nodding.x = 1.8;
+  const nap = nodding.hazards.find((h) => h.id === "nap");
+  nap.s = nodding.s + 30;
+  nap.x = 1.8;
+  for (let i = 0; i < 40; i += 1) stepSim(nodding, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(nap.committed, "avoid");
+  assert.ok(nodding.x < 1.2, nodding.x);
+  assert.equal(nodding.attention, "drowsy");
+
+  const dozing = createSim(lesson2, 22);
+  dozing.s = 450;
+  dozing.v = 8;
+  dozing.attention = "asleep";
+  dozing.sleepPlayed = true;
+  dozing.x = CFG.defaultX;
+  for (let i = 0; i < 90; i += 1) stepSim(dozing, 1 / 60, { held: false, lockSpeed: true });
+  assert.ok(Math.abs(dozing.x) <= 3.35);
+  assert.ok(Math.abs(dozing.x - CFG.defaultX) < 0.35, dozing.x);
+
+  const early = runSim(lesson1, policyCareful, { maxTime: 140 });
+  const earlyAgain = runSim(lesson1, policyCareful, { maxTime: 140 });
+  assert.equal(early.success, true, dump(early));
+  assert.equal(early.stats.collisions, 0, dump(early));
+  assert.equal(early.attention, "road");
+  assert.equal(early.phonePlayed, true);
+  assert.deepEqual(early.events, earlyAgain.events);
+  assert.equal(early.events.some((e) => e.kind === "asleep"), false);
+  early.done = false;
+  stepSim(early, 1 / 60, { held: false });
+  assert.equal(early.attention, "road");
+
+  const ignored = runSim(lesson1, policyCareful, { maxTime: 140, attend: false });
+  assert.ok(ignored.events.some((e) => e.hitId === "hit:hole"), dump(ignored));
+  const slept = runSim(lesson2, policyCareful, { maxTime: 180 });
+  const sleptAgain = runSim(lesson2, policyCareful, { maxTime: 180 });
+  assert.equal(slept.success, true, dump(slept));
+  assert.equal(slept.stats.collisions, 0, dump(slept));
+  assert.deepEqual(slept.events, sleptAgain.events);
+  assert.equal(slept.events.some((e) => e.id === "nap" && e.kind === "asleep"), false);
+  const napHit = runSim(lesson2, policyCareful, { maxTime: 180, attend: false });
+  assert.ok(napHit.events.some((e) => e.hitId === "hit:nap"), dump(napHit));
+
+  function batch(hz) {
+    const sim = createSim(lesson1, 11);
+    sim.s = 88;
+    sim.v = 12.5;
+    let acc = 0;
+    let steps = 0;
+    while (steps < 200) {
+      const drained = drainFrame(acc, 1 / hz, 1);
+      acc = drained.acc;
+      for (let n = 0; n < drained.steps && steps < 200; n += 1) {
+        const tap = sim.attention === "phone" && sim.stats.attentionPokes === 0;
+        stepSim(sim, 1 / 60, { held: false, lockSpeed: true, tap });
+        placedScene(sim, renderAlpha(acc, 1 / 60));
+        steps += 1;
+      }
+    }
+    const hole = sim.hazards.find((h) => h.id === "hole");
+    return [sim.attention, sim.stats.attentionPokes, sim.stats.collisions, hole.committed, sim.phonePlayed];
+  }
+  const rates = [30, 60, 90, 120].map(batch);
+  for (const row of rates) assert.deepEqual(row, rates[0]);
+
+  const shown = createSession(lesson1, { seed: 11 });
+  shown.phase = "drive";
+  shown.countdownAcc = 3;
+  shown.sim.attention = "phone";
+  shown.sim.phonePlayed = true;
+  shown.sim.stowT = 0.3;
+  const before = [shown.sim.attention, shown.sim.stowT, shown.sim.stats.attentionPokes, shown.sim.events.length];
+  const phoneFrame = render(mockCtx().ctx, playState(shown, 0.5));
+  assert.deepEqual([shown.sim.attention, shown.sim.stowT, shown.sim.stats.attentionPokes, shown.sim.events.length], before);
+  assert.ok(phoneFrame.labels.some((label) => label.text === "Ткни в него · F"));
+  assert.ok(phoneFrame.spots.some((spot) => spot.id === "anton"));
+  assert.ok(phoneFrame.spots.some((spot) => spot.id === "pedal"));
+  shown.sim.attention = "drowsy";
+  assert.ok(render(mockCtx().ctx, playState(shown, 1)).labels.some((label) => label.text === "Разбуди · F"));
+  shown.sim.attention = "asleep";
+  assert.ok(render(mockCtx().ctx, playState(shown, 1)).labels.some((label) => label.text === "Разбуди · F"));
+  shown.sim.attention = "earnest";
+  const back = render(mockCtx().ctx, playState(shown, 1));
+  assert.equal(back.labels.some((label) => label.text.includes("Ткни") || label.text.includes("Разбуди")), false);
+  shown.sim.attention = "road";
+  assert.equal(render(mockCtx().ctx, playState(shown, 1)).labels.some((label) => label.text.includes("Ткни")), false);
+});
+
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {
   const fit = letterboxRect(1280, 720);
   assert.equal(fit.left, 0);

@@ -1063,15 +1063,24 @@ test("one tap and the brake are different fingers", async ({ page }) => {
     canvas.width = 1600;
     canvas.height = 900;
     const ctx = canvas.getContext("2d");
-    const poses = ["phone", "drowsy", "asleep", "earnest"];
+    const poses = ["road", "phone", "drowsy", "asleep", "earnest"];
     const sheet = document.createElement("canvas");
-    sheet.width = 520 * 4;
-    sheet.height = 640;
+    sheet.width = 520 * poses.length;
+    const phoneH = Math.round(640 * (225 / 520));
+    sheet.height = 640 + 12 + phoneH;
     const out = sheet.getContext("2d");
+    const skin = {};
+    function skinCount(x, y) {
+      const data = ctx.getImageData(x, y, 48, 48).data;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] > 210 && data[i + 1] > 150 && data[i + 1] < 220 && data[i + 2] < 180) n += 1;
+      }
+      return n;
+    }
     poses.forEach((attention, index) => {
       const sim = createSim(mission, 11);
       sim.attention = attention;
-      sim.stowT = attention === "stow" ? 0.4 : 0;
       const session = {
         sim,
         phase: "drive",
@@ -1096,18 +1105,55 @@ test("one tap and the brake are different fingers", async ({ page }) => {
         alpha: 1,
       });
       out.drawImage(canvas, 1056, 24, 520, 640, index * 520, 0, 520, 640);
+      out.drawImage(canvas, 1056, 24, 520, 640, index * 225, 652, 225, phoneH);
+      skin[attention] = { left: skinCount(1250, 430), right: skinCount(1340, 430) };
     });
-    return sheet.toDataURL("image/png");
+    return { sheet: sheet.toDataURL("image/png"), skin };
   });
   fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
-  fs.writeFileSync("/opt/cursor/artifacts/attention-states.png", Buffer.from(sheet.split(",")[1], "base64"));
+  fs.writeFileSync("/opt/cursor/artifacts/anton-hands.png", Buffer.from(sheet.sheet.split(",")[1], "base64"));
+  expect(sheet.skin.road.left).toBeGreaterThan(80);
+  expect(sheet.skin.road.right).toBeGreaterThan(80);
+  expect(sheet.skin.earnest.left).toBeGreaterThan(80);
+  expect(sheet.skin.drowsy.left).toBeGreaterThan(40);
+  expect(sheet.skin.asleep.left).toBeLessThan(sheet.skin.road.left / 2);
 
   await page.evaluate(() => {
     window.__anton.debugStart("lesson1");
     window.__anton.setTimeScale(6);
   });
   await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.evaluate(() => window.__anton.setTimeScale(0));
   const pedal = await pedalPoint(page);
+  const antonAt = await page.evaluate(() => {
+    const spot = window.__anton.hotspots().find((item) => item.id === "anton");
+    const rect = document.querySelector("canvas").getBoundingClientRect();
+    return {
+      x: rect.left + (spot.x + spot.w / 2) * (rect.width / 1600),
+      y: rect.top + (spot.y + spot.h / 2) * (rect.height / 900),
+    };
+  });
+  await page.evaluate(({ x, y, px, py }) => {
+    const canvas = document.querySelector("canvas");
+    const down = (id, cx, cy) => canvas.dispatchEvent(new PointerEvent("pointerdown", {
+      pointerId: id, clientX: cx, clientY: cy, bubbles: true,
+    }));
+    const end = (type, id, cx, cy) => canvas.dispatchEvent(new PointerEvent(type, {
+      pointerId: id, clientX: cx, clientY: cy, bubbles: true,
+    }));
+    down(11, x, y);
+    down(12, px, py);
+    down(13, x, y);
+    end("pointerup", 12, px, py);
+    end("pointercancel", 11, x, y);
+    end("lostpointercapture", 11, x, y);
+  }, { ...antonAt, px: pedal.x, py: pedal.y });
+  const antonFirst = await page.evaluate(() => window.__anton.getState());
+  expect(antonFirst.held).toBe(false);
+  expect(antonFirst.brakePointer).toBe(null);
+  expect(antonFirst.wakePointer).toBe(null);
+  expect(antonFirst.pokes).toBe(0);
+  await page.evaluate(() => window.__anton.setTimeScale(6));
   let down = false;
   const started = Date.now();
   while (Date.now() - started < 20000) {
@@ -1148,6 +1194,19 @@ test("one tap and the brake are different fingers", async ({ page }) => {
   const after = await page.evaluate(() => window.__anton.getState());
   expect(after.held).toBe(true);
   expect(after.pokes).toBe(1);
+  expect(after.brakePointer).not.toBe(null);
+  await page.evaluate(({ x, y }) => {
+    const canvas = document.querySelector("canvas");
+    canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 8, clientX: x, clientY: y, bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 8, clientX: x, clientY: y, bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 9, clientX: x, clientY: y, bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 9, bubbles: true }));
+  }, anton);
+  const parked = await page.evaluate(() => window.__anton.getState());
+  expect(parked.held).toBe(true);
+  expect(parked.pokes).toBe(1);
+  expect(parked.wakePointer).toBe(null);
+  expect(parked.attention).not.toBe("phone");
   await page.evaluate(({ x, y }) => {
     const canvas = document.querySelector("canvas");
     canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 3, clientX: x, clientY: y, bubbles: true }));
