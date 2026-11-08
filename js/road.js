@@ -10,15 +10,22 @@
  * On a straight road the centre line is a vertical line through the
  * vanishing point. A point in the world moves down the screen and away
  * from that point as the car approaches. It does not reverse sideways.
+ *
+ * The view looks down steeply enough that, at the player's car, one
+ * metre along the road and one metre across it are about the same
+ * number of pixels. A top-down drawing then keeps its own proportions
+ * on the ground instead of being squeezed into a few dozen pixels of
+ * depth. The horizon stays high so the next fifty metres are still on
+ * the panel, and the tail of the car stays inside the panel.
  */
 
 export const VIEW = {
   panel: { x: 24, y: 24, w: 1010, h: 852 },
   vanishX: 529,
-  vanishY: 64,
-  camBack: 34,
-  camLift: 21284,
-  focal: 3600,
+  vanishY: 7,
+  camBack: 10,
+  camLift: 6557,
+  focal: 650,
   roadHalf: 3.25,
   sideHalf: 5.05,
   look: 72,

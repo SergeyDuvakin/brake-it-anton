@@ -23,7 +23,6 @@ import {
   pedestrianFootShift,
   planMetresPerPixel,
   planRowDs,
-  planSourceSpan,
   playerChassis,
   placedScene,
   render,
@@ -2110,19 +2109,20 @@ test("the player chassis matches its hitbox, and people stay taller than their p
   const metres = planMetresPerPixel(lengthM, art.artLen);
   assert.ok(Math.abs(planRowDs(centerDs, art.pivot - art.artLen / 2, art.pivot, lengthM, art.artLen) - CFG.carHalfFront) < 1e-9);
   assert.ok(Math.abs(planRowDs(centerDs, art.pivot + art.artLen / 2, art.pivot, lengthM, art.artLen) - (-CFG.carHalfBack)) < 1e-9);
-  // The door line of the approved mask is about 400 px. At this one scale it meets the hitbox.
-  // The mirror tips (462 px) stick out and are clipped by planSourceSpan.
+  // Door line of the mask is about 400 px and meets the 1.7 m body.
+  // The 462 px mask, mirrors included, is drawn in full.
   const doorHalf = (400 / 2) * metres;
   const mirrorHalf = (462 / 2) * metres;
   assert.ok(Math.abs(doorHalf - CFG.carHalfW) < 0.02, doorHalf);
   assert.ok(mirrorHalf - CFG.carHalfW > 0.08 && mirrorHalf - CFG.carHalfW < 0.16, mirrorHalf);
-  const span = planSourceSpan(CFG.carHalfW, lengthM, art.artLen, art.pivot);
-  assert.ok(span.x0 > 290 && span.x0 < 310, span.x0);
-  assert.ok(Math.abs((span.x1 - span.x0) * metres - CFG.carHalfW * 2) < 1e-9);
   const screenLen = tail.y - nose.y;
-  const screenW = (CFG.carHalfW * 2 * VIEW.focal) / nose.z;
-  assert.ok(screenLen > 50 && screenLen < 80, screenLen);
-  assert.ok(screenW > 160 && screenW < 190, screenW);
+  const artW = (462 * metres * VIEW.focal) / ((nose.z + tail.z) / 2);
+  const aspect = screenLen / artW;
+  assert.ok(screenLen > 200 && screenLen < 320, screenLen);
+  assert.ok(aspect > 1.6 && aspect < 1.9, aspect);
+  assert.ok(tail.y < VIEW.panel.y + VIEW.panel.h - 8, tail.y);
+  const gap8 = project(CFG.carHalfFront, 0).y - project(CFG.carHalfFront + 8.4, 0).y;
+  assert.ok(gap8 > 100, gap8);
   const coralM = planMetresPerPixel(4.4, PLAN_ART.coral.artLen);
   assert.ok(Math.abs(planRowDs(12, PLAN_ART.coral.pivot - PLAN_ART.coral.artLen / 2, PLAN_ART.coral.pivot, 4.4, PLAN_ART.coral.artLen) - (12 + 2.2)) < 1e-9);
   assert.ok(coralM > 0);
@@ -2134,8 +2134,10 @@ test("the player chassis matches its hitbox, and people stay taller than their p
   const dogPx = (DOG_PAW_LOCAL_Y + 16 + 14) * sc;
   const personGround = nose.y - project(CFG.carHalfFront + 1.1, 0).y;
   const dogGround = nose.y - project(CFG.carHalfFront + 1.6, 0).y;
-  assert.ok(personPx > personGround * 8, personPx);
-  assert.ok(dogPx > dogGround * 3, dogPx);
+  // A metre of road is much taller now that the camera looks down.
+  // The pictures stay upright on their feet; they are not stretched to the patch.
+  assert.ok(personPx > personGround * 2, `${personPx} vs ${personGround}`);
+  assert.ok(dogPx > dogGround, `${dogPx} vs ${dogGround}`);
   assert.equal(pedestrianFootShift(), -PED_FOOT_LOCAL_Y);
   const title = carDrawOrigin(nose.x, nose.y, 0, 0);
   assert.ok(Math.abs(title.y + CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE - nose.y) < 1e-6);

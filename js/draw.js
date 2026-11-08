@@ -64,8 +64,10 @@ export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = 
  * Approved top-down plans (heading 0). The hood is the small sprite y.
  * One metres-per-pixel, chassis length / art length, then the same
  * `project()` as the road. That is perspective, not a screen squash.
- * Texels outside the hitbox (mirror tips) are left out so a side miss
- * stays a miss. The door line of the yellow plan already meets ±0.85 m.
+ * The whole mask is drawn, mirrors included. Length matches the
+ * chassis. The drawing is a little wider for its length than the
+ * 3.4×1.7 m rectangle, so the mirrors sit about 12 cm outside each
+ * side and the doors land on the rectangle.
  */
 export const PLAN_ART = {
   yellow: { artLen: 806, pivot: 500 },
@@ -79,13 +81,6 @@ export function planMetresPerPixel(lengthM, artLen) {
 /** Sprite y grows toward the tail. Smaller y is the nose, larger ds. */
 export function planRowDs(centerDs, spriteY, pivotY, lengthM, artLen) {
   return centerDs - (spriteY - pivotY) * (lengthM / artLen);
-}
-
-/** Source-x window whose world width is the hitbox, at the plan's scale. */
-export function planSourceSpan(halfW, lengthM, artLen, pivotX = 500) {
-  const metres = planMetresPerPixel(lengthM, artLen);
-  const halfPx = halfW / metres;
-  return { x0: pivotX - halfPx, x1: pivotX + halfPx, metresPerPixel: metres };
 }
 
 const PLAN_BANDS = 48;
@@ -116,13 +111,11 @@ export function whenCarsReady() {
 
 function drawPlanSprite(ctx, img, spec) {
   if (!imageReady(img)) return false;
-  const { centerDs, xm, lengthM, widthM, artLen, pivot = 500 } = spec;
+  const { centerDs, xm, lengthM, artLen, pivot = 500 } = spec;
   const yTop = pivot - artLen / 2;
   const yBot = pivot + artLen / 2;
-  const span = planSourceSpan(widthM / 2, lengthM, artLen, pivot);
-  const sx = Math.max(0, span.x0);
-  const sw = Math.min(img.width, span.x1) - sx;
-  if (sw <= 1) return false;
+  const metres = planMetresPerPixel(lengthM, artLen);
+  const worldW = img.width * metres;
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   for (let i = 0; i < PLAN_BANDS; i++) {
@@ -133,11 +126,11 @@ function drawPlanSprite(ctx, img, spec) {
     const far = project(ds0, xm);
     const near = project(ds1, xm);
     const mid = project((ds0 + ds1) / 2, xm);
-    const destW = (widthM * VIEW.focal) / mid.z;
+    const destW = (worldW * VIEW.focal) / mid.z;
     const destX = mid.x - destW / 2;
     const destY = Math.min(far.y, near.y) - 0.35;
     const destH = Math.abs(near.y - far.y) + 0.7;
-    ctx.drawImage(img, sx, sy0, sw, Math.max(0.5, sy1 - sy0), destX, destY, destW, destH);
+    ctx.drawImage(img, 0, sy0, img.width, Math.max(0.5, sy1 - sy0), destX, destY, destW, destH);
   }
   ctx.restore();
   return true;
@@ -829,7 +822,10 @@ function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
   const spot = placed ? placed.spot : project(dist, hx);
   const travel = reduced ? 0 : placed?.travel ?? actorTravel(h, sim);
   const step = gaitOffset(travel, h.type, reduced);
-  if (spot.y < -40 || spot.y > 940) return;
+  const farY = placed?.farSpot?.y ?? spot.y;
+  const top = Math.min(spot.y, farY);
+  const bottom = Math.max(spot.y, farY);
+  if (bottom < -40 || top > 960) return;
   const sc = Math.max(0.62, Math.min(1.45, spot.scale * 1.55));
   const hop = h.hopped ? -22 * sc : 0;
   const planVehicle = (h.type === "cutin" || h.type === "stopped") && !placed?.legacy && imageReady(CORAL_STRAIGHT);
@@ -1044,12 +1040,10 @@ function drawRoller(ctx, placed, h, sc) {
 
 function drawNpc(ctx, placed, h, sc, dist, boil) {
   const lengthM = (h.halfL || 2.2) * 2;
-  const widthM = (h.halfW || 0.95) * 2;
   if (placed && !placed.legacy && drawPlanSprite(ctx, CORAL_STRAIGHT, {
     centerDs: placed.dist,
     xm: placed.hx,
     lengthM,
-    widthM,
     artLen: PLAN_ART.coral.artLen,
     pivot: PLAN_ART.coral.pivot,
   })) return;
@@ -1101,7 +1095,6 @@ function drawCar(ctx, sim, boil, pose, legacy = false) {
     centerDs,
     xm,
     lengthM,
-    widthM: CFG.carHalfW * 2,
     artLen: PLAN_ART.yellow.artLen,
     pivot: PLAN_ART.yellow.pivot,
   })) {
