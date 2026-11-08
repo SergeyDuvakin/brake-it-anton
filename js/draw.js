@@ -6,7 +6,7 @@
 import { CFG, PALETTE as P } from "./config.js";
 import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
 import { VIEW, project } from "./road.js";
-import { anchorKind, farDs, groundDs, paintFarToNear, screenFootprint } from "./anchors.js";
+import { anchorKind, farDs, groundDs, paintFarToNear } from "./anchors.js";
 import { gaitOffset } from "./gait.js";
 import { actorTravel, hazardWorldX, renderPose } from "./sim.js";
 
@@ -46,8 +46,9 @@ export function playerChassis(xm) {
 }
 
 /**
- * Draw origin that puts the title and the pre-fit sprite nose on the bumper.
- * The world car no longer uses this scale; its corners are `playerChassis`.
+ * Draw origin that puts the existing sprite's nose on the bumper.
+ * The picture stays this tall and this narrow. `playerChassis` is the
+ * hitbox on the screen, not a command to squash the car into that patch.
  */
 export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = CAR_SPRITE_SCALE) {
   const dive = (brakeInput || 0) * CAR_DIVE;
@@ -310,7 +311,7 @@ function drawPlay(ctx, state) {
 
   ctx.save();
   if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
-  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors, !!state.legacyCar);
+  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
   drawCabin(ctx, sim, state, boil, visual);
   drawPatience(ctx, sim, paused);
@@ -415,7 +416,7 @@ export function placedScene(sim, alpha = 1, legacy = false) {
   return { pose, car, actors };
 }
 
-function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = false, legacyCar = false) {
+function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = false) {
   const scene = placedScene(sim, alpha, legacy);
   const cam = scene.pose.s;
   const actorAt = new Map(scene.actors.map((actor) => [actor.id, actor]));
@@ -524,10 +525,10 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
   const ordered = paintFarToNear(props);
   for (const item of ordered) {
     if (item.kind === "prop") drawProp(ctx, item, boil);
-    else if (item.kind === "car") drawCar(ctx, sim, boil, scene.pose, legacyCar);
+    else if (item.kind === "car") drawCar(ctx, sim, boil, scene.pose);
     else drawHazard(ctx, sim, item.h, boil, item.placed, reduced);
   }
-  if (legacy) drawCar(ctx, sim, boil, scene.pose, true);
+  if (legacy) drawCar(ctx, sim, boil, scene.pose);
 
   if (motion && sim.v > 11) {
     const shift = (cam * 28) % 70;
@@ -899,30 +900,29 @@ function drawHole(ctx, placed, h, sc = 1) {
   ctx.restore();
 }
 
+function plant(ctx, placed, sc, contactY) {
+  ctx.translate(placed.spot.x, placed.spot.y);
+  ctx.scale(sc, sc);
+  ctx.translate(0, -contactY);
+}
+
 function drawBin(ctx, placed, h, sc, dist) {
   ctx.save();
   if (placed?.legacy) {
     ctx.translate(placed.spot.x, placed.spot.y);
     ctx.scale(sc, sc);
     ctx.rotate(h.hopped ? 1.15 : dist < 14 ? 0.7 : 0.18);
-    roundRect(ctx, -20, -36, 40, 54, 5);
-    ctx.fillStyle = "#5E7A52";
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-    ctx.fillStyle = P.INK;
-    ctx.fillRect(-24, -40, 48, 8);
   } else {
-    fitGround(ctx, placed, h.halfW || 0.55, 48, 58);
+    plant(ctx, placed, sc, BIN_BOTTOM_LOCAL_Y);
     if (h.hopped) ctx.rotate(1.15);
-    roundRect(ctx, -20, -54, 40, 54, 5);
-    ctx.fillStyle = "#5E7A52";
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-    ctx.fillStyle = P.INK;
-    ctx.fillRect(-24, -58, 48, 8);
   }
+  roundRect(ctx, -20, -36, 40, 54, 5);
+  ctx.fillStyle = "#5E7A52";
+  ctx.fill();
+  ink(ctx, 4);
+  ctx.stroke();
+  ctx.fillStyle = P.INK;
+  ctx.fillRect(-24, -40, 48, 8);
   ctx.restore();
 }
 
@@ -943,25 +943,19 @@ function drawRoller(ctx, placed, h, sc) {
     ctx.lineTo(0, -22);
     ctx.stroke();
   } else {
-    fitGround(ctx, placed, h.halfW || 0.55, 56, 32);
+    plant(ctx, placed, sc, LID_BOTTOM_LOCAL_Y);
     ctx.beginPath();
-    ctx.ellipse(0, -16, 28, 16, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, 28, 16, 0, 0, Math.PI * 2);
     ctx.fillStyle = "#6E8A62";
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(0, -20);
-    ctx.lineTo(0, -30);
+    ctx.moveTo(0, -8);
+    ctx.lineTo(0, -22);
     ctx.stroke();
   }
   ctx.restore();
-}
-
-function fitGround(ctx, placed, halfW, localW, localH) {
-  const foot = screenFootprint(placed.groundDs, placed.farDs, placed.hx, halfW);
-  ctx.translate(foot.cx, foot.bottomY);
-  ctx.scale(foot.width / localW, foot.length / localH);
 }
 
 function drawNpc(ctx, placed, h, sc, dist, boil) {
@@ -973,11 +967,11 @@ function drawNpc(ctx, placed, h, sc, dist, boil) {
     ctx.scale(sc, sc);
     if (h.type === "cutin" && h.crossT >= 0 && h.crossT < (h.crossDur || 2)) ctx.rotate(-0.4);
   } else {
-    fitGround(ctx, placed, h.halfW || 0.95, 60, 92);
+    plant(ctx, placed, sc, NPC_BOTTOM_LOCAL_Y);
   }
-  const bodyY = placed?.legacy ? -48 : -92;
-  const wheelY = placed?.legacy ? 24 : -18;
-  const glassY = placed?.legacy ? -36 : -78;
+  const bodyY = -48;
+  const wheelY = 24;
+  const glassY = -36;
   roundRect(ctx, -30, bodyY, 60, 92, 10);
   ctx.fillStyle = color;
   ctx.fill();
@@ -999,64 +993,11 @@ function drawNpc(ctx, placed, h, sc, dist, boil) {
   ctx.restore();
 }
 
-function drawCar(ctx, sim, boil, pose, legacyCar = false) {
+function drawCar(ctx, sim, boil, pose) {
   const xm = pose ? pose.x : sim.x;
-  if (legacyCar) {
-    const bumper = project(CFG.carHalfFront, xm);
-    const origin = carDrawOrigin(bumper.x, bumper.y, sim.brakeInput, sim.crashT);
-    drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil, pose ? pose.s : sim.s);
-    return;
-  }
-  drawFittedCar(ctx, sim, boil, pose);
-}
-
-function drawFittedCar(ctx, sim, boil, pose) {
-  const xm = pose ? pose.x : sim.x;
-  const box = playerChassis(xm);
-  const dive = (sim.brakeInput || 0) * CAR_DIVE;
-  const squash = 1 - Math.min(0.16, sim.crashT || 0);
-  const span = CFG.carHalfFront + CFG.carHalfBack;
-  const dsAt = (u) => CFG.carHalfFront - span * u;
-  const xAt = (v) => xm + v * CFG.carHalfW;
-  ctx.save();
-  ctx.translate(box.nose.x, box.nose.y);
-  ctx.rotate(dive);
-  ctx.scale(1, squash);
-  ctx.translate(-box.nose.x, -box.nose.y);
-  fillQuad(ctx, dsAt(0), dsAt(1), xAt(-1), xAt(1), sim.body < 45 ? "#CDB56A" : P.YEL);
-  ink(ctx, 5);
-  ctx.stroke();
-  fillQuad(ctx, dsAt(0.16), dsAt(0.4), xAt(-0.62), xAt(0.62), P.GLASS);
-  ink(ctx, 3);
-  ctx.stroke();
-  fillQuad(ctx, dsAt(0.46), dsAt(0.66), xAt(-0.34), xAt(0.34), P.RED);
-  ink(ctx, 3);
-  ctx.stroke();
-  const plateL = project(dsAt(0.46), xAt(-0.34));
-  const plateR = project(dsAt(0.46), xAt(0.34));
-  const plateB = project(dsAt(0.66), xm);
-  paintCenter(ctx, "У", plateL.x, plateL.y, plateR.x - plateL.x, plateB.y - plateL.y, 16, P.PAPER, true, false);
-  const lamps = (sim.brakeInput || 0) > 0.15 || sim.lastSelfBrake > 0.1;
-  fillQuad(ctx, dsAt(0.86), dsAt(0.96), xAt(-0.55), xAt(-0.33), lamps ? P.RED : P.ORANGE);
-  fillQuad(ctx, dsAt(0.86), dsAt(0.96), xAt(0.33), xAt(0.55), lamps ? P.RED : P.ORANGE);
-  const spin = (pose ? pose.s : sim.s) * 2.6;
-  for (const [u, v] of [[0.22, -0.78], [0.22, 0.78], [0.78, -0.78], [0.78, 0.78]]) {
-    const hub = project(dsAt(u), xAt(v));
-    const rim = project(dsAt(u), xAt(v + 0.18));
-    const radius = Math.max(5, Math.abs(rim.x - hub.x));
-    ctx.beginPath();
-    ctx.arc(hub.x, hub.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = P.INK;
-    ctx.fill();
-    ctx.strokeStyle = P.PAPER;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(hub.x + Math.cos(spin) * radius * 0.65, hub.y + Math.sin(spin) * radius * 0.65);
-    ctx.lineTo(hub.x - Math.cos(spin) * radius * 0.65, hub.y - Math.sin(spin) * radius * 0.65);
-    ctx.stroke();
-  }
-  if (sim.cargoType) drawCargoIcon(ctx, box.nose.x, box.nose.y - 36, sim.cargoType, 1, sim);
-  ctx.restore();
+  const bumper = project(CFG.carHalfFront, xm);
+  const origin = carDrawOrigin(bumper.x, bumper.y, sim.brakeInput, sim.crashT);
+  drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil, pose ? pose.s : sim.s);
 }
 
 function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0, travelS = null) {

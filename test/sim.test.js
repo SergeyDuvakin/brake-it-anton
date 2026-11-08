@@ -2091,6 +2091,17 @@ test("the player chassis matches its hitbox, and people stay taller than their p
   assert.ok(Math.abs(mid.pose.x - (at0.pose.x + at1.pose.x) / 2) < 1e-9);
 
   const nose = project(CFG.carHalfFront, 0);
+  const paintedPx = CAR_BODY_H * CAR_SPRITE_SCALE;
+  const zTail = VIEW.camLift / (nose.y + paintedPx - VIEW.vanishY);
+  const paintedM = CFG.carHalfFront - (zTail - VIEW.camBack);
+  const chassisM = CFG.carHalfFront + CFG.carHalfBack;
+  const paintedW = CAR_BODY_W * CAR_SPRITE_SCALE;
+  const hitW = (CFG.carHalfW * 2 * VIEW.focal) / nose.z;
+  assert.ok(paintedM > chassisM + 3, paintedM);
+  assert.ok(hitW > paintedW + 40, hitW);
+  const origin = carDrawOrigin(nose.x, nose.y, 0, 0);
+  assert.ok(Math.abs(origin.y + CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE - nose.y) < 1e-6);
+  assert.ok(DOG_PAW_LOCAL_Y > 18);
   const sc = Math.max(0.62, Math.min(1.45, nose.scale * 1.55));
   const personPx = (PED_FOOT_LOCAL_Y + 62 + 26) * sc;
   const dogPx = (DOG_PAW_LOCAL_Y + 16 + 14) * sc;
