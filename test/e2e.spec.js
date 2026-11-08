@@ -1483,6 +1483,7 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
         far: rgb(box.cx, box.topY + 3),
         beyond: rgb(box.cx, box.topY - 12),
         closer: rgb(box.cx, box.bottomY + 12),
+        center: rgb(box.cx, (box.topY + box.bottomY) / 2),
       };
     }
     const { actorTravel } = await import("./js/sim.js");
@@ -1632,12 +1633,20 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
     };
   });
   for (const patch of drawn.patches) {
+    if (patch.id === "hole") {
+      // The approved hole is a shallow oval. It keeps that shape, so the
+      // long collider is not filled edge to edge. The pit itself is the
+      // dark centre of the patch. A road crack can sit just past the far
+      // face, so that pixel is not the check.
+      const [r, g, b] = patch.center.split(",").map(Number);
+      expect(patch.center, patch.id).not.toBe(drawn.road);
+      expect(r, patch.id).toBeLessThan(140);
+      expect(g, patch.id).toBeLessThan(120);
+      expect(b, patch.id).toBeLessThan(80);
+      continue;
+    }
     expect(patch.near, patch.id).not.toBe(drawn.road);
     expect(patch.closer, patch.id).not.toBe(patch.near);
-    if (patch.id === "hole") {
-      expect(patch.far, patch.id).not.toBe(drawn.road);
-      expect(patch.beyond, patch.id).toBe(drawn.road);
-    }
   }
   const dark = (value) => {
     const [r, g, b] = value.split(",").map(Number);

@@ -2120,7 +2120,7 @@ test("the player chassis matches its hitbox, and people stay taller than their p
   const screenLen = tail.y - nose.y;
   const artW = (462 * metres * VIEW.focal) / ((nose.z + tail.z) / 2);
   const aspect = screenLen / artW;
-  assert.ok(screenLen > 200 && screenLen < 320, screenLen);
+  assert.ok(screenLen > 110 && screenLen < 220, screenLen);
   assert.ok(aspect > 1.6 && aspect < 1.9, aspect);
   assert.ok(tail.y < VIEW.panel.y + VIEW.panel.h - 8, tail.y);
   const gap8 = project(CFG.carHalfFront, 0).y - project(CFG.carHalfFront + 8.4, 0).y;

@@ -11,12 +11,11 @@
  * vanishing point. A point in the world moves down the screen and away
  * from that point as the car approaches. It does not reverse sideways.
  *
- * The view looks down steeply enough that, at the player's car, one
- * metre along the road and one metre across it are about the same
- * number of pixels. A top-down drawing then keeps its own proportions
- * on the ground instead of being squeezed into a few dozen pixels of
- * depth. The horizon stays high so the next fifty metres are still on
- * the panel, and the tail of the car stays inside the panel.
+ * The camera sits far enough back that a car in the side lane does not
+ * shear into a wide silhouette. At the car, one metre along the road
+ * and one metre across it are about the same number of pixels, so the
+ * top-down drawing keeps its proportions. The tail stays inside the
+ * panel, and the next forty metres of road stay on it.
  */
 
 import { CFG } from "./config.js";
@@ -24,10 +23,10 @@ import { CFG } from "./config.js";
 export const VIEW = {
   panel: { x: 24, y: 24, w: 1010, h: 852 },
   vanishX: 529,
-  vanishY: 7,
-  camBack: 10,
-  camLift: 6557,
-  focal: 650,
+  vanishY: -348,
+  camBack: 27.65,
+  camLift: 30725,
+  focal: 1100,
   roadHalf: CFG.roadHalf,
   sideHalf: 5.05,
   look: 72,
