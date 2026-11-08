@@ -17,9 +17,13 @@ import {
   CAR_SPRITE_SCALE,
   DOG_PAW_LOCAL_Y,
   PED_FOOT_LOCAL_Y,
+  PLAN_ART,
   bumperFootGap,
   carDrawOrigin,
   pedestrianFootShift,
+  planMetresPerPixel,
+  planRowDs,
+  planSourceSpan,
   playerChassis,
   placedScene,
   render,
@@ -928,6 +932,14 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
   }
   for (const font of ["BalsamiqSans-Bold.ttf", "BalsamiqSans-Regular.ttf", "RubikMonoOne-Regular.ttf"]) {
     assert.ok(yml.includes(`assets/fonts/${font}`), font);
+  }
+  for (const car of [
+    "yellow-car-game-straight.png",
+    "yellow-car-brake.png",
+    "yellow-car-collision.png",
+    "coral-wagon-straight.png",
+  ]) {
+    assert.ok(yml.includes(`assets/cars/${car}`), car);
   }
   for (const icon of [
     "manifest.webmanifest",
@@ -2091,14 +2103,29 @@ test("the player chassis matches its hitbox, and people stay taller than their p
   assert.ok(Math.abs(mid.pose.x - (at0.pose.x + at1.pose.x) / 2) < 1e-9);
 
   const nose = project(CFG.carHalfFront, 0);
-  const paintedPx = CAR_BODY_H * CAR_SPRITE_SCALE;
-  const zTail = VIEW.camLift / (nose.y + paintedPx - VIEW.vanishY);
-  const paintedM = CFG.carHalfFront - (zTail - VIEW.camBack);
-  const chassisM = CFG.carHalfFront + CFG.carHalfBack;
-  const paintedW = CAR_BODY_W * CAR_SPRITE_SCALE;
-  const hitW = (CFG.carHalfW * 2 * VIEW.focal) / nose.z;
-  assert.ok(paintedM > chassisM + 3, paintedM);
-  assert.ok(hitW > paintedW + 40, hitW);
+  const tail = project(-CFG.carHalfBack, 0);
+  const lengthM = CFG.carHalfFront + CFG.carHalfBack;
+  const centerDs = (CFG.carHalfFront - CFG.carHalfBack) / 2;
+  const art = PLAN_ART.yellow;
+  const metres = planMetresPerPixel(lengthM, art.artLen);
+  assert.ok(Math.abs(planRowDs(centerDs, art.pivot - art.artLen / 2, art.pivot, lengthM, art.artLen) - CFG.carHalfFront) < 1e-9);
+  assert.ok(Math.abs(planRowDs(centerDs, art.pivot + art.artLen / 2, art.pivot, lengthM, art.artLen) - (-CFG.carHalfBack)) < 1e-9);
+  // The door line of the approved mask is about 400 px. At this one scale it meets the hitbox.
+  // The mirror tips (462 px) stick out and are clipped by planSourceSpan.
+  const doorHalf = (400 / 2) * metres;
+  const mirrorHalf = (462 / 2) * metres;
+  assert.ok(Math.abs(doorHalf - CFG.carHalfW) < 0.02, doorHalf);
+  assert.ok(mirrorHalf - CFG.carHalfW > 0.08 && mirrorHalf - CFG.carHalfW < 0.16, mirrorHalf);
+  const span = planSourceSpan(CFG.carHalfW, lengthM, art.artLen, art.pivot);
+  assert.ok(span.x0 > 290 && span.x0 < 310, span.x0);
+  assert.ok(Math.abs((span.x1 - span.x0) * metres - CFG.carHalfW * 2) < 1e-9);
+  const screenLen = tail.y - nose.y;
+  const screenW = (CFG.carHalfW * 2 * VIEW.focal) / nose.z;
+  assert.ok(screenLen > 50 && screenLen < 80, screenLen);
+  assert.ok(screenW > 160 && screenW < 190, screenW);
+  const coralM = planMetresPerPixel(4.4, PLAN_ART.coral.artLen);
+  assert.ok(Math.abs(planRowDs(12, PLAN_ART.coral.pivot - PLAN_ART.coral.artLen / 2, PLAN_ART.coral.pivot, 4.4, PLAN_ART.coral.artLen) - (12 + 2.2)) < 1e-9);
+  assert.ok(coralM > 0);
   const origin = carDrawOrigin(nose.x, nose.y, 0, 0);
   assert.ok(Math.abs(origin.y + CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE - nose.y) < 1e-6);
   assert.ok(DOG_PAW_LOCAL_Y > 18);

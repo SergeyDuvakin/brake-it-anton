@@ -33,7 +33,7 @@ jobs:
         run: |
           set -eu
           rm -rf .pages-dist
-          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/icons
+          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/assets/cars .pages-dist/icons
           cp index.html .pages-dist/index.html
           cp style.css .pages-dist/style.css
           cp manifest.webmanifest .pages-dist/manifest.webmanifest
@@ -61,12 +61,18 @@ jobs:
           cp assets/fonts/BalsamiqSans-Bold.ttf .pages-dist/assets/fonts/BalsamiqSans-Bold.ttf
           cp assets/fonts/BalsamiqSans-Regular.ttf .pages-dist/assets/fonts/BalsamiqSans-Regular.ttf
           cp assets/fonts/RubikMonoOne-Regular.ttf .pages-dist/assets/fonts/RubikMonoOne-Regular.ttf
+          cp assets/cars/yellow-car-game-straight.png .pages-dist/assets/cars/yellow-car-game-straight.png
+          cp assets/cars/yellow-car-brake.png .pages-dist/assets/cars/yellow-car-brake.png
+          cp assets/cars/yellow-car-collision.png .pages-dist/assets/cars/yellow-car-collision.png
+          cp assets/cars/coral-wagon-straight.png .pages-dist/assets/cars/coral-wagon-straight.png
           test -f .pages-dist/index.html
           test -f .pages-dist/style.css
           test -f .pages-dist/js/game.js
           test -f .pages-dist/js/draw.js
           test -f .pages-dist/js/road.js
           test -f .pages-dist/assets/fonts/BalsamiqSans-Bold.ttf
+          test -f .pages-dist/assets/cars/yellow-car-game-straight.png
+          test -f .pages-dist/assets/cars/coral-wagon-straight.png
           test ! -e .pages-dist/README.md
           test ! -e .pages-dist/package.json
           test ! -e .pages-dist/package-lock.json

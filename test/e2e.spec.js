@@ -1289,7 +1289,8 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
   await page.goto(gameURL("debug=1"));
   await page.waitForFunction(() => window.__anton);
   const drawn = await page.evaluate(async () => {
-    const { render, placedScene } = await import("./js/draw.js");
+    const { render, placedScene, whenCarsReady } = await import("./js/draw.js");
+    await whenCarsReady();
     const { createSim } = await import("./js/sim.js");
     const { screenFootprint } = await import("./js/anchors.js");
     const { freshSave } = await import("./js/storage.js");
@@ -1566,7 +1567,8 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
       const tailOut = project(-CFG.carHalfBack - 0.55, xm);
       const mid = (CFG.carHalfFront - CFG.carHalfBack) / 2;
       const leftOut = project(mid, xm - CFG.carHalfW - 0.4);
-      const leftIn = project(mid, xm - CFG.carHalfW + 0.28);
+      const leftIn = project(mid, xm - CFG.carHalfW + 0.24);
+      const rightIn = project(mid, xm + CFG.carHalfW - 0.24);
       const rightOut = project(mid, xm + CFG.carHalfW + 0.4);
       alphas[alpha] = {
         same: JSON.stringify({ s: bare.s, x: bare.x, hits: bare.stats.collisions }) === beforeCar,
@@ -1576,10 +1578,11 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
         tailOut: rgb(tailOut.x, tailOut.y),
         leftIn: rgb(leftIn.x, leftIn.y),
         leftOut: rgb(leftOut.x, leftOut.y),
+        rightIn: rgb(rightIn.x, rightIn.y),
         rightOut: rgb(rightOut.x, rightOut.y),
       };
     }
-    function sideCar(x) {
+    function sideCar(x, sampleX) {
       const sim = createSim({
         id: "cross",
         seed: 11,
@@ -1592,7 +1595,8 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
       sim.s = 40;
       sim.x = 0;
       show(sim);
-      return rgb(project(0.35, x > 2 ? 1.1 : 0.62).x, project(0.35, x > 2 ? 1.1 : 0.62).y);
+      const spot = project(0.35, sampleX);
+      return rgb(spot.x, spot.y);
     }
     const road = "88,96,120";
     const zoom = document.createElement("canvas");
@@ -1616,8 +1620,10 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
       patches,
       contacts: [4, 0, -1.2].map(contact),
       alphas,
-      clearSide: sideCar(2.3),
-      hitSide: sideCar(1.35),
+      clearRight: sideCar(2.3, 1.1),
+      hitRight: sideCar(1.35, 0.62),
+      clearLeft: sideCar(-2.3, -1.1),
+      hitLeft: sideCar(-1.35, -0.62),
       road,
     };
   });
@@ -1635,7 +1641,7 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
   };
   const carPaint = (value) => {
     const [r, g, b] = value.split(",").map(Number);
-    const yellow = r > 180 && g > 140 && b < 130 && r > b;
+    const yellow = r > 175 && g > 125 && b < 110 && r > g && r - b > 80;
     const glass = b > 160 && g > 150 && r > 120;
     return yellow || glass || dark(value);
   };
@@ -1652,22 +1658,307 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
   expect(carPaint(touch.below), touch.below).toBe(true);
   expect(dark(inside.foot), inside.foot).toBe(true);
   expect(dark(inside.leg), inside.leg).toBe(true);
-  const yellowEnough = (value) => {
+  const vehicle = (value) => {
     const [r, g, b] = value.split(",").map(Number);
-    return r > 200 && g > 150 && b < 100;
+    const coral = r > 180 && g > 70 && g < 170 && b < 150 && r > g + 30;
+    return carPaint(value) || coral;
   };
   for (const alpha of ["0", "0.5", "1"]) {
     const row = drawn.alphas[alpha];
     expect(row.same, alpha).toBe(true);
     expect(carPaint(row.noseIn), `${alpha} nose ${row.noseIn}`).toBe(true);
-    expect(yellowEnough(row.noseOut), `${alpha} past nose ${row.noseOut}`).toBe(false);
-    expect(yellowEnough(row.leftOut), `${alpha} past left ${row.leftOut}`).toBe(false);
-    expect(yellowEnough(row.rightOut), `${alpha} past right ${row.rightOut}`).toBe(false);
+    expect(carPaint(row.tailIn), `${alpha} tail ${row.tailIn}`).toBe(true);
+    expect(carPaint(row.leftIn), `${alpha} left ${row.leftIn}`).toBe(true);
+    expect(carPaint(row.rightIn), `${alpha} right ${row.rightIn}`).toBe(true);
+    expect(vehicle(row.noseOut), `${alpha} past nose ${row.noseOut}`).toBe(false);
+    expect(vehicle(row.tailOut), `${alpha} past tail ${row.tailOut}`).toBe(false);
+    expect(vehicle(row.leftOut), `${alpha} past left ${row.leftOut}`).toBe(false);
+    expect(vehicle(row.rightOut), `${alpha} past right ${row.rightOut}`).toBe(false);
   }
-  expect(yellowEnough(drawn.clearSide), drawn.clearSide).toBe(false);
+  expect(vehicle(drawn.clearRight), drawn.clearRight).toBe(false);
+  expect(vehicle(drawn.clearLeft), drawn.clearLeft).toBe(false);
+  expect(vehicle(drawn.hitRight), drawn.hitRight).toBe(true);
+  expect(vehicle(drawn.hitLeft), drawn.hitLeft).toBe(true);
   fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
   fs.writeFileSync("/opt/cursor/artifacts/crossing-before-after.png", Buffer.from(drawn.sheet.split(",")[1], "base64"));
   fs.writeFileSync("/opt/cursor/artifacts/crossing-zoom.png", Buffer.from(drawn.zoom.split(",")[1], "base64"));
+});
+
+test("the plan footprint matches the chassis at both sides and several depths", async ({ page }) => {
+  await page.goto(gameURL("debug=1"));
+  await page.waitForFunction(() => window.__anton);
+  const drawn = await page.evaluate(async () => {
+    const { render, placedScene, whenCarsReady } = await import("./js/draw.js");
+    const { actorTravel, createSim } = await import("./js/sim.js");
+    const { gaitOffset } = await import("./js/gait.js");
+    const { project } = await import("./js/road.js");
+    const { CFG } = await import("./js/config.js");
+    const { freshSave } = await import("./js/storage.js");
+    const { LESSONS } = await import("./js/missions.js");
+    await whenCarsReady();
+    await document.fonts.ready;
+    const save = freshSave();
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 900;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    function rgb(x, y) {
+      const px = ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data;
+      return `${px[0]},${px[1]},${px[2]}`;
+    }
+    function show(sim, alpha = 1) {
+      render(ctx, {
+        screen: "play",
+        session: {
+          sim,
+          phase: "drive",
+          mission: { id: "fit", objective: "след", lesson: 1, length: 400, infinite: false },
+          countdown: 0,
+          keysDown: new Set(),
+          brakeHeld: false,
+          result: null,
+        },
+        save,
+        now: 1000,
+        hint: false,
+        debug: false,
+        notice: null,
+        preview: null,
+        missions: LESSONS,
+        selected: "lesson1",
+        pose: null,
+        alpha,
+        legacyAnchors: false,
+      });
+    }
+    function empty(x, prevX) {
+      const sim = createSim({
+        id: "fit", seed: 4, cruise: 12, length: 400, cargo: null, slippery: [], hazards: [],
+      }, 4);
+      sim.s = 40;
+      sim.prevS = 39.4;
+      sim.x = x;
+      sim.prevX = prevX ?? x;
+      return sim;
+    }
+    function probe(sim, noseDs, tailDs, xm, halfW, sideInset = 0.24, endInset = 0.35) {
+      const center = (noseDs + tailDs) / 2;
+      const spot = (ds, x) => {
+        const p = project(ds, x);
+        return rgb(p.x, p.y);
+      };
+      return {
+        noseIn: spot(noseDs - endInset, xm),
+        noseOut: spot(noseDs + 0.45, xm),
+        tailIn: spot(tailDs + endInset, xm),
+        tailOut: spot(tailDs - 0.45, xm),
+        leftIn: spot(center, xm - halfW + sideInset),
+        leftOut: spot(center, xm - halfW - 0.32),
+        rightIn: spot(center, xm + halfW - sideInset),
+        rightOut: spot(center, xm + halfW + 0.32),
+      };
+    }
+    function strokeBox(noseDs, tailDs, xm, halfW) {
+      const corners = [
+        project(noseDs, xm - halfW),
+        project(noseDs, xm + halfW),
+        project(tailDs, xm + halfW),
+        project(tailDs, xm - halfW),
+      ];
+      ctx.save();
+      ctx.strokeStyle = "#ff2bd6";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      corners.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }
+    const players = [];
+    for (const x of [-1.2, 0.35, 1.45]) {
+      const sim = empty(x);
+      show(sim);
+      players.push({ x, ...probe(sim, CFG.carHalfFront, -CFG.carHalfBack, x, CFG.carHalfW) });
+    }
+    const moving = empty(1.1, -1.4);
+    const alphas = {};
+    for (const alpha of [0, 0.5, 1]) {
+      show(moving, alpha);
+      const xm = moving.prevX + (moving.x - moving.prevX) * alpha;
+      alphas[alpha] = probe(moving, CFG.carHalfFront, -CFG.carHalfBack, xm, CFG.carHalfW);
+    }
+    const brake = empty(0.2);
+    brake.brakeInput = 1;
+    show(brake);
+    const braking = probe(brake, CFG.carHalfFront, -CFG.carHalfBack, brake.x, CFG.carHalfW);
+    const crash = empty(-0.4);
+    crash.crashT = 0.4;
+    show(crash);
+    const crashing = probe(crash, CFG.carHalfFront, -CFG.carHalfBack, crash.x, CFG.carHalfW);
+    const depths = [];
+    for (const dist of [7, 16, 30]) {
+      for (const [playerX, hx] of [[-2.5, 1.15], [2.5, -1.15]]) {
+        const sim = empty(playerX);
+        sim.hazards.push({
+          id: "park", type: "stopped", s: sim.s + dist, x: hx, halfW: 0.95, halfL: 2.2, telegraph: -1, trust: false,
+        });
+        show(sim);
+        depths.push({
+          dist,
+          hx,
+          ...probe(sim, dist + 2.2, dist - 2.2, hx, 0.95, 0.26, 0.28),
+        });
+      }
+    }
+    function side(otherX, sampleX) {
+      const sim = empty(0);
+      sim.hazards.push({
+        id: "park", type: "stopped", s: sim.s, x: otherX, halfW: 0.95, halfL: 2.2, telegraph: -1, trust: false,
+      });
+      show(sim);
+      const p = project(0.2, sampleX);
+      return rgb(p.x, p.y);
+    }
+    function actorSim(type, lead, x, halfW, halfL) {
+      const sim = empty(0.3);
+      const h = { id: "one", type, s: 0, x, halfW, halfL, telegraph: -1, trust: false };
+      sim.hazards.push(h);
+      h.s = sim.s + CFG.carHalfFront + halfL + lead;
+      show(sim);
+      return { sim, h, actor: placedScene(sim, 1).actors[0] };
+    }
+    const dogMeet = actorSim("dog", -2.05, 0, 0.55, 0.8);
+    const dogSc = Math.max(0.62, Math.min(1.45, dogMeet.actor.spot.scale * 1.55));
+    const dogStep = gaitOffset(dogMeet.actor.travel ?? actorTravel(dogMeet.h, dogMeet.sim), "dog", false);
+    const hood = project(-0.2, dogMeet.sim.x - 0.45);
+    const dog = {
+      paw: rgb(dogMeet.actor.spot.x + (-4 - dogStep) * dogSc, dogMeet.actor.spot.y - 8),
+      belly: rgb(dogMeet.actor.spot.x, dogMeet.actor.spot.y - 30 * dogSc),
+      below: rgb(hood.x, hood.y),
+      pawY: dogMeet.actor.spot.y,
+      bellyY: dogMeet.actor.spot.y - 30 * dogSc,
+    };
+    const dogClear = actorSim("dog", 0, 2.4, 0.55, 0.8);
+    const gap = project(CFG.carHalfFront, 1.35);
+    const dogGap = rgb(gap.x, gap.y);
+    const ped = actorSim("pedestrian", 0, 0.3, 0.42, 0.55);
+    const pedSc = Math.max(0.62, Math.min(1.45, ped.actor.spot.scale * 1.55));
+    const feet = rgb(ped.actor.spot.x, ped.actor.spot.y - 1);
+    const sheet = document.createElement("canvas");
+    sheet.width = 1680;
+    sheet.height = 980;
+    const out = sheet.getContext("2d");
+    out.fillStyle = "#F4EFE4";
+    out.fillRect(0, 0, sheet.width, sheet.height);
+    out.fillStyle = "#1C161E";
+    out.font = "20px sans-serif";
+    const tiles = [
+      [-1.2, "игрок x=−1.2"],
+      [0.35, "игрок x=0.35"],
+      [1.45, "игрок x=1.45"],
+    ];
+    tiles.forEach(([x, label], i) => {
+      const sim = empty(x);
+      show(sim);
+      strokeBox(CFG.carHalfFront, -CFG.carHalfBack, x, CFG.carHalfW);
+      out.drawImage(canvas, 300, 560, 520, 280, 16 + i * 552, 36, 520, 280);
+      out.fillStyle = "#1C161E";
+      out.fillText(label, 16 + i * 552, 26);
+    });
+    [[7, 1.15, -2.5, "коралл 7 м"], [16, -1.15, 2.5, "коралл 16 м"], [30, 1.15, -2.5, "коралл 30 м"]].forEach(([dist, hx, playerX, label], i) => {
+      const sim = empty(playerX);
+      sim.hazards.push({
+        id: "park", type: "stopped", s: sim.s + dist, x: hx, halfW: 0.95, halfL: 2.2, telegraph: -1, trust: false,
+      });
+      show(sim);
+      strokeBox(dist + 2.2, dist - 2.2, hx, 0.95);
+      const spot = project(dist, hx);
+      out.drawImage(canvas, spot.x - 180, spot.y - 80, 360, 180, 16 + i * 552, 360, 520, 260);
+      out.fillStyle = "#1C161E";
+      out.fillText(label, 16 + i * 552, 350);
+    });
+    const contacts = [
+      [2.4, 1.15, "мимо справа"],
+      [1.32, 0.7, "задел справа"],
+      [-1.32, -0.7, "задел слева"],
+      [-2.4, -1.15, "мимо слева"],
+    ];
+    contacts.forEach(([otherX, sampleX, label], i) => {
+      const sim = empty(0);
+      sim.hazards.push({
+        id: "park", type: "stopped", s: sim.s, x: otherX, halfW: 0.95, halfL: 2.2, telegraph: -1, trust: false,
+      });
+      show(sim);
+      strokeBox(CFG.carHalfFront, -CFG.carHalfBack, 0, CFG.carHalfW);
+      strokeBox(2.2, -2.2, otherX, 0.95);
+      const spot = project(0.2, sampleX);
+      ctx.strokeStyle = "#1C161E";
+      ctx.strokeRect(spot.x - 4, spot.y - 4, 8, 8);
+      out.drawImage(canvas, 220, 560, 680, 280, 16 + i * 414, 680, 400, 250);
+      out.fillStyle = "#1C161E";
+      out.fillText(label, 16 + i * 414, 668);
+    });
+    show(dogMeet.sim);
+    strokeBox(CFG.carHalfFront, -CFG.carHalfBack, dogMeet.sim.x, CFG.carHalfW);
+    const dogSheet = document.createElement("canvas");
+    dogSheet.width = 720;
+    dogSheet.height = 360;
+    dogSheet.getContext("2d").drawImage(canvas, 280, 500, 560, 280, 0, 0, 720, 360);
+    return {
+      players,
+      alphas,
+      braking,
+      crashing,
+      depths,
+      hitRight: side(1.32, 0.7),
+      missRight: side(2.4, 1.15),
+      hitLeft: side(-1.32, -0.7),
+      missLeft: side(-2.4, -1.15),
+      dog,
+      dogGap,
+      feet,
+      sheet: sheet.toDataURL("image/png"),
+      dogSheet: dogSheet.toDataURL("image/png"),
+    };
+  });
+  const vehicle = (value) => {
+    const [r, g, b] = value.split(",").map(Number);
+    const yellow = r > 175 && g > 125 && b < 110 && r > g && r - b > 80;
+    const coral = r > 160 && g > 40 && g < 190 && b < 150 && r > g + 40 && r > b;
+    const ink = r < 60 && g < 60 && b < 60;
+    const glass = b > 150 && g > 140 && r > 100 && r < 210;
+    return yellow || coral || ink || glass;
+  };
+  const brown = (value) => {
+    const [r, g, b] = value.split(",").map(Number);
+    return r > 90 && r < 190 && g > 50 && g < 140 && b < 100 && r > b;
+  };
+  function edges(row, label) {
+    for (const key of ["noseIn", "tailIn", "leftIn", "rightIn"]) {
+      expect(vehicle(row[key]), `${label} ${key} ${row[key]}`).toBe(true);
+    }
+    for (const key of ["noseOut", "tailOut", "leftOut", "rightOut"]) {
+      expect(vehicle(row[key]), `${label} ${key} ${row[key]}`).toBe(false);
+    }
+  }
+  for (const row of drawn.players) edges(row, `player ${row.x}`);
+  for (const alpha of ["0", "0.5", "1"]) edges(drawn.alphas[alpha], `alpha ${alpha}`);
+  edges(drawn.braking, "brake");
+  edges(drawn.crashing, "crash");
+  for (const row of drawn.depths) edges(row, `coral ${row.dist} x ${row.hx}`);
+  expect(vehicle(drawn.hitRight), drawn.hitRight).toBe(true);
+  expect(vehicle(drawn.hitLeft), drawn.hitLeft).toBe(true);
+  expect(vehicle(drawn.missRight), drawn.missRight).toBe(false);
+  expect(vehicle(drawn.missLeft), drawn.missLeft).toBe(false);
+  expect(brown(drawn.dog.paw), drawn.dog.paw).toBe(true);
+  expect(brown(drawn.dog.belly), drawn.dog.belly).toBe(true);
+  expect(drawn.dog.bellyY).toBeLessThan(drawn.dog.pawY - 12);
+  expect(vehicle(drawn.dog.below), `dog on bumper ${drawn.dog.below}`).toBe(true);
+  expect(vehicle(drawn.dogGap), drawn.dogGap).toBe(false);
+  expect(brown(drawn.feet) || drawn.feet.split(",")[0] < 80, drawn.feet).toBe(true);
+  fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
+  fs.writeFileSync("/opt/cursor/artifacts/footprint-bounds.png", Buffer.from(drawn.sheet.split(",")[1], "base64"));
+  fs.writeFileSync("/opt/cursor/artifacts/footprint-dog.png", Buffer.from(drawn.dogSheet.split(",")[1], "base64"));
 });
 
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {
