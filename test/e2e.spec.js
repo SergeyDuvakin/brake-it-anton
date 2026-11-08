@@ -1626,9 +1626,9 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
       contacts: [4, 0, -1.2].map(contact),
       alphas,
       clearRight: sideCar(2.3, 1.1),
-      hitRight: sideCar(1.35, 0.62),
+      hitRight: sideCar(1.35, 0.8),
       clearLeft: sideCar(-2.3, -1.1),
-      hitLeft: sideCar(-1.35, -0.62),
+      hitLeft: sideCar(-1.35, -0.8),
       road,
     };
   });
@@ -1821,7 +1821,9 @@ test("the plan footprint matches the chassis at both sides and several depths", 
         depths.push({
           dist,
           hx,
-          ...probe(sim, dist + 2.2, dist - 2.2, hx, 0.95, dist > 24 ? 0.5 : 0.26, dist > 24 ? 0.55 : 0.28),
+          // On the body of the drawing. A far car keeps the file's aspect, so it
+          // is narrower than the foreshortened lane and a kerb-side sample misses it.
+          ...probe(sim, dist + 2.2, dist - 2.2, hx, 0.95, 0.78, dist > 24 ? 0.7 : 0.28),
         });
       }
     }
@@ -1973,6 +1975,87 @@ test("the plan footprint matches the chassis at both sides and several depths", 
   fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
   fs.writeFileSync("/opt/cursor/artifacts/footprint-bounds.png", Buffer.from(drawn.sheet.split(",")[1], "base64"));
   fs.writeFileSync("/opt/cursor/artifacts/footprint-dog.png", Buffer.from(drawn.dogSheet.split(",")[1], "base64"));
+});
+
+test("the approved plan keeps one shape at both curbs, braking, and far cars", async ({ page }) => {
+  await page.goto(gameURL("debug=1"));
+  await page.waitForFunction(() => window.__anton);
+  const measured = await page.evaluate(async () => {
+    const { drawPlanSprite, planBlitBox, PLAN_ART, whenCarsReady } = await import("./js/draw.js");
+    const { CFG } = await import("./js/config.js");
+    await whenCarsReady();
+    function load(file) {
+      const img = new Image();
+      img.src = `./assets/cars/${file}`;
+      return img.decode().then(() => img);
+    }
+    const yellow = await load("yellow-car-game-straight.png");
+    const brake = await load("yellow-car-brake.png");
+    const crash = await load("yellow-car-collision.png");
+    const coral = await load("coral-wagon-straight.png");
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 900;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    function mask(img, art, lengthM, centerDs, xm) {
+      ctx.clearRect(0, 0, 1600, 900);
+      drawPlanSprite(ctx, img, { centerDs, xm, lengthM, artLen: art.artLen, pivot: art.pivot });
+      const box = planBlitBox(centerDs, xm, lengthM, art.artLen, img.width, art.pivot);
+      const x0 = Math.max(0, Math.floor(box.x));
+      const y0 = Math.max(0, Math.floor(box.y));
+      const x1 = Math.min(1599, Math.ceil(box.x + box.w));
+      const y1 = Math.min(899, Math.ceil(box.y + box.h));
+      const data = ctx.getImageData(x0, y0, x1 - x0 + 1, y1 - y0 + 1).data;
+      let minX = 1e9;
+      let minY = 1e9;
+      let maxX = -1;
+      let maxY = -1;
+      const w = x1 - x0 + 1;
+      for (let y = 0; y < y1 - y0 + 1; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          if (data[(y * w + x) * 4 + 3] < 16) continue;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+      const bw = maxX - minX + 1;
+      const bh = maxY - minY + 1;
+      return { bw, bh, aspect: bh / bw, boxAspect: box.h / (box.w * (bw / img.width)) };
+    }
+    const lengthM = CFG.carHalfFront + CFG.carHalfBack;
+    const centerDs = (CFG.carHalfFront - CFG.carHalfBack) / 2;
+    const players = [-2.4, 0, 2.4].map((xm) => ({ xm, ...mask(yellow, PLAN_ART.yellow, lengthM, centerDs, xm) }));
+    return {
+      players,
+      brake: mask(brake, PLAN_ART.yellow, lengthM, centerDs, 2.4),
+      crash: mask(crash, PLAN_ART.yellow, lengthM, centerDs, -2.4),
+      coralNear: mask(coral, PLAN_ART.coral, 4.4, 8, 1.6),
+      coralFar: mask(coral, PLAN_ART.coral, 4.4, 30, -1.6),
+      backing: {
+        width: document.querySelector("canvas").width,
+        height: document.querySelector("canvas").height,
+        dpr: window.devicePixelRatio,
+      },
+    };
+  });
+  const aspects = measured.players.map((row) => row.aspect);
+  for (const row of measured.players) {
+    expect(Math.abs(row.aspect - 807 / 462), `x ${row.xm} ${row.bw}x${row.bh}`).toBeLessThan(0.055);
+  }
+  expect(Math.max(...aspects) - Math.min(...aspects)).toBeLessThan(0.04);
+  expect(measured.brake.aspect).toBeGreaterThan(1.72);
+  expect(measured.brake.aspect).toBeLessThan(1.80);
+  expect(measured.crash.aspect).toBeGreaterThan(1.72);
+  expect(measured.crash.aspect).toBeLessThan(1.80);
+  expect(Math.abs(measured.coralNear.aspect - 857 / 444), JSON.stringify(measured.coralNear)).toBeLessThan(0.08);
+  // A car thirty metres ahead is about twenty pixels wide. The smooth edge
+  // adds a pixel or two; the rectangle itself is the file's aspect.
+  const farPx = Math.abs(measured.coralFar.bw - measured.coralFar.bh / (857 / 444));
+  expect(farPx, JSON.stringify(measured.coralFar)).toBeLessThan(2.5);
+  expect(measured.backing.width).toBe(1600);
+  expect(measured.backing.height).toBe(900);
 });
 
 test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", async ({ page }) => {

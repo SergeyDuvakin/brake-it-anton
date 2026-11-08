@@ -73,12 +73,13 @@ export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = 
 
 /**
  * Approved top-down plans (heading 0). The hood is the small sprite y.
- * One metres-per-pixel, chassis length / art length, then the same
- * `project()` as the road. That is perspective, not a screen squash.
- * The whole mask is drawn, mirrors included. Length matches the
- * chassis. The drawing is a little wider for its length than the
- * 3.4×1.7 m rectangle, so the mirrors sit about 12 cm outside each
- * side and the doors land on the rectangle.
+ * Chassis length / art length, then one screen rectangle from the nose
+ * to the tail of the same `project()` as the road. Width follows the
+ * file, so a side lane does not shear or squash the drawing. The whole
+ * mask is drawn, mirrors included. Length matches the chassis. The
+ * drawing is a little wider for its length than the 3.4×1.7 m
+ * rectangle, so the mirrors sit about 12 cm outside each side and the
+ * doors land on the rectangle.
  */
 export const PLAN_ART = {
   yellow: { artLen: 806, pivot: 500 },
@@ -93,8 +94,6 @@ export function planMetresPerPixel(lengthM, artLen) {
 export function planRowDs(centerDs, spriteY, pivotY, lengthM, artLen) {
   return centerDs - (spriteY - pivotY) * (lengthM / artLen);
 }
-
-const PLAN_BANDS = 48;
 
 function loadCarImage(file) {
   const ImageCtor = globalThis.Image;
@@ -120,29 +119,39 @@ export function whenCarsReady() {
   return Promise.all(imgs.map((img) => (img.decode ? img.decode() : Promise.resolve()))).then(() => true);
 }
 
-function drawPlanSprite(ctx, img, spec) {
+/**
+ * One rectangle for the whole plan. The nose and the tail stay on the
+ * projected ground of those distances, and both axes use that one height.
+ * Slicing the file by depth made the tail wider than the hood and shoved
+ * a side-lane car into a trapezoid, so the drawing no longer matched itself.
+ * The bitmap is not prewarped. Mirrors stay in the frame.
+ */
+export function planBlitBox(centerDs, xm, lengthM, artLen, imageWidth, pivot = 500) {
+  const yTop = pivot - artLen / 2;
+  const nose = project(planRowDs(centerDs, yTop, pivot, lengthM, artLen), xm);
+  const tail = project(planRowDs(centerDs, yTop + artLen, pivot, lengthM, artLen), xm);
+  const mid = project(centerDs, xm);
+  const h = Math.abs(tail.y - nose.y);
+  const w = h * (imageWidth / artLen);
+  return {
+    x: mid.x - w / 2,
+    y: Math.min(nose.y, tail.y),
+    w,
+    h,
+    sy: yTop,
+    noseY: nose.y,
+    tailY: tail.y,
+  };
+}
+
+export function drawPlanSprite(ctx, img, spec) {
   if (!imageReady(img)) return false;
   const { centerDs, xm, lengthM, artLen, pivot = 500 } = spec;
-  const yTop = pivot - artLen / 2;
-  const yBot = pivot + artLen / 2;
-  const metres = planMetresPerPixel(lengthM, artLen);
-  const worldW = img.width * metres;
+  const box = planBlitBox(centerDs, xm, lengthM, artLen, img.width, pivot);
   ctx.save();
   ctx.imageSmoothingEnabled = true;
-  for (let i = 0; i < PLAN_BANDS; i++) {
-    const sy0 = yTop + ((yBot - yTop) * i) / PLAN_BANDS;
-    const sy1 = yTop + ((yBot - yTop) * (i + 1)) / PLAN_BANDS;
-    const ds0 = planRowDs(centerDs, sy0, pivot, lengthM, artLen);
-    const ds1 = planRowDs(centerDs, sy1, pivot, lengthM, artLen);
-    const far = project(ds0, xm);
-    const near = project(ds1, xm);
-    const mid = project((ds0 + ds1) / 2, xm);
-    const destW = (worldW * VIEW.focal) / mid.z;
-    const destX = mid.x - destW / 2;
-    const destY = Math.min(far.y, near.y) - 0.35;
-    const destH = Math.abs(near.y - far.y) + 0.7;
-    ctx.drawImage(img, 0, sy0, img.width, Math.max(0.5, sy1 - sy0), destX, destY, destW, destH);
-  }
+  if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, box.sy, img.width, artLen, box.x, box.y, box.w, box.h);
   ctx.restore();
   return true;
 }

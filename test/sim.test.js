@@ -21,6 +21,7 @@ import {
   bumperFootGap,
   carDrawOrigin,
   pedestrianFootShift,
+  planBlitBox,
   planMetresPerPixel,
   planRowDs,
   playerChassis,
@@ -2122,6 +2123,22 @@ test("the player chassis matches its hitbox, and people stay taller than their p
   const aspect = screenLen / artW;
   assert.ok(screenLen > 110 && screenLen < 220, screenLen);
   assert.ok(aspect > 1.6 && aspect < 1.9, aspect);
+  // The blit band is 806 px of the 807×462 mask. One scale, so the
+  // height/width does not change from the left curb to the right.
+  const mask = art.artLen / 462;
+  const drawn = [];
+  for (const xm of [-2.4, 0, 2.4]) {
+    const box = planBlitBox(centerDs, xm, lengthM, art.artLen, 1000, art.pivot);
+    const full = box.h / (box.w * (462 / 1000));
+    drawn.push(full);
+    assert.ok(Math.abs(full - mask) < 1e-9, `${xm} ${full}`);
+    assert.ok(Math.abs(box.w / box.h - 1000 / art.artLen) < 1e-9);
+    assert.ok(Math.abs((box.y + box.h) - Math.max(box.noseY, box.tailY)) < 1e-6);
+  }
+  assert.ok(Math.abs(drawn[0] - drawn[1]) < 1e-12 && Math.abs(drawn[1] - drawn[2]) < 1e-12);
+  const near = planBlitBox(8, 2.4, 4.4, PLAN_ART.coral.artLen, 1000, PLAN_ART.coral.pivot);
+  const far = planBlitBox(30, -2.4, 4.4, PLAN_ART.coral.artLen, 1000, PLAN_ART.coral.pivot);
+  assert.ok(Math.abs(near.h / near.w - far.h / far.w) < 1e-12);
   assert.ok(tail.y < VIEW.panel.y + VIEW.panel.h - 8, tail.y);
   const gap8 = project(CFG.carHalfFront, 0).y - project(CFG.carHalfFront + 8.4, 0).y;
   assert.ok(gap8 > 100, gap8);

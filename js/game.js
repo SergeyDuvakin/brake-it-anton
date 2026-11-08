@@ -447,6 +447,21 @@ window.__anton = {
       poseX: pose.x,
     };
   },
+  debugPlace(pose = {}) {
+    if (!debug || !session) return;
+    const sim = session.sim;
+    if (Number.isFinite(pose.x)) {
+      sim.x = pose.x;
+      sim.prevX = pose.x;
+    }
+    if (Number.isFinite(pose.s)) {
+      sim.s = pose.s;
+      sim.prevS = pose.s;
+    }
+    if (Number.isFinite(pose.brake)) sim.brakeInput = pose.brake;
+    if (Number.isFinite(pose.crash)) sim.crashT = pose.crash;
+    sim.v = 0;
+  },
   debugStart(id) {
     if (!debug) return;
     const mission = getMission(id, id === "infinite" ? 7 : undefined);
