@@ -19,6 +19,8 @@
  * the panel, and the tail of the car stays inside the panel.
  */
 
+import { CFG } from "./config.js";
+
 export const VIEW = {
   panel: { x: 24, y: 24, w: 1010, h: 852 },
   vanishX: 529,
@@ -26,7 +28,7 @@ export const VIEW = {
   camBack: 10,
   camLift: 6557,
   focal: 650,
-  roadHalf: 3.25,
+  roadHalf: CFG.roadHalf,
   sideHalf: 5.05,
   look: 72,
   near: -7,

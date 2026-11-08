@@ -236,21 +236,29 @@ function selfBrake(sim) {
   return 0.24 * skill * urgency;
 }
 
+/**
+ * Furthest the centre may sit. The body then ends on the asphalt edge.
+ * Mirrors painted past carHalfW are not included.
+ */
+export function bodyCenterLimit() {
+  return CFG.roadHalf - CFG.carHalfW;
+}
+
 function desiredX(sim) {
   const h = nextHazard(sim);
-  if (h && h.committed === "lunge" && h.dist > -4 && h.dist < 50) return h.x;
-  if (h && h.committed === "avoid" && h.dist > -8 && h.dist < 55) {
+  let x = CFG.defaultX;
+  if (h && h.committed === "lunge" && h.dist > -4 && h.dist < 50) x = h.x;
+  else if (h && h.committed === "avoid" && h.dist > -8 && h.dist < 55) {
     const params = steerParams(sim.patience, sim.outburstT > 0);
     const sign = Math.sign(h.x || 1);
-    return clamp(-sign * CFG.defaultX - sign * params.overshoot, -CFG.roadEdge + 0.15, CFG.roadEdge - 0.15);
-  }
-  if (sim.outburstT > 0) {
-    return CFG.defaultX + Math.sin(sim.t * 2.4) * 0.35;
-  }
-  if (h && h.dist < 78) return CFG.defaultX;
-  if (sim.patience >= 70) return CFG.defaultX + Math.sin(sim.t * 1.3 + sim.seed) * 0.42;
-  if (sim.patience >= 40) return CFG.defaultX + Math.sin(sim.t * 1.15) * 0.16;
-  return CFG.defaultX;
+    x = -sign * CFG.defaultX - sign * params.overshoot;
+  } else if (sim.outburstT > 0) {
+    x = CFG.defaultX + Math.sin(sim.t * 2.4) * 0.35;
+  } else if (h && h.dist < 78) x = CFG.defaultX;
+  else if (sim.patience >= 70) x = CFG.defaultX + Math.sin(sim.t * 1.3 + sim.seed) * 0.42;
+  else if (sim.patience >= 40) x = CFG.defaultX + Math.sin(sim.t * 1.15) * 0.16;
+  const limit = bodyCenterLimit();
+  return clamp(x, -limit, limit);
 }
 
 function outOfIt(sim) {
@@ -798,7 +806,7 @@ export function stepSim(sim, dt, input = {}) {
   const want = desiredX(sim);
   sim.targetX = want;
   sim.x += clamp(want - sim.x, -rate * dt, rate * dt);
-  sim.x = clamp(sim.x, -CFG.roadEdge, CFG.roadEdge);
+  sim.x = clamp(sim.x, -bodyCenterLimit(), bodyCenterLimit());
   sim.stats.minX = Math.min(sim.stats.minX, sim.x);
   sim.stats.maxX = Math.max(sim.stats.maxX, sim.x);
 

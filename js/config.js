@@ -75,13 +75,19 @@ export const CFG = {
   carHalfFront: 2.05,
   carHalfBack: 1.35,
   /**
+   * Painted asphalt, metres from the centre line. The car is kept on it
+   * by its body, not by its centre: the centre may sit at most
+   * roadHalf − carHalfW from the middle. The drawn mirrors stick out
+   * past that body (about 0.12 m) and are not part of the curb or the hit.
+   */
+  roadHalf: 3.25,
+  /**
    * Metres kept between the bumper and a yielding body.
    * The sprite nose is drawn on the bumper and the pedestrian's feet on
    * the ground point, so this standoff is the gap the player sees.
    */
   yieldStandoff: 8.4,
   defaultX: 1.8,
-  roadEdge: 3.35,
 
   weightsCargo: { body: 0.4, comfort: 0.35, mood: 0.25 },
   weightsPlain: { body: 0.5, comfort: 0.2, mood: 0.3 },

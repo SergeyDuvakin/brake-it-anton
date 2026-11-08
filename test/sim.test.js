@@ -40,7 +40,7 @@ import {
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset } from "../js/gait.js";
-import { actorTravel, contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { actorTravel, bodyCenterLimit, contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -2141,6 +2141,118 @@ test("the player chassis matches its hitbox, and people stay taller than their p
   assert.equal(pedestrianFootShift(), -PED_FOOT_LOCAL_Y);
   const title = carDrawOrigin(nose.x, nose.y, 0, 0);
   assert.ok(Math.abs(title.y + CAR_NOSE_LOCAL_Y * CAR_SPRITE_SCALE - nose.y) < 1e-6);
+});
+
+test("the body stops on the curb, and scenery past it is not a hit", () => {
+  const limit = bodyCenterLimit();
+  assert.equal(VIEW.roadHalf, CFG.roadHalf);
+  assert.ok(Math.abs(limit - (CFG.roadHalf - CFG.carHalfW)) < 1e-12);
+  assert.ok(Math.abs(limit + CFG.carHalfW - CFG.roadHalf) < 1e-12);
+  const mirrorHalf = (462 / 2) * (CFG.carHalfFront + CFG.carHalfBack) / PLAN_ART.yellow.artLen;
+  assert.ok(mirrorHalf > CFG.carHalfW);
+  assert.ok(mirrorHalf - CFG.carHalfW < 0.16);
+
+  const mission = (hazards) => ({
+    id: "edge",
+    seed: 5,
+    cruise: 12,
+    length: 200,
+    cargo: null,
+    slippery: [],
+    hazards,
+  });
+  function planted(x, hazards = []) {
+    const sim = createSim(mission(hazards), 5);
+    sim.x = x;
+    sim.prevX = x;
+    sim.v = 8;
+    sim.s = 20;
+    return sim;
+  }
+
+  for (const x of [6, -6, 3.35, -3.2]) {
+    for (const held of [false, true]) {
+      for (const step of [1 / 60, 1 / 30, 0.2]) {
+        const sim = planted(x);
+        stepSim(sim, step, { held, lockSpeed: true });
+        assert.ok(Math.abs(sim.x) <= limit + 1e-9, `${x} ${step} -> ${sim.x}`);
+        assert.ok(Math.abs(sim.x) + CFG.carHalfW <= CFG.roadHalf + 1e-9);
+      }
+    }
+  }
+
+  const back = planted(5);
+  stepSim(back, 1 / 60, { held: true, lockSpeed: true });
+  assert.ok(Math.abs(Math.abs(back.x) - limit) < 1e-9, back.x);
+  for (let i = 0; i < 240; i++) stepSim(back, 1 / 60, { held: true, lockSpeed: true });
+  assert.ok(Math.abs(back.x - CFG.defaultX) < 0.4, back.x);
+  assert.ok(Math.abs(back.x) + CFG.carHalfW < CFG.roadHalf);
+
+  function trace(seed, x0) {
+    const sim = createSim(mission([]), seed);
+    sim.x = x0;
+    sim.v = 10;
+    const xs = [];
+    for (let i = 0; i < 30; i++) {
+      stepSim(sim, i % 3 === 0 ? 1 / 30 : 1 / 60, { held: i % 2 === 0, lockSpeed: true });
+      xs.push(Math.round(sim.x * 1e6) / 1e6);
+    }
+    return xs;
+  }
+  assert.deepEqual(trace(7, 5), trace(7, 5));
+  assert.deepEqual(trace(11, -5), trace(11, -5));
+  const fromRight = trace(7, 5);
+  const fromLeft = trace(7, -5);
+  assert.ok(fromRight[0] > 0 && fromRight.every((x) => Math.abs(x) <= limit + 1e-6));
+  assert.ok(fromLeft[0] < 0 && fromLeft.every((x) => Math.abs(x) <= limit + 1e-6));
+
+  const sidewalk = planted(limit, [{ id: "walker", type: "pedestrian", s: 48, x: 1.2, halfW: 0.42, halfL: 0.55 }]);
+  sidewalk.v = 0;
+  for (let i = 0; i < 20; i++) stepSim(sidewalk, 1 / 60, { held: true, lockSpeed: true });
+  assert.equal(sidewalk.stats.collisions, 0);
+  assert.ok(hazardWorldX(sidewalk.hazards[0], sidewalk) > CFG.roadHalf);
+
+  const struck = planted(limit, [{ id: "hole", type: "pothole", s: 22, x: 3.55, halfW: 0.5, halfL: 0.8 }]);
+  struck.v = 8;
+  for (let i = 0; i < 8 && struck.stats.collisions === 0; i++) stepSim(struck, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(struck.stats.collisions, 1);
+  const other = planted(-limit, [{ id: "hole", type: "pothole", s: 22, x: -3.55, halfW: 0.5, halfL: 0.8 }]);
+  other.v = 8;
+  for (let i = 0; i < 8 && other.stats.collisions === 0; i++) stepSim(other, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(other.stats.collisions, 1);
+
+  const skim = planted(limit, [{ id: "hole", type: "pothole", s: 22, x: 4.1, halfW: 0.5, halfL: 0.8 }]);
+  skim.v = 8;
+  for (let i = 0; i < 40; i++) stepSim(skim, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(skim.stats.collisions, 0);
+
+  const moving = planted(limit, [{ id: "hole", type: "pothole", s: 21.2, x: 4.4, halfW: 0.5, halfL: 0.9 }]);
+  moving.v = 0;
+  stepSim(moving, 1 / 60, { held: true, lockSpeed: true });
+  assert.equal(moving.stats.collisions, 0);
+  moving.hazards[0].x = 3.5;
+  stepSim(moving, 1 / 60, { held: true, lockSpeed: true });
+  assert.equal(moving.stats.collisions, 1);
+
+  const decor = planted(limit, [{
+    id: "bush", type: "pothole", s: 21.2, x: 3.5, halfW: 0.5, halfL: 0.9, category: "decor",
+  }]);
+  decor.v = 6;
+  for (let i = 0; i < 20; i++) stepSim(decor, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(decor.stats.collisions, 0);
+  assert.equal(isSolidHazard(decor.hazards[0]), false);
+  assert.equal(isSolidHazard({ type: "bin", solid: false }), false);
+  assert.equal(isSolidHazard({ type: "bin", kind: "prop" }), false);
+  assert.equal(isSolidHazard({ type: "bin" }), true);
+
+  const stop = planted(limit, [{ id: "hole", type: "pothole", s: 40, x: limit, halfW: 0.5, halfL: 0.8 }]);
+  stop.v = 10;
+  stop.s = 20;
+  for (let i = 0; i < 400 && stop.v > 0.05 && stop.stats.collisions === 0; i++) stepSim(stop, 1 / 60, { held: true });
+  assert.equal(stop.stats.collisions, 0, stop.stats.collisions);
+  const hole = stop.hazards[0];
+  const gap = hole.s - hole.halfL - (stop.s + CFG.carHalfFront);
+  assert.ok(gap > 0.5, gap);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {
