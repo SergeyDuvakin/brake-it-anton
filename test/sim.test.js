@@ -940,6 +940,8 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
   ]) {
     assert.ok(yml.includes(`assets/cars/${car}`), car);
   }
+  assert.ok(yml.includes("assets/world/"));
+  assert.ok(yml.includes("47_bin-hop.png"));
   for (const icon of [
     "manifest.webmanifest",
     "icons/favicon-32.png",

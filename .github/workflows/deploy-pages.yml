@@ -33,7 +33,7 @@ jobs:
         run: |
           set -eu
           rm -rf .pages-dist
-          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/assets/cars .pages-dist/icons
+          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/assets/cars .pages-dist/assets/world .pages-dist/icons
           cp index.html .pages-dist/index.html
           cp style.css .pages-dist/style.css
           cp manifest.webmanifest .pages-dist/manifest.webmanifest
@@ -43,6 +43,7 @@ jobs:
           cp icons/icon-512.png .pages-dist/icons/icon-512.png
           cp js/anchors.js .pages-dist/js/anchors.js
           cp js/audio.js .pages-dist/js/audio.js
+          cp js/cast.js .pages-dist/js/cast.js
           cp js/clock.js .pages-dist/js/clock.js
           cp js/config.js .pages-dist/js/config.js
           cp js/draw.js .pages-dist/js/draw.js
@@ -65,6 +66,7 @@ jobs:
           cp assets/cars/yellow-car-brake.png .pages-dist/assets/cars/yellow-car-brake.png
           cp assets/cars/yellow-car-collision.png .pages-dist/assets/cars/yellow-car-collision.png
           cp assets/cars/coral-wagon-straight.png .pages-dist/assets/cars/coral-wagon-straight.png
+          cp assets/world/*.png .pages-dist/assets/world/
           test -f .pages-dist/index.html
           test -f .pages-dist/style.css
           test -f .pages-dist/js/game.js
@@ -73,6 +75,9 @@ jobs:
           test -f .pages-dist/assets/fonts/BalsamiqSans-Bold.ttf
           test -f .pages-dist/assets/cars/yellow-car-game-straight.png
           test -f .pages-dist/assets/cars/coral-wagon-straight.png
+          test -f .pages-dist/assets/world/18_dog-design.png
+          test -f .pages-dist/assets/world/47_bin-hop.png
+          test -f .pages-dist/assets/world/49_aquarium-calm.png
           test ! -e .pages-dist/README.md
           test ! -e .pages-dist/package.json
           test ! -e .pages-dist/package-lock.json

@@ -9,6 +9,17 @@ import { VIEW, project } from "./road.js";
 import { anchorKind, farDs, groundDs, paintFarToNear } from "./anchors.js";
 import { gaitOffset } from "./gait.js";
 import { actorTravel, hazardWorldX, renderPose } from "./sim.js";
+import {
+  drawCastBin,
+  drawCastCargo,
+  drawCastDog,
+  drawCastHole,
+  drawCastLid,
+  drawCastPed,
+  drawCastScenery,
+  sceneryKey,
+  worldImages,
+} from "./cast.js";
 
 /** World car scale. Do not shrink this to fake a gap in front of a pedestrian. */
 export const CAR_SPRITE_SCALE = 1.42;
@@ -104,7 +115,7 @@ function imageReady(img) {
 }
 
 export function whenCarsReady() {
-  const imgs = [YELLOW_STRAIGHT, YELLOW_BRAKE, YELLOW_CRASH, CORAL_STRAIGHT].filter(Boolean);
+  const imgs = [YELLOW_STRAIGHT, YELLOW_BRAKE, YELLOW_CRASH, CORAL_STRAIGHT, ...worldImages()].filter(Boolean);
   if (!imgs.length) return Promise.resolve(false);
   return Promise.all(imgs.map((img) => (img.decode ? img.decode() : Promise.resolve()))).then(() => true);
 }
@@ -673,6 +684,7 @@ function drawProp(ctx, item, boil) {
   const sc = Math.max(0.42, Math.min(1.2, spot.scale));
   const color = [P.PINK, P.BLUE, P.ORANGE, P.YEL, P.TEAL][Math.abs(item.n + item.side) % 5];
   const cycle = Math.abs(item.n * 2 + (item.side > 0 ? 1 : 4)) % 7;
+  if (drawCastScenery(ctx, sceneryKey(item), spot.x, spot.y, spot.scale)) return;
   shadowAt(ctx, spot.x, spot.y, sc, 46);
   // Houses and trees stay put. The 110 ms boil is only for people, dogs and Anton.
   if (item.band === "market") {
@@ -829,13 +841,23 @@ function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
   const sc = Math.max(0.62, Math.min(1.45, spot.scale * 1.55));
   const hop = h.hopped ? -22 * sc : 0;
   const planVehicle = (h.type === "cutin" || h.type === "stopped") && !placed?.legacy && imageReady(CORAL_STRAIGHT);
-  if (!planVehicle) shadowAt(ctx, spot.x, spot.y, sc, h.type === "cutin" || h.type === "stopped" ? 34 : 22);
-  if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, step, true);
-  else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, step, !!placed?.legacy);
-  else if (h.type === "pothole") drawHole(ctx, placed || { spot, farSpot: spot, hx, groundDs: dist, farDs: dist, legacy: false }, h, sc);
-  else if (h.type === "bin") drawBin(ctx, placed, h, sc, dist);
-  else if (h.type === "roller") drawRoller(ctx, placed, h, sc);
-  else drawNpc(ctx, placed, h, sc, dist, boil);
+  let cast = false;
+  if (!placed?.legacy) {
+    if (h.type === "pedestrian") cast = drawCastPed(ctx, spot.x, spot.y + hop, spot.scale, step, reduced, h);
+    else if (h.type === "dog") cast = drawCastDog(ctx, spot.x, spot.y, spot.scale, travel, reduced);
+    else if (h.type === "pothole") cast = drawCastHole(ctx, placed, h);
+    else if (h.type === "bin") cast = drawCastBin(ctx, spot.x, spot.y, spot.scale, !!h.hopped);
+    else if (h.type === "roller") cast = drawCastLid(ctx, spot.x, spot.y, spot.scale, h.crossT >= 0);
+  }
+  if (!cast && !planVehicle) shadowAt(ctx, spot.x, spot.y, sc, h.type === "cutin" || h.type === "stopped" ? 34 : 22);
+  if (!cast) {
+    if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, step, true);
+    else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, step, !!placed?.legacy);
+    else if (h.type === "pothole") drawHole(ctx, placed || { spot, farSpot: spot, hx, groundDs: dist, farDs: dist, legacy: false }, h, sc);
+    else if (h.type === "bin") drawBin(ctx, placed, h, sc, dist);
+    else if (h.type === "roller") drawRoller(ctx, placed, h, sc);
+    else drawNpc(ctx, placed, h, sc, dist, boil);
+  }
 
   if (!h.resolved && dist < (h.telegraph || 60) && dist > 2) {
     const markLift = h.type === "pedestrian" ? 184 : 78;
@@ -1099,12 +1121,14 @@ function drawCar(ctx, sim, boil, pose, legacy = false) {
     pivot: PLAN_ART.yellow.pivot,
   })) {
     if (sim.cargoType) {
-      const roof = project(centerDs, xm);
-      const sc = Math.min(0.4, ((CFG.carHalfW * VIEW.focal) / roof.z) / 90);
-      ctx.save();
-      ctx.translate(roof.x, roof.y);
-      drawCargoIcon(ctx, 0, 0, sim.cargoType, sc, sim);
-      ctx.restore();
+      const deck = project(centerDs - 0.7, xm);
+      if (!drawCastCargo(ctx, deck.x, deck.y, deck.scale, sim)) {
+        const sc = Math.min(0.4, ((CFG.carHalfW * VIEW.focal) / deck.z) / 90);
+        ctx.save();
+        ctx.translate(deck.x, deck.y);
+        drawCargoIcon(ctx, 0, 0, sim.cargoType, sc, sim);
+        ctx.restore();
+      }
     }
     return;
   }

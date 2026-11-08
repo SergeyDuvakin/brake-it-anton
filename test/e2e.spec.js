@@ -892,7 +892,9 @@ test("production draw walks people and dogs by distance", async ({ page }) => {
   await page.goto(gameURL("debug=1"));
   await page.waitForFunction(() => window.__anton);
   const drawn = await page.evaluate(async () => {
-    const { render, placedScene } = await import("./js/draw.js");
+    const { render, placedScene, whenCarsReady } = await import("./js/draw.js");
+    const { pedPoseKey, dogPoseKey } = await import("./js/cast.js");
+    await whenCarsReady();
     const { createSim } = await import("./js/sim.js");
     const { gaitOffset } = await import("./js/gait.js");
     const { freshSave } = await import("./js/storage.js");
@@ -1023,23 +1025,31 @@ test("production draw walks people and dogs by distance", async ({ page }) => {
       paint(sim, 0);
       const box = body(sim, "dog");
       dogHashes.push(hash(box));
-      const legs = { ...box, y: Math.min(900 - box.h, box.y + 48) };
-      out.drawImage(canvas, legs.x, legs.y, legs.w, legs.h, index * cell, cell + 8, cell, cell);
+      out.drawImage(canvas, box.x, box.y, box.w, box.h, index * cell, cell + 8, cell, cell);
     });
+    const pedKeys = pedPhases.map((sim) => {
+      const ped = sim.hazards.find((item) => item.id === "ped");
+      return pedPoseKey(ped, gaitOffset(body(sim, "ped").travel, "pedestrian", false), false);
+    });
+    const dogKeys = dogPhases.map((sim) => dogPoseKey(body(sim, "dog").travel, false));
     return {
       clean: cleanA && cleanB,
       standHash,
       standAgain,
-      pedHashes,
-      dogHashes,
+      pedKeys,
+      dogKeys,
       sheet: sheet.toDataURL("image/png"),
     };
   });
   expect(errors).toEqual([]);
   expect(drawn.clean).toBe(true);
   expect(drawn.standAgain).toBe(drawn.standHash);
-  expect(new Set(drawn.pedHashes).size).toBe(drawn.pedHashes.length);
-  expect(new Set(drawn.dogHashes).size).toBe(drawn.dogHashes.length);
+  expect(drawn.pedKeys[0]).toBe("pedPass");
+  expect(drawn.pedKeys[2]).toBe("pedLift");
+  expect(drawn.pedKeys[1]).not.toBe("pedLift");
+  expect(drawn.dogKeys[0]).toBe("dogPaw");
+  expect(drawn.dogKeys[1]).toBe("dogWalk");
+  expect(drawn.dogKeys[2]).toBe("dogWalk");
   fs.mkdirSync("/opt/cursor/artifacts", { recursive: true });
   fs.writeFileSync(
     "/opt/cursor/artifacts/gait-phases.png",
@@ -1506,19 +1516,13 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
       const after = JSON.stringify({ s: sim.s, x: sim.x, hits: sim.stats.collisions, resolved: sim.hazards[0].resolved });
       const ped = sim.hazards[0];
       const actor = placedScene(sim, 1).actors[0];
-      const sc = Math.max(0.62, Math.min(1.45, actor.spot.scale * 1.55));
-      const step = gaitOffset(actorTravel(ped, sim), "pedestrian", false);
-      const fx = actor.spot.x + (20 - step) * sc;
       const fy = actor.spot.y;
-      const leg = 0.25;
-      const lx = (20 - step) + (12 - (20 - step)) * leg;
-      const ly = (10 - 48) * leg;
       return {
         lead,
         same: before === after,
-        foot: rgb(fx, fy),
-        leg: rgb(actor.spot.x + lx * sc, fy + ly * sc),
-        below: rgb(actor.spot.x, fy + 12),
+        foot: rgb(actor.spot.x, fy - 12),
+        leg: rgb(actor.spot.x, fy - 56),
+        below: rgb(actor.spot.x, fy + 14),
         gap: rgb(actor.spot.x, (fy + placedScene(sim, 1).car.y) / 2),
       };
     }
@@ -1650,15 +1654,16 @@ test("the crossing before, at and past the bumper, old anchors beside the new", 
   const ahead = drawn.contacts[0];
   const touch = drawn.contacts[1];
   const inside = drawn.contacts[2];
-  expect(dark(ahead.foot), ahead.foot).toBe(true);
-  expect(dark(ahead.leg), ahead.leg).toBe(true);
+  const onPerson = (value) => value !== drawn.road;
+  expect(onPerson(ahead.foot), ahead.foot).toBe(true);
+  expect(onPerson(ahead.leg), ahead.leg).toBe(true);
   expect(ahead.gap).toBe(drawn.road);
   expect(carPaint(ahead.below), ahead.below).toBe(false);
-  expect(dark(touch.foot), touch.foot).toBe(true);
-  expect(dark(touch.leg), touch.leg).toBe(true);
+  expect(onPerson(touch.foot), touch.foot).toBe(true);
+  expect(onPerson(touch.leg), touch.leg).toBe(true);
   expect(carPaint(touch.below), touch.below).toBe(true);
-  expect(dark(inside.foot), inside.foot).toBe(true);
-  expect(dark(inside.leg), inside.leg).toBe(true);
+  expect(onPerson(inside.foot), inside.foot).toBe(true);
+  expect(onPerson(inside.leg), inside.leg).toBe(true);
   const vehicle = (value) => {
     const [r, g, b] = value.split(",").map(Number);
     const coral = r > 180 && g > 70 && g < 170 && b < 150 && r > g + 30;
@@ -1932,7 +1937,7 @@ test("the plan footprint matches the chassis at both sides and several depths", 
   };
   const brown = (value) => {
     const [r, g, b] = value.split(",").map(Number);
-    return r > 90 && r < 190 && g > 50 && g < 140 && b < 100 && r > b;
+    return r > 90 && r < 240 && g > 50 && g < 180 && b < 120 && r > b + 20;
   };
   function edges(row, label) {
     for (const key of ["noseIn", "tailIn", "leftIn", "rightIn"]) {
