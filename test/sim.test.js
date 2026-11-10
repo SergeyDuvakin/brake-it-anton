@@ -10,7 +10,7 @@ import { drainFrame } from "../js/clock.js";
 import { contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
-import { controlState, patienceNeedleDegrees, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
+import { PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
 import {
   CAR_BODY_H,
   CAR_BODY_W,
@@ -26,8 +26,11 @@ import {
   planMetresPerPixel,
   planRowDs,
   playerChassis,
+  SCENERY_GAP,
+  SCENERY_REACH,
   placedScene,
   render,
+  sceneryAnchor,
 } from "../js/draw.js";
 import { VIEW, project } from "../js/road.js";
 import {
@@ -2408,6 +2411,30 @@ test("patience needle and pedal hinge follow the live input", () => {
       }
     }
   }
+});
+
+test("the pedal stays inside the plate, and house bases stay off the asphalt", () => {
+  const zone = PEDAL_ZONE;
+  for (const deg of [0, 24]) {
+    const ink = pedalArtRect(deg);
+    assert.ok(ink.x >= zone.x + PEDAL_PAD - 0.5, `${deg} left ${ink.x}`);
+    assert.ok(ink.y >= zone.y + PEDAL_PAD - 0.5, `${deg} top ${ink.y}`);
+    assert.ok(ink.x + ink.w <= zone.x + zone.w - PEDAL_PAD + 0.5, `${deg} right ${ink.x + ink.w}`);
+    assert.ok(ink.y + ink.h <= zone.y + zone.h - PEDAL_PAD + 0.5, `${deg} bottom ${ink.y + ink.h}`);
+  }
+  assert.ok(zone.x > VIEW.panel.x + VIEW.panel.w);
+  assert.ok(zone.y + zone.h < 900);
+  for (const [w, h] of [[1600, 900], [844, 390], [932, 430]]) {
+    const box = letterboxRect(w, h);
+    const left = box.left + zone.x * box.scale;
+    const top = box.top + zone.y * box.scale;
+    const right = box.left + (zone.x + zone.w) * box.scale;
+    const bottom = box.top + (zone.y + zone.h) * box.scale;
+    assert.ok(left >= -0.5 && top >= -0.5 && right <= w + 0.5 && bottom <= h + 0.5, `${w}x${h}`);
+  }
+  const anchor = sceneryAnchor();
+  assert.ok(anchor - SCENERY_REACH >= VIEW.roadHalf + SCENERY_GAP - 1e-9);
+  assert.ok(anchor - SCENERY_REACH > CFG.roadHalf);
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

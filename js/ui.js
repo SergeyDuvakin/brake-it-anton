@@ -37,12 +37,32 @@ export const PEDAL = {
   size: 1024,
   maxDeg: 24,
   thickness: 14,
-  /** About 70% of the previous 504px rig, sitting low in the cabin. */
-  dest: { x: 1136, y: 548, w: 360, h: 360 },
 };
 
-/** The whole plate is the brake target. It stays inside the cabin, off the road. */
-export const PEDAL_ZONE = { x: 1076, y: 640, w: 480, h: 224 };
+/**
+ * Press plate in the cabin, below the seat. The whole rect is the hit target.
+ * The pedal drawing is fitted inside it with PEDAL_PAD of clear margin.
+ */
+export const PEDAL_ZONE = { x: 1084, y: 628, w: 464, h: 240 };
+/** Clear pixels between the ink of the pedal and the plate edge. */
+export const PEDAL_PAD = 22;
+/** Idle opaque ink in the 1024 rig. The 24° pose fits inside this box. */
+const PEDAL_INK = { x: 242, y: 149, w: 570, h: 638 };
+
+function fitPedalDest() {
+  const zone = PEDAL_ZONE;
+  const scale = Math.min((zone.w - PEDAL_PAD * 2) / PEDAL_INK.w, (zone.h - PEDAL_PAD * 2) / PEDAL_INK.h);
+  const inkX = zone.x + (zone.w - PEDAL_INK.w * scale) / 2;
+  const inkY = zone.y + (zone.h - PEDAL_INK.h * scale) / 2;
+  return {
+    x: inkX - PEDAL_INK.x * scale,
+    y: inkY - PEDAL_INK.y * scale,
+    w: PEDAL.size * scale,
+    h: PEDAL.size * scale,
+  };
+}
+
+PEDAL.dest = fitPedalDest();
 
 const INK = "#1C161E";
 const CREAM_TEXT = "#FFF6E4";
@@ -536,6 +556,52 @@ function projectPedalRow(deg, y, z) {
   return { sy: PEDAL.cy + (ry - PEDAL.cy) * scale, scale };
 }
 
+function spanRows(text) {
+  const n = text.split(",").map(Number);
+  const rows = [];
+  for (let i = 0; i < n.length; i += 3) rows.push([n[i], n[i + 1], n[i + 2]]);
+  return rows;
+}
+
+/** Opaque runs of the bracket. It does not rotate. y, x0, x1 in the 1024 rig. */
+const MOUNT_ROWS = spanRows("148,596,669,152,591,699,156,588,703,160,586,705,164,585,706,168,584,707,172,583,707,176,583,707,180,583,708,184,583,712,188,583,717,192,583,719,196,583,721,200,583,722,204,583,722,208,583,722,212,583,722,216,583,722,220,583,721,224,583,719,228,583,717,232,583,714,236,583,707,240,582,707,244,582,707,248,578,707,252,574,706,256,572,706");
+/** Opaque runs of the lever and pad, before the hinge projection. */
+const LEVER_ROWS = spanRows("216,583,722,220,583,721,224,583,719,228,583,717,232,583,714,236,583,707,240,582,707,244,582,707,248,578,707,252,574,706,256,570,706,260,565,705,264,561,703,268,557,701,272,553,698,276,550,691,280,547,672,284,544,668,288,542,664,292,540,660,296,538,656,300,537,652,304,535,648,308,534,644,312,533,640,316,533,637,320,532,633,324,531,629,328,531,626,332,530,624,336,530,622,340,529,620,344,529,619,348,529,618,352,528,618,356,528,617,360,527,617,364,527,616,368,526,616,372,526,615,376,526,615,380,525,615,384,525,614,388,524,614,392,524,613,396,524,613,400,523,613,404,523,612,408,522,612,412,522,611,416,522,611,420,316,611,424,304,610,428,296,610,432,290,629,436,286,700,440,282,751,444,279,766,448,276,775,452,274,781,456,272,786,460,270,791,464,268,795,468,267,799,472,266,802,476,265,804,480,264,806,484,263,808,488,262,810,492,261,811,496,260,812,500,259,812,504,258,812,508,258,813,512,257,813,516,256,813,520,255,812,524,255,812,528,254,812,532,253,811,536,252,811,540,252,811,544,251,810,548,251,810,552,250,809,556,250,809,560,249,808,564,249,808,568,248,807,572,248,807,576,247,806,580,247,806,584,246,805,588,246,805,592,246,804,596,245,804,600,245,803,604,245,803,608,244,802,612,244,802,616,244,801,620,243,800,624,243,800,628,243,799,632,243,799,636,243,798,640,242,797,644,242,797,648,242,796,652,242,795,656,242,795,660,242,794,664,242,793,668,242,793,672,242,792,676,242,791,680,242,791,684,243,790,688,243,789,692,243,789,696,244,788,700,245,787,704,246,786,708,247,785,712,248,784,716,250,784,720,252,783,724,255,782,728,258,781,732,262,779,736,267,778,740,273,777,744,279,775,748,286,774,752,296,772,756,312,770,760,352,767,764,398,764,768,446,761,772,496,757,776,547,752,780,599,746,784,651,736");
+
+/**
+ * Axis-aligned box of the pedal ink on the 1600×900 canvas.
+ * The bracket stays put. The lever and pad use the hinge projection.
+ */
+export function pedalArtRect(deg) {
+  const dest = PEDAL.dest;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const add = (sx, sy) => {
+    const x = dest.x + (sx / PEDAL.size) * dest.w;
+    const y = dest.y + (sy / PEDAL.size) * dest.h;
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  };
+  for (const [y, a, b] of MOUNT_ROWS) {
+    add(a, y);
+    add(b, y);
+    add(a, y + 4);
+    add(b, y + 4);
+  }
+  for (const [y, a, b] of LEVER_ROWS) {
+    for (const yy of [y, Math.min(PEDAL.size - 1, y + 4)]) {
+      const row = projectPedalRow(deg, yy, 0);
+      add(PEDAL.cx + (a - PEDAL.cx) * row.scale, row.sy);
+      add(PEDAL.cx + (b - PEDAL.cx) * row.scale, row.sy);
+    }
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 function drawWarped(ctx, img, dest, deg) {
   if (!ready(img)) return;
   const start = 206;
@@ -690,7 +756,7 @@ export function drawDriveChrome(ctx, state, sink, brake) {
   const pedal = drawPedalRig(ctx, brake);
   if (state.hint && state.session.phase === "drive" && ready(IMG.arrow)) {
     ctx.save();
-    ctx.translate(PEDAL_ZONE.x + 36, PEDAL_ZONE.y - 8);
+    ctx.translate(PEDAL_ZONE.x + 48, PEDAL_ZONE.y + PEDAL_ZONE.h * 0.55);
     ctx.rotate(0.7);
     ctx.drawImage(IMG.arrow, -28, -24, 56, 50);
     ctx.restore();

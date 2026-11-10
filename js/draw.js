@@ -472,12 +472,10 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
   }
 
   const props = [];
-  // On the sidewalk, in from the old 4.55 m mark, still clear of the lane samples.
-  const sceneryX = VIEW.roadHalf + 0.46;
   for (let s = Math.floor((cam - 8) / 14) * 14; s < cam + VIEW.look; s += 14) {
     const n = Math.round(s / 14);
     for (const side of [-1, 1]) {
-      props.push({ ds: s - cam, xm: side * sceneryX, n, side, band: districtAt(s), kind: "prop" });
+      props.push({ ds: s - cam, xm: side * sceneryAnchor(), n, side, band: districtAt(s), kind: "prop" });
     }
   }
   for (const h of sim.hazards) {
@@ -550,6 +548,20 @@ function strokeRay(ctx, xm, far, color, width) {
 
 function districtAt(worldS) {
   return ["yard", "market", "edge"][Math.abs(Math.floor(worldS / 220)) % 3];
+}
+
+/**
+ * Metres from the centre line to the scenery anchor.
+ * The anchor is the middle of the drawing. The widest house base
+ * reaches 2.72 m toward the road, so the anchor sits that far
+ * outside the curb. The inner edge of the base then lands on the
+ * sidewalk, not on the asphalt.
+ */
+export const SCENERY_REACH = 2.72;
+export const SCENERY_GAP = 0.28;
+
+export function sceneryAnchor() {
+  return VIEW.roadHalf + SCENERY_GAP + SCENERY_REACH;
 }
 
 function shadowAt(ctx, x, y, sc, rx) {

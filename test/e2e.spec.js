@@ -517,9 +517,29 @@ async function driveWithPedal(page, decide, shots = {}) {
   await page.waitForFunction(
     () => window.__anton.getState().phase === "drive" && window.__anton.hotspots().some((spot) => spot.id === "pedal"),
   );
+  // The phone window is a few seconds of game time. A stalled test poll can
+  // step past it at 4×, so the poke runs on the page clock instead.
+  await page.evaluate(() => {
+    const timer = setInterval(() => {
+      const state = window.__anton.getState();
+      if (state.phase === "result") {
+        clearInterval(timer);
+        return;
+      }
+      const needs = state.attention === "phone" || state.attention === "drowsy" || state.attention === "asleep";
+      if (!needs) return;
+      const spot = window.__anton.hotspots().find((item) => item.id === "anton");
+      if (!spot) return;
+      const rect = document.querySelector("canvas").getBoundingClientRect();
+      const x = rect.left + (spot.x + spot.w / 2) * (rect.width / 1600);
+      const y = rect.top + (spot.y + spot.h / 2) * (rect.height / 900);
+      const canvas = document.querySelector("canvas");
+      canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, clientX: x, clientY: y, bubbles: true, pointerType: "touch" }));
+      canvas.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: x, clientY: y, bubbles: true, pointerType: "touch" }));
+    }, 40);
+  });
   const pedal = await pedalPoint(page);
   let down = false;
-  let sawTap = false;
   let sawRescue = !shots.rescue;
   let sawBusy = !shots.busy;
   const started = Date.now();
@@ -531,20 +551,6 @@ async function driveWithPedal(page, decide, shots = {}) {
       expect(sawBusy).toBe(true);
       return state;
     }
-    const needsTap = state.attention === "phone" || state.attention === "drowsy" || state.attention === "asleep";
-    if (needsTap && !sawTap) {
-      await page.evaluate(() => {
-        const spot = window.__anton.hotspots().find((item) => item.id === "anton");
-        const rect = document.querySelector("canvas").getBoundingClientRect();
-        const x = rect.left + (spot.x + spot.w / 2) * (rect.width / 1600);
-        const y = rect.top + (spot.y + spot.h / 2) * (rect.height / 900);
-        const canvas = document.querySelector("canvas");
-        canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 7, clientX: x, clientY: y, bubbles: true }));
-        canvas.dispatchEvent(new PointerEvent("pointerup", { pointerId: 7, clientX: x, clientY: y, bubbles: true }));
-      });
-      sawTap = true;
-    }
-    if (!needsTap) sawTap = false;
     const want = state.phase === "drive" && decide(state);
     if (want && !down) {
       await page.mouse.move(pedal.x, pedal.y);
@@ -2151,4 +2157,50 @@ test("the gauge needle and the pedal angle follow the real input", async ({ page
   expect(calm.hubInk).toBeLessThan(220);
   expect(calm.padInk).toBeLessThan(320);
   expect(hot.padInk).toBeLessThan(320);
+});
+
+test("house bases and tree trunks stay off the asphalt, near and far", async ({ page }) => {
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await page.evaluate(() => window.__anton.debugStart("lesson1"));
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.evaluate(() => window.__anton.setTimeScale(0));
+  const leaks = await page.evaluate(async () => {
+    const { project, VIEW } = await import("./js/road.js");
+    const canvas = document.querySelector("canvas");
+    const ctx = canvas.getContext("2d");
+    const hits = [];
+    for (const cam of [16, 34, 52, 70]) {
+      window.__anton.debugPlace({ s: cam, x: 0 });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const distances = [];
+      for (let world = Math.floor((cam - 6) / 14) * 14; world < cam + 56; world += 14) {
+        const ds = world - cam;
+        if (ds > 3 && ds < 58) distances.push(ds);
+      }
+      for (const ds of distances) {
+        const curbL = project(ds, -VIEW.roadHalf);
+        const curbR = project(ds, VIEW.roadHalf);
+        const y = Math.round(curbL.y);
+        if (y < 30 || y > 870) continue;
+        for (const [edge, dir] of [[Math.round(curbL.x), 1], [Math.round(curbR.x), -1]]) {
+          for (let step = 4; step <= 28; step += 4) {
+            const x = edge + dir * step;
+            if (x < 30 || x > 1000) continue;
+            const px = ctx.getImageData(x, y, 1, 1).data;
+            const r = px[0];
+            const g = px[1];
+            const b = px[2];
+            const road = b > 85 && b > r + 6 && r < 160;
+            const wall = r > 165 && g > 120 && b < 175 && r > b + 25 && Math.abs(r - g) < 90;
+            const roof = r > 150 && g < 110 && b < 120;
+            const trunk = r > 70 && r < 150 && g > 50 && g < 120 && b < 80 && r > b + 20 && Math.abs(r - g) < 40;
+            if (!road && (wall || roof || trunk)) hits.push({ cam, ds, x, y, rgb: `${r},${g},${b}` });
+          }
+        }
+      }
+    }
+    return hits.slice(0, 8);
+  });
+  expect(leaks, JSON.stringify(leaks)).toEqual([]);
 });
