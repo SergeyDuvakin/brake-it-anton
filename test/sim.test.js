@@ -33,6 +33,7 @@ import {
   sceneryAnchor,
 } from "../js/draw.js";
 import { VIEW, project } from "../js/road.js";
+import { routeLocal, routeYaw, sectionCount, straightRun } from "../js/route.js";
 import {
   brakeAccel,
   expressionId,
@@ -797,6 +798,20 @@ test("cabin stills follow the ride, and the phone pose stays a still name", () =
   assert.equal(cabinPoseId(sim, "drive", "preen"), "preen");
 });
 
+test("six sections bend after a straight opening, and the camera looks ahead", () => {
+  assert.equal(sectionCount(), 6);
+  assert.equal(straightRun(), 120);
+  const flat = routeLocal(20, 55, 1.8);
+  assert.equal(flat.ds, 35);
+  assert.equal(flat.xm, 1.8);
+  assert.equal(routeYaw(20), 0);
+  const bent = routeLocal(110, 180, 0);
+  assert.ok(Math.abs(bent.xm) > 0.3, bent.xm);
+  assert.ok(routeYaw(110) !== 0);
+  const beside = routeLocal(110, 180, 6);
+  assert.ok(Math.abs(beside.xm - bent.xm) > 4);
+});
+
 test("the straight road stays forward and does not fold between frames", () => {
   let prevY = -Infinity;
   let prevEdge = -Infinity;
@@ -991,6 +1006,10 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
     "yellow-car-game-straight.png",
     "yellow-car-brake.png",
     "yellow-car-collision.png",
+    "yellow-car-left.png",
+    "yellow-car-right.png",
+    "yellow-car-small-left.png",
+    "yellow-car-small-right.png",
     "coral-wagon-straight.png",
   ]) {
     assert.ok(yml.includes(`assets/cars/${car}`), car);

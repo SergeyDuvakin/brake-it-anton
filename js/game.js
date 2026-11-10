@@ -522,6 +522,12 @@ window.__anton = {
     if (!debug || !session) return;
     session.sim.brakeInput = Math.max(0, Math.min(1, Number(value) || 0));
   },
+  debugSeek(metres) {
+    if (!debug || !session) return;
+    const s = Math.max(0, Number(metres) || 0);
+    session.sim.s = s;
+    session.sim.prevS = s;
+  },
   debugStart(id) {
     if (!debug) return;
     const mission = getMission(id, id === "infinite" ? 7 : undefined);

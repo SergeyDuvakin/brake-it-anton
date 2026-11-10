@@ -16,6 +16,7 @@ import {
   uiScale,
 } from "./ui.js";
 import { VIEW, project } from "./road.js";
+import { routeLocal, routeYaw } from "./route.js";
 import { anchorKind, farDs, groundDs, paintFarToNear } from "./anchors.js";
 import { gaitOffset } from "./gait.js";
 import { actorTravel, hazardWorldX, renderPose } from "./sim.js";
@@ -84,7 +85,7 @@ export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = 
 /**
  * Approved top-down plans (heading 0). The hood is the small sprite y.
  * Chassis length / art length, then one screen rectangle from the nose
- * to the tail of the same `project()` as the road. Width follows the
+ * to the tail of the same `viewProject()` as the road. Width follows the
  * file, so a side lane does not shear or squash the drawing. The whole
  * mask is drawn, mirrors included. Length matches the chassis. The
  * drawing is a little wider for its length than the 3.4×1.7 m
@@ -117,7 +118,22 @@ function loadCarImage(file) {
 const YELLOW_STRAIGHT = loadCarImage("yellow-car-game-straight.png");
 const YELLOW_BRAKE = loadCarImage("yellow-car-brake.png");
 const YELLOW_CRASH = loadCarImage("yellow-car-collision.png");
+const YELLOW_LEFT = loadCarImage("yellow-car-left.png");
+const YELLOW_RIGHT = loadCarImage("yellow-car-right.png");
+const YELLOW_SMALL_LEFT = loadCarImage("yellow-car-small-left.png");
+const YELLOW_SMALL_RIGHT = loadCarImage("yellow-car-small-right.png");
 const CORAL_STRAIGHT = loadCarImage("coral-wagon-straight.png");
+
+let viewCam = 0;
+
+function bindView(cam) {
+  viewCam = cam || 0;
+}
+
+function viewProject(ds, xm) {
+  const local = routeLocal(viewCam, viewCam + ds, xm);
+  return project(local.ds, local.xm);
+}
 
 function imageReady(img) {
   return !!(img && img.complete && img.naturalWidth);
@@ -154,10 +170,28 @@ export function planBlitBox(centerDs, xm, lengthM, artLen, imageWidth, pivot = 5
   };
 }
 
+function blitBox(proj, centerDs, xm, lengthM, artLen, imageWidth, pivot = 500) {
+  const yTop = pivot - artLen / 2;
+  const nose = proj(planRowDs(centerDs, yTop, pivot, lengthM, artLen), xm);
+  const tail = proj(planRowDs(centerDs, yTop + artLen, pivot, lengthM, artLen), xm);
+  const mid = proj(centerDs, xm);
+  const h = Math.abs(tail.y - nose.y);
+  const w = h * (imageWidth / artLen);
+  return {
+    x: mid.x - w / 2,
+    y: Math.min(nose.y, tail.y),
+    w,
+    h,
+    sy: yTop,
+    noseY: nose.y,
+    tailY: tail.y,
+  };
+}
+
 export function drawPlanSprite(ctx, img, spec) {
   if (!imageReady(img)) return false;
   const { centerDs, xm, lengthM, artLen, pivot = 500 } = spec;
-  const box = planBlitBox(centerDs, xm, lengthM, artLen, img.width, pivot);
+  const box = blitBox(viewProject, centerDs, xm, lengthM, artLen, img.width, pivot);
   ctx.save();
   ctx.imageSmoothingEnabled = true;
   if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
@@ -177,8 +211,9 @@ export function pedestrianFootShift() {
  * `world` is metres from the bumper to the near face of the hitbox.
  */
 export function bumperFootGap(sim, hazard) {
-  const bumper = project(CFG.carHalfFront, sim.x);
-  const foot = project(hazard.s - (hazard.halfL || 0) - sim.s, hazardWorldX(hazard, sim));
+  bindView(sim.s);
+  const bumper = viewProject(CFG.carHalfFront, sim.x);
+  const foot = viewProject(hazard.s - (hazard.halfL || 0) - sim.s, hazardWorldX(hazard, sim));
   return {
     world: hazard.s - hazard.halfL - (sim.s + CFG.carHalfFront),
     screen: bumper.y - foot.y,
@@ -344,7 +379,8 @@ function drawPlay(ctx, state, sink) {
  */
 export function placedScene(sim, alpha = 1, legacy = false) {
   const pose = renderPose(sim, alpha);
-  const car = project(CFG.carHalfFront, pose.x);
+  bindView(pose.s);
+  const car = viewProject(CFG.carHalfFront, pose.x);
   const actors = [];
   for (const h of sim.hazards || []) {
     const dist = h.s - pose.s;
@@ -362,8 +398,8 @@ export function placedScene(sim, alpha = 1, legacy = false) {
       legacy,
       groundDs: near,
       farDs: far,
-      spot: project(near, hx),
-      farSpot: project(far, hx),
+      spot: viewProject(near, hx),
+      farSpot: viewProject(far, hx),
     });
   }
   return { pose, car, actors };
@@ -384,16 +420,20 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
   ctx.fillStyle = P.GLASS;
   ctx.fillRect(box.x, box.y, box.w, VIEW.vanishY - box.y + 8);
 
-  fillQuad(ctx, VIEW.near, far, -VIEW.sideHalf, -VIEW.roadHalf, "#E4D7C4");
-  fillQuad(ctx, VIEW.near, far, VIEW.roadHalf, VIEW.sideHalf, "#E4D7C4");
-  fillQuad(ctx, VIEW.near, far, -VIEW.roadHalf, VIEW.roadHalf, P.ROAD);
-  strokeRay(ctx, -VIEW.roadHalf, far, P.INK, 7);
-  strokeRay(ctx, VIEW.roadHalf, far, P.INK, 7);
+  // Short strips follow a bend. One quad from the bumper to the horizon would cut the corner.
+  for (let ds = VIEW.near; ds < far; ds += ds < VIEW.look ? 8 : 400) {
+    const ds1 = Math.min(far, ds + (ds < VIEW.look ? 8 : 400));
+    fillQuad(ctx, ds, ds1, -VIEW.sideHalf, -VIEW.roadHalf, "#E4D7C4");
+    fillQuad(ctx, ds, ds1, VIEW.roadHalf, VIEW.sideHalf, "#E4D7C4");
+    fillQuad(ctx, ds, ds1, -VIEW.roadHalf, VIEW.roadHalf, P.ROAD);
+  }
+  strokeCurve(ctx, -VIEW.roadHalf, far, P.INK, 7);
+  strokeCurve(ctx, VIEW.roadHalf, far, P.INK, 7);
 
   const curb = 5;
   for (let s = Math.floor((cam + VIEW.near) / curb) * curb; s < cam + VIEW.look; s += curb) {
     for (const side of [-1, 1]) {
-      const spot = project(s - cam, side * (VIEW.roadHalf + 0.08));
+      const spot = viewProject(s - cam, side * (VIEW.roadHalf + 0.08));
       if (spot.y < 40 || spot.y > 900) continue;
       ctx.fillStyle = P.PAPER;
       ctx.fillRect(spot.x - 5 * spot.scale, spot.y, 10 * spot.scale, 7 * spot.scale);
@@ -406,7 +446,7 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
     if (ds1 < VIEW.near || ds0 > VIEW.look) continue;
     fillQuad(ctx, Math.max(ds0, VIEW.near), Math.min(ds1, VIEW.look), -VIEW.roadHalf * 0.92, VIEW.roadHalf * 0.92, "rgba(120,170,190,0.45)");
     if (ds0 > 2 && ds0 < VIEW.look - 6) {
-      const spot = project(ds0, 0);
+      const spot = viewProject(ds0, 0);
       roundRect(ctx, spot.x - 52, spot.y - 16, 104, 32, 8);
       ctx.fillStyle = P.YEL;
       ctx.fill();
@@ -421,8 +461,8 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
   }
   for (let s = Math.floor((cam - 6) / 17) * 17; s < cam + VIEW.look; s += 17) {
     const ds = s - cam;
-    const a = project(ds, -0.9);
-    const b = project(ds + 1.4, 0.4);
+    const a = viewProject(ds, -0.9);
+    const b = viewProject(ds + 1.4, 0.4);
     ctx.strokeStyle = "rgba(28,22,30,0.35)";
     ctx.lineWidth = Math.max(1, 2 * a.scale);
     ctx.beginPath();
@@ -431,7 +471,7 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
     ctx.stroke();
   }
   for (let s = Math.floor((cam - 4) / 36) * 36; s < cam + VIEW.look; s += 36) {
-    const spot = project(s - cam, 0.55);
+    const spot = viewProject(s - cam, 0.55);
     if (spot.y < 50 || spot.y > 880) continue;
     ctx.beginPath();
     ctx.ellipse(spot.x, spot.y, 16 * spot.scale, 8 * spot.scale, 0, 0, Math.PI * 2);
@@ -442,7 +482,7 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
   }
 
   for (const skid of sim.skids || []) {
-    const spot = project(skid.s - cam, skid.x);
+    const spot = viewProject(skid.s - cam, skid.x);
     if (spot.y < 40 || spot.y > 880) continue;
     ctx.strokeStyle = "rgba(28,22,30,0.45)";
     ctx.lineWidth = 5 * spot.scale;
@@ -504,10 +544,10 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
 }
 
 function fillQuad(ctx, ds0, ds1, x0, x1, color) {
-  const a = project(ds0, x0);
-  const b = project(ds0, x1);
-  const c = project(ds1, x1);
-  const d = project(ds1, x0);
+  const a = viewProject(ds0, x0);
+  const b = viewProject(ds0, x1);
+  const c = viewProject(ds1, x1);
+  const d = viewProject(ds1, x0);
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
   ctx.lineTo(b.x, b.y);
@@ -518,12 +558,17 @@ function fillQuad(ctx, ds0, ds1, x0, x1, color) {
   ctx.fill();
 }
 
-function strokeRay(ctx, xm, far, color, width) {
-  const a = project(VIEW.near, xm);
-  const b = project(far, xm);
+function strokeCurve(ctx, xm, far, color, width) {
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
+  let started = false;
+  for (let ds = VIEW.near; ds <= VIEW.look; ds += 4) {
+    const p = viewProject(ds, xm);
+    if (!started) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+    started = true;
+  }
+  const end = viewProject(far, xm);
+  ctx.lineTo(end.x, end.y);
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
   ctx.stroke();
@@ -559,7 +604,7 @@ function shadowAt(ctx, x, y, sc, rx) {
 }
 
 function drawProp(ctx, item, boil) {
-  const spot = project(item.ds, item.xm);
+  const spot = viewProject(item.ds, item.xm);
   if (spot.y < -30 || spot.y > 940) return;
   const sc = Math.max(0.42, Math.min(1.2, spot.scale));
   const color = [P.PINK, P.BLUE, P.ORANGE, P.YEL, P.TEAL][Math.abs(item.n + item.side) % 5];
@@ -711,7 +756,7 @@ function drawTree(ctx, x, y, sc, boil, seed) {
 function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
   const dist = placed ? placed.dist : h.s - sim.s;
   const hx = placed ? placed.hx : hazardWorldX(h, sim);
-  const spot = placed ? placed.spot : project(dist, hx);
+  const spot = placed ? placed.spot : viewProject(dist, hx);
   const travel = reduced ? 0 : placed?.travel ?? actorTravel(h, sim);
   const step = gaitOffset(travel, h.type, reduced);
   const farY = placed?.farSpot?.y ?? spot.y;
@@ -752,7 +797,7 @@ function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
   }
   if (h.trust && !h.resolved && h.committed !== "lunge" && dist < (h.telegraph || 60) && dist > 2) {
     const free = -Math.sign(h.x || 1) * 1.6;
-    const chev = project(Math.max(4, Math.min(dist * 0.35, 14)), free);
+    const chev = viewProject(Math.max(4, Math.min(dist * 0.35, 14)), free);
     ctx.fillStyle = P.YEL;
     ctx.beginPath();
     ctx.moveTo(chev.x, chev.y - 16);
@@ -858,8 +903,8 @@ function drawHole(ctx, placed, h, sc = 1) {
   }
   const midS = (placed.groundDs + placed.farDs) / 2;
   const halfW = h.halfW || 0.7;
-  const left = project(midS, placed.hx - halfW);
-  const right = project(midS, placed.hx + halfW);
+  const left = viewProject(midS, placed.hx - halfW);
+  const right = viewProject(midS, placed.hx + halfW);
   const cx = (placed.spot.x + placed.farSpot.x) / 2;
   const cy = (placed.spot.y + placed.farSpot.y) / 2;
   const rx = Math.max(8, Math.abs(right.x - left.x) / 2);
@@ -986,6 +1031,11 @@ function drawNpc(ctx, placed, h, sc, dist, boil) {
 function playerPlanImage(sim) {
   if ((sim.crashT || 0) > 0.05 && imageReady(YELLOW_CRASH)) return YELLOW_CRASH;
   if ((sim.brakeInput || 0) > 0.35 && imageReady(YELLOW_BRAKE)) return YELLOW_BRAKE;
+  const yaw = routeYaw(viewCam);
+  if (yaw < -0.2 && imageReady(YELLOW_LEFT)) return YELLOW_LEFT;
+  if (yaw > 0.2 && imageReady(YELLOW_RIGHT)) return YELLOW_RIGHT;
+  if (yaw < -0.08 && imageReady(YELLOW_SMALL_LEFT)) return YELLOW_SMALL_LEFT;
+  if (yaw > 0.08 && imageReady(YELLOW_SMALL_RIGHT)) return YELLOW_SMALL_RIGHT;
   return YELLOW_STRAIGHT;
 }
 
@@ -1001,7 +1051,7 @@ function drawCar(ctx, sim, boil, pose, legacy = false) {
     pivot: PLAN_ART.yellow.pivot,
   })) {
     if (sim.cargoType) {
-      const deck = project(centerDs - 0.7, xm);
+      const deck = viewProject(centerDs - 0.7, xm);
       if (!drawCastCargo(ctx, deck.x, deck.y, deck.scale, sim)) {
         const sc = Math.min(0.4, ((CFG.carHalfW * VIEW.focal) / deck.z) / 90);
         ctx.save();
@@ -1012,7 +1062,7 @@ function drawCar(ctx, sim, boil, pose, legacy = false) {
     }
     return;
   }
-  const bumper = project(CFG.carHalfFront, xm);
+  const bumper = viewProject(CFG.carHalfFront, xm);
   const origin = carDrawOrigin(bumper.x, bumper.y, sim.brakeInput, sim.crashT);
   drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil, pose ? pose.s : sim.s);
 }

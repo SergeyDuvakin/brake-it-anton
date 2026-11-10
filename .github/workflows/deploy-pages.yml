@@ -56,6 +56,7 @@ jobs:
           cp js/policies.js .pages-dist/js/policies.js
           cp js/rng.js .pages-dist/js/rng.js
           cp js/road.js .pages-dist/js/road.js
+          cp js/route.js .pages-dist/js/route.js
           cp js/session.js .pages-dist/js/session.js
           cp js/sim.js .pages-dist/js/sim.js
           cp js/storage.js .pages-dist/js/storage.js
@@ -68,6 +69,10 @@ jobs:
           cp assets/cars/yellow-car-game-straight.png .pages-dist/assets/cars/yellow-car-game-straight.png
           cp assets/cars/yellow-car-brake.png .pages-dist/assets/cars/yellow-car-brake.png
           cp assets/cars/yellow-car-collision.png .pages-dist/assets/cars/yellow-car-collision.png
+          cp assets/cars/yellow-car-left.png .pages-dist/assets/cars/yellow-car-left.png
+          cp assets/cars/yellow-car-right.png .pages-dist/assets/cars/yellow-car-right.png
+          cp assets/cars/yellow-car-small-left.png .pages-dist/assets/cars/yellow-car-small-left.png
+          cp assets/cars/yellow-car-small-right.png .pages-dist/assets/cars/yellow-car-small-right.png
           cp assets/cars/coral-wagon-straight.png .pages-dist/assets/cars/coral-wagon-straight.png
           cp assets/world/*.png .pages-dist/assets/world/
           cp -a assets/cabin/. .pages-dist/assets/cabin/
