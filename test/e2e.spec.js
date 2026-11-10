@@ -270,7 +270,7 @@ test("title scenery and wheels stay still while people may idle", async ({ page 
     const sx = canvas.width / 1600;
     const sy = canvas.height / 900;
     const regions = {
-      buttons: { x: 1092, y: 640, w: 448, h: 204 },
+      buttons: { x: 1072, y: 674, w: 488, h: 186 },
       tree: { x: 140, y: 280, w: 240, h: 320 },
       wheel: { x: 640, y: 670, w: 140, h: 140 },
     };
@@ -1097,10 +1097,12 @@ test("one tap and the brake are different fingers", async ({ page }) => {
     sheet.height = 640 + 12 + phoneH;
     const out = sheet.getContext("2d");
     const skin = {};
-    const scale = 520 / 864;
+    const { cabinSourceToScreen } = await import("./js/cabin.js");
     function screenOf(sx, sy) {
-      return [Math.round(1056 + sx * scale), Math.round(24 + sy * scale)];
+      const [x, y] = cabinSourceToScreen(sx, sy);
+      return [Math.round(x), Math.round(y)];
     }
+    const scale = (cabinSourceToScreen(864, 0)[0] - cabinSourceToScreen(0, 0)[0]) / 864;
     function pixel(sx, sy) {
       const [x, y] = screenOf(sx, sy);
       const data = ctx.getImageData(x, y, 1, 1).data;

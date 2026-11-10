@@ -6,6 +6,7 @@
 import { CFG, PALETTE as P } from "./config.js";
 import { damageStage } from "./physics.js";
 import { paintCabin } from "./cabin.js";
+import { DRIVER_PLATE } from "./layout.js";
 import {
   drawDriveChrome,
   drawGarageScreen,
@@ -319,7 +320,13 @@ function drawPlay(ctx, state, sink) {
   const showHud = driving || session.phase === "countdown";
   const chrome = showHud ? drawDriveChrome(ctx, state, sink, brake) : null;
   if (driving) {
-    spots.push({ id: "anton", x: 1100, y: 90, w: 420, h: 340 });
+    spots.push({
+      id: "anton",
+      x: DRIVER_PLATE.x + 48,
+      y: DRIVER_PLATE.y + 70,
+      w: DRIVER_PLATE.w - 96,
+      h: 360,
+    });
     spots.push(pedalHitBox());
   }
   if (session.phase === "countdown") {
@@ -1203,11 +1210,29 @@ function drawCargoIcon(ctx, x, y, type, sc, sim) {
   ctx.restore();
 }
 
+function drawDriverPlate(ctx) {
+  const plate = DRIVER_PLATE;
+  ctx.save();
+  roundRect(ctx, plate.x, plate.y, plate.w, plate.h, plate.radius);
+  ctx.fillStyle = "#F4E2B8";
+  ctx.fill();
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = P.INK;
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawCabin(ctx, sim, state) {
+  drawDriverPlate(ctx);
   paintCabin(ctx, sim, state);
   ctx.save();
+  roundRect(ctx, DRIVER_PLATE.x, DRIVER_PLATE.y, DRIVER_PLATE.w, DRIVER_PLATE.h, DRIVER_PLATE.radius);
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = P.INK;
+  ctx.stroke();
   ctx.beginPath();
-  ctx.rect(1056, 24, 520, 852);
+  ctx.rect(DRIVER_PLATE.x, DRIVER_PLATE.y, DRIVER_PLATE.w, DRIVER_PLATE.h);
   ctx.clip();
   if (sim.bubble && sim.bubbleT > 0) {
     roundRect(ctx, 1088, 186, 250, 48, 12);

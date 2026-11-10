@@ -3,10 +3,11 @@
  * sleep chain plays the regenerated V3 frames. The phone pose is a still.
  */
 
+import { DRIVER_PLATE } from "./layout.js";
 import { expressionId } from "./physics.js";
 
-export const CABIN_CLIP = { x: 1056, y: 24, w: 520, h: 852 };
-export const CABIN_DRAW_W = 520;
+export const CABIN_CLIP = DRIVER_PLATE;
+export const CABIN_INSET = 10;
 
 export const CABIN_POSES = [
   "drive",
@@ -118,17 +119,30 @@ export function cabinPoseId(sim, phase, forced) {
   return "drive";
 }
 
-function artHeight(img) {
-  const w = img?.naturalWidth || 864;
-  const h = img?.naturalHeight || 1152;
-  return (CABIN_DRAW_W * h) / w;
+function innerPlate() {
+  return {
+    x: DRIVER_PLATE.x + CABIN_INSET,
+    y: DRIVER_PLATE.y + CABIN_INSET,
+    w: DRIVER_PLATE.w - CABIN_INSET * 2,
+    h: DRIVER_PLATE.h - CABIN_INSET * 2,
+  };
+}
+
+/** Where a point in the 864-wide source lands on screen. Tests sample the face with this. */
+export function cabinSourceToScreen(sx, sy) {
+  const inner = innerPlate();
+  const scale = inner.w / 864;
+  return [inner.x + sx * scale, inner.y + sy * scale];
 }
 
 function blit(ctx, img, alpha) {
   if (!ready(img) || alpha <= 0) return;
+  const inner = innerPlate();
+  const scale = inner.w / img.naturalWidth;
+  const dh = img.naturalHeight * scale;
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-  ctx.drawImage(img, CABIN_CLIP.x, CABIN_CLIP.y, CABIN_DRAW_W, artHeight(img));
+  ctx.drawImage(img, inner.x, inner.y, inner.w, dh);
   ctx.restore();
 }
 
@@ -175,12 +189,13 @@ export function paintCabin(ctx, sim, state) {
   const reduced = !!state.save?.settings?.reducedMotion;
   const now = Number(state.now) || 0;
   const vis = stepMotion(pose, now, reduced);
+  const inner = innerPlate();
   ctx.save();
   ctx.beginPath();
-  ctx.rect(CABIN_CLIP.x, CABIN_CLIP.y, CABIN_CLIP.w, CABIN_CLIP.h);
+  ctx.rect(inner.x, inner.y, inner.w, inner.h);
   ctx.clip();
   ctx.fillStyle = "#F3D48A";
-  ctx.fillRect(CABIN_CLIP.x, CABIN_CLIP.y, CABIN_CLIP.w, CABIN_CLIP.h);
+  ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
   const clipReady = vis.clip && clipFrameReady(vis.clip, vis.frame);
   if (clipReady) {
     const frames = clipImages[vis.clip];

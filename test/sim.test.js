@@ -13,7 +13,8 @@ import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { FUTURE_CARS, FUTURE_ENABLED, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
-import { PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
+import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
+import { DRIVER_PLATE, platesSeparated } from "../js/layout.js";
 import {
   CAR_BODY_H,
   CAR_BODY_W,
@@ -2597,6 +2598,14 @@ test("patience needle and pedal hinge follow the live input", () => {
       }
     }
   }
+});
+
+test("the patience gauge is smaller and the brake plate sits below the driver", () => {
+  assert.ok(GAUGE.box.w <= 420 * 0.72 && GAUGE.box.w >= 420 * 0.6);
+  assert.ok(GAUGE.box.h <= 283 * 0.72 && GAUGE.box.h >= 283 * 0.6);
+  assert.equal(platesSeparated(), true);
+  assert.ok(DRIVER_PLATE.y + DRIVER_PLATE.h <= PEDAL_ZONE.y - 12);
+  assert.equal(DRIVER_PLATE.radius, PEDAL_ZONE.radius);
 });
 
 test("the pedal stays inside the plate, and house bases stay off the asphalt", () => {

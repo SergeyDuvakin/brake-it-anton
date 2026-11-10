@@ -15,7 +15,10 @@
 
 import { PALETTE as P } from "./config.js";
 import { cabinPoseId, drawCabinMedal } from "./cabin.js";
+import { PEDAL_ZONE } from "./layout.js";
 import { moodGlyph, repairInvoice } from "./physics.js";
+
+export { PEDAL_ZONE };
 
 const CARD_SRC = { x: 86, y: 86, w: 694, h: 973 };
 
@@ -27,7 +30,8 @@ export const GAUGE = {
   /** Tip distance from the hub, in the face picture. The baked needle reached ~219. */
   needleLen: 214,
   hubR: 34,
-  box: { x: 20, y: 14, w: 420, h: 283 },
+  /** About 70% of the old 420×283 face, so the road stays visible. */
+  box: { x: 28, y: 18, w: 294, h: 198 },
 };
 
 export const PEDAL = {
@@ -40,11 +44,6 @@ export const PEDAL = {
   thickness: 14,
 };
 
-/**
- * Press plate in the cabin, below the seat. The whole rect is the hit target.
- * The pedal drawing is fitted inside it with PEDAL_PAD of clear margin.
- */
-export const PEDAL_ZONE = { x: 1084, y: 628, w: 464, h: 240 };
 /** Clear pixels between the ink of the pedal and the plate edge. */
 export const PEDAL_PAD = 22;
 /** Idle opaque ink in the 1024 rig. The 24° pose fits inside this box. */
@@ -289,27 +288,28 @@ export function drawTitleChrome(ctx, sink, state) {
   nineSlice(ctx, IMG.cream, plaque.x, plaque.y, plaque.w, plaque.h, 36, FILL.cream);
   paint(ctx, sink.labels, "Brake It, Anton", plaque.x + 16, plaque.y + 10, plaque.w - 32, 68, 32, INK, true);
   paint(ctx, sink.labels, "Он газует. Ты жмёшь тормоз.", plaque.x + 16, plaque.y + 78, plaque.w - 32, 40, 18, INK, false);
+  const pad = 16;
   drawButton(ctx, sink, {
     id: "start",
-    x: 1092,
-    y: 640,
-    w: 448,
-    h: 112,
+    x: PEDAL_ZONE.x + pad,
+    y: PEDAL_ZONE.y + pad,
+    w: PEDAL_ZONE.w - pad * 2,
+    h: 88,
     text: "В урок",
     kind: "orange",
     pointer: state.pointer,
-    size: 36,
+    size: 32,
   });
   drawButton(ctx, sink, {
     id: "garage",
-    x: 1092,
-    y: 768,
-    w: 448,
-    h: 76,
+    x: PEDAL_ZONE.x + pad,
+    y: PEDAL_ZONE.y + pad + 88 + 12,
+    w: PEDAL_ZONE.w - pad * 2,
+    h: 84,
     text: "Гараж",
     kind: "cream",
     pointer: state.pointer,
-    size: 28,
+    size: 26,
   });
 }
 
@@ -601,7 +601,7 @@ export function drawGauge(ctx, labels, patience) {
     w: (488 / GAUGE.srcW) * box.w,
     h: (52 / GAUGE.srcH) * box.h,
   };
-  paint(ctx, labels, "ТЕРПЕНИЕ", word.x, word.y, word.w, word.h, 28, INK, true);
+  paint(ctx, labels, "ТЕРПЕНИЕ", word.x, word.y, word.w, word.h, 20, INK, true);
   return drawNeedle(ctx, box, patience);
 }
 
@@ -709,7 +709,7 @@ export function pedalHitBox() {
 function drawPedalZone(ctx, pressed) {
   const zone = PEDAL_ZONE;
   ctx.save();
-  roundRect(ctx, zone.x, zone.y, zone.w, zone.h, 26);
+  roundRect(ctx, zone.x, zone.y, zone.w, zone.h, zone.radius || 26);
   ctx.fillStyle = pressed ? "#D9843A" : "#B5652E";
   ctx.fill();
   ctx.lineJoin = "round";
@@ -717,7 +717,7 @@ function drawPedalZone(ctx, pressed) {
   ctx.strokeStyle = pressed ? "#FFF6D0" : INK;
   ctx.stroke();
   if (!pressed) {
-    roundRect(ctx, zone.x + 8, zone.y + 8, zone.w - 16, zone.h - 16, 20);
+    roundRect(ctx, zone.x + 8, zone.y + 8, zone.w - 16, zone.h - 16, Math.max(12, (zone.radius || 26) - 6));
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(28,22,30,0.28)";
     ctx.stroke();

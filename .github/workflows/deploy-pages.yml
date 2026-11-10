@@ -50,6 +50,7 @@ jobs:
           cp js/draw.js .pages-dist/js/draw.js
           cp js/gait.js .pages-dist/js/gait.js
           cp js/future.js .pages-dist/js/future.js
+          cp js/layout.js .pages-dist/js/layout.js
           cp js/game.js .pages-dist/js/game.js
           cp js/haptics.js .pages-dist/js/haptics.js
           cp js/geom.js .pages-dist/js/geom.js
