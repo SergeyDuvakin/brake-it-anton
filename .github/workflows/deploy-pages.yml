@@ -33,7 +33,7 @@ jobs:
         run: |
           set -eu
           rm -rf .pages-dist
-          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/icons
+          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/assets/cars .pages-dist/assets/world .pages-dist/assets/ui .pages-dist/assets/cabin .pages-dist/icons
           cp index.html .pages-dist/index.html
           cp style.css .pages-dist/style.css
           cp manifest.webmanifest .pages-dist/manifest.webmanifest
@@ -41,30 +41,66 @@ jobs:
           cp icons/apple-touch-icon.png .pages-dist/icons/apple-touch-icon.png
           cp icons/icon-192.png .pages-dist/icons/icon-192.png
           cp icons/icon-512.png .pages-dist/icons/icon-512.png
+          cp js/anchors.js .pages-dist/js/anchors.js
+          cp js/cabin.js .pages-dist/js/cabin.js
           cp js/audio.js .pages-dist/js/audio.js
+          cp js/cast.js .pages-dist/js/cast.js
           cp js/clock.js .pages-dist/js/clock.js
           cp js/config.js .pages-dist/js/config.js
           cp js/draw.js .pages-dist/js/draw.js
+          cp js/gait.js .pages-dist/js/gait.js
+          cp js/future.js .pages-dist/js/future.js
+          cp js/layout.js .pages-dist/js/layout.js
           cp js/game.js .pages-dist/js/game.js
+          cp js/haptics.js .pages-dist/js/haptics.js
           cp js/geom.js .pages-dist/js/geom.js
           cp js/missions.js .pages-dist/js/missions.js
           cp js/physics.js .pages-dist/js/physics.js
           cp js/policies.js .pages-dist/js/policies.js
+          cp js/replay.js .pages-dist/js/replay.js
           cp js/rng.js .pages-dist/js/rng.js
           cp js/road.js .pages-dist/js/road.js
+          cp js/route.js .pages-dist/js/route.js
           cp js/session.js .pages-dist/js/session.js
           cp js/sim.js .pages-dist/js/sim.js
           cp js/storage.js .pages-dist/js/storage.js
+          cp js/ui.js .pages-dist/js/ui.js
           cp js/viewport.js .pages-dist/js/viewport.js
+          cp assets/ui/*.png .pages-dist/assets/ui/
           cp assets/fonts/BalsamiqSans-Bold.ttf .pages-dist/assets/fonts/BalsamiqSans-Bold.ttf
           cp assets/fonts/BalsamiqSans-Regular.ttf .pages-dist/assets/fonts/BalsamiqSans-Regular.ttf
           cp assets/fonts/RubikMonoOne-Regular.ttf .pages-dist/assets/fonts/RubikMonoOne-Regular.ttf
+          cp assets/cars/yellow-car-game-straight.png .pages-dist/assets/cars/yellow-car-game-straight.png
+          cp assets/cars/yellow-car-brake.png .pages-dist/assets/cars/yellow-car-brake.png
+          cp assets/cars/yellow-car-collision.png .pages-dist/assets/cars/yellow-car-collision.png
+          cp assets/cars/yellow-car-left.png .pages-dist/assets/cars/yellow-car-left.png
+          cp assets/cars/yellow-car-right.png .pages-dist/assets/cars/yellow-car-right.png
+          cp assets/cars/yellow-car-small-left.png .pages-dist/assets/cars/yellow-car-small-left.png
+          cp assets/cars/yellow-car-small-right.png .pages-dist/assets/cars/yellow-car-small-right.png
+          cp assets/cars/coral-wagon-straight.png .pages-dist/assets/cars/coral-wagon-straight.png
+          cp assets/cars/mint-car.png .pages-dist/assets/cars/mint-car.png
+          cp assets/cars/blue-car.png .pages-dist/assets/cars/blue-car.png
+          cp assets/world/*.png .pages-dist/assets/world/
+          cp -a assets/cabin/. .pages-dist/assets/cabin/
           test -f .pages-dist/index.html
           test -f .pages-dist/style.css
           test -f .pages-dist/js/game.js
           test -f .pages-dist/js/draw.js
           test -f .pages-dist/js/road.js
           test -f .pages-dist/assets/fonts/BalsamiqSans-Bold.ttf
+          test -f .pages-dist/assets/cars/yellow-car-game-straight.png
+          test -f .pages-dist/assets/cars/coral-wagon-straight.png
+          test -f .pages-dist/assets/world/18_dog-design.png
+          test -f .pages-dist/assets/world/47_bin-hop.png
+          test -f .pages-dist/js/ui.js
+          test -f .pages-dist/assets/ui/gauge-face-empty.png
+          test -f .pages-dist/assets/ui/pedal-lever.png
+          test -f .pages-dist/js/cabin.js
+          test -f .pages-dist/assets/cabin/manifest.json
+          test -f .pages-dist/assets/cabin/poses/drive.jpg
+          test -f .pages-dist/assets/ui/pedal-mount.png
+          test -f .pages-dist/assets/ui/card-frame.png
+          test -f .pages-dist/assets/world/49_aquarium-calm.png
           test ! -e .pages-dist/README.md
           test ! -e .pages-dist/package.json
           test ! -e .pages-dist/package-lock.json

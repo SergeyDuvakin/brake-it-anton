@@ -10,16 +10,24 @@
  * On a straight road the centre line is a vertical line through the
  * vanishing point. A point in the world moves down the screen and away
  * from that point as the car approaches. It does not reverse sideways.
+ *
+ * The camera sits far enough back that a car in the side lane does not
+ * shear into a wide silhouette. At the car, one metre along the road
+ * and one metre across it are about the same number of pixels, so the
+ * top-down drawing keeps its proportions. The tail stays inside the
+ * panel, and the next forty metres of road stay on it.
  */
+
+import { CFG } from "./config.js";
 
 export const VIEW = {
   panel: { x: 24, y: 24, w: 1010, h: 852 },
   vanishX: 529,
-  vanishY: 64,
-  camBack: 34,
-  camLift: 21284,
-  focal: 3600,
-  roadHalf: 3.25,
+  vanishY: -348,
+  camBack: 27.65,
+  camLift: 30725,
+  focal: 1100,
+  roadHalf: CFG.roadHalf,
   sideHalf: 5.05,
   look: 72,
   near: -7,

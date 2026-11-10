@@ -4,18 +4,29 @@
  * call stays silent and the game keeps running.
  */
 
+function hostWindow() {
+  return globalThis.window || globalThis;
+}
+
 export function createAudio() {
   let ctx = null;
   let master = null;
-  let enabled = true;
+  let effects = true;
+  let musicOn = true;
+  let voiceOn = true;
   let noise = null;
   let brake = null;
   let radioOn = false;
   let stepTimer = 0;
 
+  function audible() {
+    return effects || musicOn || voiceOn;
+  }
+
   function ac() {
-    if (!enabled) return null;
-    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!audible()) return null;
+    const root = hostWindow();
+    const AC = root.AudioContext || root.webkitAudioContext;
     if (!AC) return null;
     if (!ctx) {
       try {
@@ -54,6 +65,7 @@ export function createAudio() {
   }
 
   function tone(freq, duration, type, peak) {
+    if (!effects) return;
     const made = envGain(duration, peak);
     if (!made) return;
     const osc = made.audio.createOscillator();
@@ -85,14 +97,15 @@ export function createAudio() {
 
   function stopRadio() {
     radioOn = false;
-    if (stepTimer) window.clearTimeout(stepTimer);
+    const cancel = hostWindow().clearTimeout || globalThis.clearTimeout;
+    if (stepTimer && cancel) cancel(stepTimer);
     stepTimer = 0;
   }
 
   // A tiny original motif, not a recording. Two oscillators, minor and dumb.
   function startRadio() {
     const audio = ac();
-    if (!audio || !enabled) return;
+    if (!audio || !musicOn) return;
     if (radioOn) return;
     radioOn = true;
     const notes = [196, 233, 262, 233, 196, 175, 196, 262];
@@ -101,16 +114,23 @@ export function createAudio() {
       const gain = audio.createGain();
       osc.type = "triangle";
       osc.frequency.value = freq;
+      const under = audio.createOscillator();
+      under.type = "sine";
+      under.frequency.value = freq / 2;
       gain.gain.setValueAtTime(0.0001, when);
       gain.gain.exponentialRampToValueAtTime(0.018, when + 0.03);
       gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
       osc.connect(gain);
+      under.connect(gain);
       gain.connect(master);
       osc.start(when);
+      under.start(when);
       osc.stop(when + 0.3);
+      under.stop(when + 0.3);
       osc.onended = () => {
         try {
           osc.disconnect();
+          under.disconnect();
           gain.disconnect();
         } catch {
           /* already gone */
@@ -121,31 +141,50 @@ export function createAudio() {
       if (!radioOn || !ctx) return;
       const start = audio.currentTime + 0.05;
       notes.forEach((freq, i) => playAt(start + i * 0.34, freq));
-      stepTimer = window.setTimeout(loop, notes.length * 340);
+      const later = hostWindow().setTimeout || globalThis.setTimeout;
+      if (later) stepTimer = later(loop, notes.length * 340);
     };
     loop();
   }
 
   return {
     supported() {
-      return !!(window.AudioContext || window.webkitAudioContext);
+      const root = hostWindow();
+      return !!(root.AudioContext || root.webkitAudioContext);
     },
     unlock() {
       return !!ac();
     },
     setEnabled(value) {
-      enabled = !!value;
-      if (!enabled) {
+      effects = !!value;
+      musicOn = !!value;
+      if (!value) {
         stopRadio();
         if (brake) brake.gain.gain.value = 0;
         if (master) master.gain.value = 0;
       } else if (master) master.gain.value = 0.75;
     },
+    setEffects(value) {
+      effects = !!value;
+      if (!effects && brake) brake.gain.gain.value = 0;
+      if (master && audible()) master.gain.value = 0.75;
+    },
+    setMusic(value) {
+      musicOn = !!value;
+      if (!musicOn) stopRadio();
+      if (master && audible()) master.gain.value = 0.75;
+    },
+    setVoice(value) {
+      voiceOn = !!value;
+    },
+    voiceEnabled() {
+      return voiceOn;
+    },
     pedal(down) {
       tone(down ? 140 : 220, 0.07, "square", 0.03);
     },
     brakeAmount(amount, speed) {
-      if (!enabled) return;
+      if (!effects) return;
       ensureBrake();
       if (!brake) return;
       const vol = amount > 0.35 && speed > 3 ? Math.min(0.05, amount * speed * 0.0016) : 0;
@@ -171,10 +210,45 @@ export function createAudio() {
     ui() {
       tone(520, 0.05, "square", 0.025);
     },
+    voice(text) {
+      if (!voiceOn) return;
+      const audio = ac();
+      if (!audio) return;
+      const line = String(text || "");
+      const count = 2 + (line.length % 3);
+      const root = 246 + ((line.charCodeAt(0) || 70) % 6) * 16;
+      for (let i = 0; i < count; i += 1) {
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        const when = audio.currentTime + i * 0.09;
+        osc.type = "triangle";
+        osc.frequency.value = root * (i % 2 ? 1.25 : 1);
+        gain.gain.setValueAtTime(0.0001, when);
+        gain.gain.exponentialRampToValueAtTime(0.05, when + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.08);
+        osc.connect(gain);
+        gain.connect(master);
+        osc.start(when);
+        osc.stop(when + 0.1);
+      }
+    },
+    cargo(type) {
+      if (type === "fish") {
+        tone(880, 0.12, "sine", 0.03);
+        tone(660, 0.16, "triangle", 0.02);
+      } else {
+        tone(520, 0.08, "triangle", 0.03);
+        tone(390, 0.1, "sine", 0.02);
+      }
+    },
+    sting() {
+      tone(523, 0.12, "triangle", 0.04);
+      tone(659, 0.16, "triangle", 0.03);
+    },
     startRadio,
     stopRadio,
     duck(important) {
-      if (!master || !enabled) return;
+      if (!master || !audible()) return;
       master.gain.value = important ? 0.35 : 0.75;
     },
   };

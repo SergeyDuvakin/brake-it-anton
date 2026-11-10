@@ -11,7 +11,15 @@ export function freshSave() {
     infinite: false,
     best: {},
     bestMeters: {},
-    settings: { sound: true, shake: true, reducedMotion: false },
+    settings: {
+      sound: true,
+      music: true,
+      voice: true,
+      vibration: true,
+      shake: true,
+      reducedMotion: false,
+      largeUi: false,
+    },
     notice: null,
   };
 }
@@ -53,10 +61,16 @@ export function parseSave(raw) {
   if (typeof meters === "number" && Number.isFinite(meters) && meters >= 0 && meters < 1e7) {
     bestMeters.infinite = meters;
   }
+  const settingsIn = data.settings && typeof data.settings === "object" && !Array.isArray(data.settings) ? data.settings : {};
+  const legacySound = settingsIn.sound !== false;
   const settings = {
-    sound: data.settings?.sound !== false,
-    shake: data.settings?.shake !== false,
-    reducedMotion: data.settings?.reducedMotion === true,
+    sound: settingsIn.effects !== undefined ? settingsIn.effects !== false : legacySound,
+    music: settingsIn.music === undefined ? legacySound : settingsIn.music !== false,
+    voice: settingsIn.voice !== false,
+    vibration: settingsIn.vibration !== false,
+    shake: settingsIn.shake !== false,
+    reducedMotion: settingsIn.reducedMotion === true,
+    largeUi: settingsIn.largeUi === true,
   };
   return {
     ok: true,
@@ -74,6 +88,25 @@ export function applyVictory(save, missionId, stars) {
     const prev = next.best[missionId] || 0;
     next.best[missionId] = Math.max(prev, stars | 0);
   }
+  return next;
+}
+
+const TOGGLE = {
+  sound: "sound",
+  music: "music",
+  voice: "voice",
+  vibrate: "vibration",
+  motion: "reducedMotion",
+  shake: "shake",
+  large: "largeUi",
+};
+
+/** One accessibility switch. Shake and reduced motion are separate. */
+export function toggleSetting(save, which) {
+  const key = TOGGLE[which];
+  const next = structuredClone(save);
+  if (!key || !next.settings) return next;
+  next.settings[key] = !next.settings[key];
   return next;
 }
 

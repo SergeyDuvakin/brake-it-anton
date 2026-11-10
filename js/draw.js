@@ -4,9 +4,36 @@
  */
 
 import { CFG, PALETTE as P } from "./config.js";
-import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
+import { damageStage } from "./physics.js";
+import { drawPassenger, paintCabin } from "./cabin.js";
+import { CALLOUT, DRIVER_PLATE, NOTICE_BOX } from "./layout.js";
+import {
+  drawDriveChrome,
+  drawGarageScreen,
+  drawPauseScreen,
+  drawResultScreen,
+  drawTitleChrome,
+  pedalHitBox,
+  setLargeUi,
+  uiImages,
+  uiScale,
+} from "./ui.js";
 import { VIEW, project } from "./road.js";
-import { hazardWorldX } from "./sim.js";
+import { routeLocal, routeYaw } from "./route.js";
+import { anchorKind, farDs, groundDs, paintFarToNear } from "./anchors.js";
+import { gaitOffset } from "./gait.js";
+import { actorTravel, hazardWorldX, renderPose } from "./sim.js";
+import {
+  drawCastBin,
+  drawCastCargo,
+  drawCastDog,
+  drawCastHole,
+  drawCastLid,
+  drawCastPed,
+  drawCastScenery,
+  sceneryKey,
+  worldImages,
+} from "./cast.js";
 
 /** World car scale. Do not shrink this to fake a gap in front of a pedestrian. */
 export const CAR_SPRITE_SCALE = 1.42;
@@ -18,10 +45,35 @@ export const CAR_BODY_W = 80;
 export const CAR_BODY_H = 112;
 /** Unscaled y of the pedestrian's feet before they are parked on the ground point. */
 export const PED_FOOT_LOCAL_Y = 48;
+/** Unscaled y of each family's road contact, before it is parked on the anchor. */
+export const DOG_PAW_LOCAL_Y = 32;
+export const BIN_BOTTOM_LOCAL_Y = 18;
+export const LID_BOTTOM_LOCAL_Y = 16;
+export const NPC_BOTTOM_LOCAL_Y = 44;
 
 /**
- * Draw origin that puts the body nose on the bumper after the same
- * rotate-then-scale the sprite applies. The car is not resized.
+ * The player's hitbox on the screen. Nose is the bumper, tail is the
+ * near edge, and the two sides are the body half-width. People and dogs
+ * are not forced into a patch like this: they stand up from their feet.
+ */
+export function playerChassis(xm) {
+  const nose = CFG.carHalfFront;
+  const tail = -CFG.carHalfBack;
+  const half = CFG.carHalfW;
+  return {
+    nose: project(nose, xm),
+    tail: project(tail, xm),
+    noseL: project(nose, xm - half),
+    noseR: project(nose, xm + half),
+    tailL: project(tail, xm - half),
+    tailR: project(tail, xm + half),
+  };
+}
+
+/**
+ * Draw origin for the ink title car. Its nose stays on the bumper.
+ * The world cars do not use this scale: a uniform screen blit cannot
+ * be both 3.4 m long and 1.7 m wide under this camera.
  */
 export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = CAR_SPRITE_SCALE) {
   const dive = (brakeInput || 0) * CAR_DIVE;
@@ -31,6 +83,141 @@ export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = 
     x: bumperX + Math.sin(dive) * ly,
     y: bumperY - Math.cos(dive) * ly,
   };
+}
+
+/**
+ * Approved top-down plans (heading 0). The hood is the small sprite y.
+ * Chassis length / art length, then one screen rectangle from the nose
+ * to the tail of the same `viewProject()` as the road. Width follows the
+ * file, so a side lane does not shear or squash the drawing. The whole
+ * mask is drawn, mirrors included. Length matches the chassis. The
+ * drawing is a little wider for its length than the 3.4×1.7 m
+ * rectangle, so the mirrors sit about 12 cm outside each side and the
+ * doors land on the rectangle.
+ */
+export const PLAN_ART = {
+  yellow: { artLen: 806, pivot: 500 },
+  coral: { artLen: 855, pivot: 500 },
+  mint: { artLen: 829, pivot: 414 },
+  blue: { artLen: 833, pivot: 416 },
+};
+
+export function planMetresPerPixel(lengthM, artLen) {
+  return lengthM / artLen;
+}
+
+/** Sprite y grows toward the tail. Smaller y is the nose, larger ds. */
+export function planRowDs(centerDs, spriteY, pivotY, lengthM, artLen) {
+  return centerDs - (spriteY - pivotY) * (lengthM / artLen);
+}
+
+function loadCarImage(file) {
+  const ImageCtor = globalThis.Image;
+  if (typeof ImageCtor !== "function") return null;
+  const img = new ImageCtor();
+  img.decoding = "async";
+  img.src = new URL(`../assets/cars/${file}`, import.meta.url).href;
+  return img;
+}
+
+const YELLOW_STRAIGHT = loadCarImage("yellow-car-game-straight.png");
+const YELLOW_BRAKE = loadCarImage("yellow-car-brake.png");
+const YELLOW_CRASH = loadCarImage("yellow-car-collision.png");
+const YELLOW_LEFT = loadCarImage("yellow-car-left.png");
+const YELLOW_RIGHT = loadCarImage("yellow-car-right.png");
+const YELLOW_SMALL_LEFT = loadCarImage("yellow-car-small-left.png");
+const YELLOW_SMALL_RIGHT = loadCarImage("yellow-car-small-right.png");
+const MINT_CAR = loadCarImage("mint-car.png");
+const BLUE_CAR = loadCarImage("blue-car.png");
+const CORAL_STRAIGHT = loadCarImage("coral-wagon-straight.png");
+
+let viewCam = 0;
+
+function bindView(cam) {
+  viewCam = cam || 0;
+}
+
+function viewProject(ds, xm) {
+  const local = routeLocal(viewCam, viewCam + ds, xm);
+  return project(local.ds, local.xm);
+}
+
+function imageReady(img) {
+  return !!(img && img.complete && img.naturalWidth);
+}
+
+export function whenCarsReady() {
+  const imgs = [
+    YELLOW_STRAIGHT,
+    YELLOW_BRAKE,
+    YELLOW_CRASH,
+    YELLOW_LEFT,
+    YELLOW_RIGHT,
+    YELLOW_SMALL_LEFT,
+    YELLOW_SMALL_RIGHT,
+    MINT_CAR,
+    BLUE_CAR,
+    CORAL_STRAIGHT,
+    ...worldImages(),
+    ...uiImages(),
+  ].filter(Boolean);
+  if (!imgs.length) return Promise.resolve(false);
+  return Promise.all(imgs.map((img) => (img.decode ? img.decode() : Promise.resolve()))).then(() => true);
+}
+
+/**
+ * One rectangle for the whole plan. The nose and the tail stay on the
+ * projected ground of those distances, and both axes use that one height.
+ * Slicing the file by depth made the tail wider than the hood and shoved
+ * a side-lane car into a trapezoid, so the drawing no longer matched itself.
+ * The bitmap is not prewarped. Mirrors stay in the frame.
+ */
+export function planBlitBox(centerDs, xm, lengthM, artLen, imageWidth, pivot = 500) {
+  const yTop = pivot - artLen / 2;
+  const nose = project(planRowDs(centerDs, yTop, pivot, lengthM, artLen), xm);
+  const tail = project(planRowDs(centerDs, yTop + artLen, pivot, lengthM, artLen), xm);
+  const mid = project(centerDs, xm);
+  const h = Math.abs(tail.y - nose.y);
+  const w = h * (imageWidth / artLen);
+  return {
+    x: mid.x - w / 2,
+    y: Math.min(nose.y, tail.y),
+    w,
+    h,
+    sy: yTop,
+    noseY: nose.y,
+    tailY: tail.y,
+  };
+}
+
+function blitBox(proj, centerDs, xm, lengthM, artLen, imageWidth, pivot = 500) {
+  const yTop = pivot - artLen / 2;
+  const nose = proj(planRowDs(centerDs, yTop, pivot, lengthM, artLen), xm);
+  const tail = proj(planRowDs(centerDs, yTop + artLen, pivot, lengthM, artLen), xm);
+  const mid = proj(centerDs, xm);
+  const h = Math.abs(tail.y - nose.y);
+  const w = h * (imageWidth / artLen);
+  return {
+    x: mid.x - w / 2,
+    y: Math.min(nose.y, tail.y),
+    w,
+    h,
+    sy: yTop,
+    noseY: nose.y,
+    tailY: tail.y,
+  };
+}
+
+export function drawPlanSprite(ctx, img, spec) {
+  if (!imageReady(img)) return false;
+  const { centerDs, xm, lengthM, artLen, pivot = 500 } = spec;
+  const box = blitBox(viewProject, centerDs, xm, lengthM, artLen, img.width, pivot);
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  if ("imageSmoothingQuality" in ctx) ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, box.sy, img.width, artLen, box.x, box.y, box.w, box.h);
+  ctx.restore();
+  return true;
 }
 
 /** Local y shift that sits the feet on the projected ground point. */
@@ -44,8 +231,9 @@ export function pedestrianFootShift() {
  * `world` is metres from the bumper to the near face of the hitbox.
  */
 export function bumperFootGap(sim, hazard) {
-  const bumper = project(CFG.carHalfFront, sim.x);
-  const foot = project(hazard.s - sim.s, hazardWorldX(hazard, sim));
+  bindView(sim.s);
+  const bumper = viewProject(CFG.carHalfFront, sim.x);
+  const foot = viewProject(hazard.s - (hazard.halfL || 0) - sim.s, hazardWorldX(hazard, sim));
   return {
     world: hazard.s - hazard.halfL - (sim.s + CFG.carHalfFront),
     screen: bumper.y - foot.y,
@@ -81,6 +269,7 @@ function roundRect(ctx, x, y, w, h, r) {
 
 function paintCenter(ctx, text, x, y, w, h, size, color = P.INK, display = false, record = false) {
   const shown = String(text);
+  size = Math.round(size * uiScale());
   let px = size;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -94,259 +283,151 @@ function paintCenter(ctx, text, x, y, w, h, size, color = P.INK, display = false
   if (record) labels.push({ text: shown, x, y, w, h, cx: x + w / 2, cy: y + h / 2 });
 }
 
-function button(ctx, id, x, y, w, h, text, kind = "paper") {
-  spots.push({ id, x, y, w, h });
-  roundRect(ctx, x, y, w, h, 18);
-  ctx.fillStyle = kind === "primary" ? P.TEAL : kind === "ink" ? P.INK : kind === "red" ? P.RED : P.PAPER;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-  paintCenter(ctx, text, x, y, w, h, h > 90 ? 32 : 24, kind === "ink" || kind === "red" ? P.PAPER : P.INK, false, true);
-}
-
 function hash(n) {
   let x = Math.imul(n | 0, 0x9e3779b1);
   x ^= x >>> 16;
   return (x >>> 0) / 4294967296;
 }
 
-function panel(ctx, x, y, w, h, fill) {
-  roundRect(ctx, x, y, w, h, 18);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ink(ctx, 8);
-  ctx.stroke();
-}
-
 export function render(ctx, state) {
+  setLargeUi(!!state.save?.settings?.largeUi);
   spots = [];
   labels = [];
+  const sink = { spots, labels };
+  let readout = { needleDeg: null, pedalDeg: null, hubX: null, hubY: null, tipX: null, tipY: null, padX: null, padY: null };
   ctx.clearRect(0, 0, 1600, 900);
   ctx.fillStyle = P.PAPER;
   ctx.fillRect(0, 0, 1600, 900);
-  if (state.screen === "garage") drawGarage(ctx, state);
+  if (state.screen === "garage") drawGarageScreen(ctx, state, sink);
   else if (state.screen === "title") drawTitle(ctx, state);
-  else drawPlay(ctx, state);
-  if (state.notice) {
-    roundRect(ctx, 360, 18, 880, 44, 12);
+  else readout = drawPlay(ctx, state, sink);
+  if (state.notice && state.screen !== "play") {
+    const box = NOTICE_BOX;
+    roundRect(ctx, box.x, box.y, box.w, box.h, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, state.notice, 360, 18, 880, 44, 18, P.INK, false, true);
+    const parts = String(state.notice).split(". ").filter(Boolean);
+    const lines = parts.length > 1 ? parts.map((part, index) => (index < parts.length - 1 ? `${part}.` : part)) : [String(state.notice)];
+    const rowH = box.h / lines.length;
+    lines.forEach((line, index) => {
+      paintCenter(ctx, line, box.x + 8, box.y + index * rowH, box.w - 16, rowH, 18, P.INK, false, true);
+    });
   }
-  return { spots, labels };
+  return { spots, labels, readout };
 }
 
 function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
-  drawWorld(ctx, state.preview, boil, false);
-  panel(ctx, 1056, 24, 520, 852, P.CABIN);
-  ctx.fillStyle = P.GLASS;
-  ctx.fillRect(1056, 24, 520, 168);
-  ink(ctx, 6);
-  ctx.beginPath();
-  ctx.moveTo(1056, 192);
-  ctx.lineTo(1576, 192);
-  ctx.stroke();
-  paintCenter(ctx, "Brake It, Anton", 1076, 40, 480, 78, 34, P.INK, true, true);
-  paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 1076, 122, 480, 40, 20, P.INK, false, true);
-  ctx.save();
-  ctx.translate(0, 28);
-  drawAnton(ctx, "preen", boil, 0, state.preview);
-  ctx.restore();
-  button(ctx, "start", 1092, 640, 448, 112, "В урок", "primary");
-  button(ctx, "garage", 1092, 768, 448, 76, "Гараж", "paper");
+  drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
+  paintCabin(ctx, state.preview, { ...state, pose: "preen", session: { phase: "drive", sim: state.preview } });
+  drawTitleChrome(ctx, { spots, labels }, state);
 }
 
-function drawGarage(ctx, state) {
-  const { save } = state;
-  panel(ctx, 24, 24, 1552, 852, "#B7D48A");
-  roundRect(ctx, 48, 44, 1504, 72, 16);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-  paintCenter(ctx, "Гараж", 48, 44, 1504, 72, 34, P.YEL, true, true);
 
-  drawYardPoster(ctx, 48, 136, 700, 470);
-  paintCenter(ctx, "Антон газует сам.", 48, 618, 700, 40, 22, P.INK, false, true);
-
-  state.missions.forEach((mission, index) => {
-    drawMissionCard(ctx, state, mission, 780, 136 + index * 112);
-  });
-  drawInfiniteCard(ctx, state, 780, 136 + 4 * 112);
-
-  button(ctx, "sound", 48, 780, 250, 72, save.settings.sound ? "Звук: вкл" : "Звук: выкл", "paper");
-  button(ctx, "shake", 316, 780, 270, 72, save.settings.shake ? "Тряска: вкл" : "Тряска: выкл", "paper");
-  button(ctx, "go", 1188, 776, 340, 80, "В урок", "primary");
-}
-
-function drawYardPoster(ctx, x, y, w, h) {
-  ctx.save();
-  roundRect(ctx, x, y, w, h, 16);
-  ctx.clip();
-  ctx.fillStyle = "#A9CF86";
-  ctx.fillRect(x, y, w, h);
-  drawBuilding(ctx, x + 90, y + 120, 1.05, 0, P.PINK, 0, false);
-  drawBuilding(ctx, x + 250, y + 150, 0.95, 1, P.ORANGE, 0, false);
-  drawBuilding(ctx, x + 70, y + 280, 1, 2, P.BLUE, 0, false);
-  drawTree(ctx, x + 300, y + 300, 0.9, 0, 3);
-  ctx.beginPath();
-  ctx.moveTo(x + 390, y + h - 8);
-  ctx.lineTo(x + 500, y + 28);
-  ctx.lineTo(x + 590, y + 28);
-  ctx.lineTo(x + w - 16, y + h - 8);
-  ctx.closePath();
-  ctx.fillStyle = P.ROAD;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  ctx.strokeStyle = P.PAPER;
-  ctx.lineWidth = 4;
-  ctx.setLineDash([12, 14]);
-  ctx.beginPath();
-  ctx.moveTo(x + 470, y + h - 16);
-  ctx.lineTo(x + 545, y + 40);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  drawPed(ctx, x + 620, y + 210, 0.85, 0, true);
-  drawCarSprite(ctx, x + 530, y + h - 90, 1.15, 0, null);
-  ctx.restore();
-  ink(ctx, 5);
-  roundRect(ctx, x, y, w, h, 16);
-  ctx.stroke();
-}
-
-function missionInk(mission) {
-  if (mission.cargo === "cake") return P.PINK;
-  if (mission.cargo === "fish") return P.GLASS;
-  if (mission.lesson === 2) return P.YEL;
-  return P.PAPER;
-}
-
-function drawMissionCard(ctx, state, mission, x, y) {
-  const unlocked = mission.lesson <= state.save.unlocked;
-  const best = state.save.best[mission.id] || 0;
-  const picked = unlocked && state.selected === mission.id;
-  roundRect(ctx, x, y, 740, 100, 16);
-  ctx.fillStyle = picked ? P.YEL : missionInk(mission);
-  ctx.fill();
-  if (!unlocked) {
-    ctx.fillStyle = "rgba(28,22,30,0.08)";
-    ctx.fill();
-  }
-  ink(ctx, unlocked ? 5 : 4);
-  ctx.stroke();
-  const sub = unlocked ? mission.objective : "Сначала пройди предыдущий урок";
-  paintCenter(ctx, `${mission.lesson}. ${mission.title}`, x + 70, y + 10, 430, 36, 22, P.INK, false, true);
-  paintCenter(ctx, sub, x + 70, y + 50, 650, 36, 18, P.INK, false, true);
-  if (unlocked && best > 0) paintCenter(ctx, "★".repeat(best) + "☆".repeat(3 - best), x + 510, y + 12, 200, 32, 18, P.INK, false, true);
-  if (!unlocked) drawLock(ctx, x + 22, y + 40);
-  if (unlocked) spots.push({ id: `mission-${mission.id}`, x, y, w: 740, h: 100 });
-}
-
-function drawInfiniteCard(ctx, state, x, y) {
-  const open = state.save.infinite === true;
-  const picked = open && state.selected === "infinite";
-  const meters = state.save.bestMeters.infinite || 0;
-  roundRect(ctx, x, y, 740, 100, 16);
-  ctx.fillStyle = picked ? P.ORANGE : P.YEL;
-  ctx.fill();
-  if (!open) {
-    ctx.fillStyle = "rgba(28,22,30,0.08)";
-    ctx.fill();
-  }
-  ink(ctx, 5);
-  ctx.stroke();
-  paintCenter(ctx, "Последний урок", x + 70, y + 10, 650, 36, 22, P.INK, false, true);
-  paintCenter(ctx, open ? (meters ? `${meters} м` : "Пока машина едет") : "После первого урока", x + 70, y + 50, 650, 36, 18, P.INK, false, true);
-  if (!open) drawLock(ctx, x + 22, y + 40);
-  if (open) spots.push({ id: "mission-infinite", x, y, w: 740, h: 100 });
-}
-
-function drawLock(ctx, x, y) {
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(x + 12, y + 10, 8, Math.PI, 0);
-  ctx.stroke();
-  ctx.strokeRect(x, y + 10, 24, 18);
-}
-
-function drawPlay(ctx, state) {
+function drawPlay(ctx, state, sink) {
   const session = state.session;
   const sim = session.sim;
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
   const motion = !state.save.settings.reducedMotion;
   const mag = state.save.settings.shake && motion ? Math.min(sim.shake, 5) : 0;
-  const held = session.phase === "drive" && (session.brakeHeld || session.keysDown.has("Space"));
-  const visual = held ? Math.max(sim.brakeInput, 0.2) : 0;
-  const paused = session.phase === "pause" || session.phase === "result";
+  const driving = session.phase === "drive";
+  const brake = driving ? sim.brakeInput : 0;
 
   ctx.save();
   if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
-  drawWorld(ctx, sim, boil, motion);
+  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
-  drawCabin(ctx, sim, state, boil, visual);
-  drawPatience(ctx, sim, paused);
-  drawPedal(ctx, paused ? 0 : visual, paused);
-  drawHud(ctx, state, sim);
-  if (session.phase === "drive" && !paused) spots.push({ id: "pedal", x: 1080, y: 730, w: 480, h: 150 });
+  drawCabin(ctx, sim, state);
+  const showHud = driving || session.phase === "countdown";
+  const chrome = showHud ? drawDriveChrome(ctx, state, sink, brake) : null;
+  if (driving) {
+    spots.push({
+      id: "anton",
+      x: DRIVER_PLATE.x + 48,
+      y: DRIVER_PLATE.y + 70,
+      w: DRIVER_PLATE.w - 96,
+      h: 360,
+    });
+    spots.push(pedalHitBox());
+  }
   if (session.phase === "countdown") {
-    roundRect(ctx, 44, 124, 120, 84, 14);
+    roundRect(ctx, 640, 150, 120, 84, 14);
     ctx.fillStyle = P.PAPER;
     ctx.fill();
     ink(ctx, 6);
     ctx.stroke();
-    paintCenter(ctx, String(session.countdown || 1), 44, 124, 120, 84, 42, P.INK, true, false);
+    paintCenter(ctx, String(session.countdown || 1), 640, 150, 120, 84, 42, P.INK, true, false);
   }
-  if (session.phase === "pause") drawPause(ctx, state);
-  if (session.phase === "result") drawResult(ctx, state);
-  if (state.hint && session.phase === "drive") {
-    roundRect(ctx, 1092, 596, 448, 40, 12);
+  const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
+  if (driving && needsTap) {
+    roundRect(ctx, CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 1092, 596, 448, 40, 18, P.INK, false, true);
+    paintCenter(ctx, sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
+  } else if (state.hint && driving) {
+    roundRect(ctx, CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 12);
+    ctx.fillStyle = P.YEL;
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
   }
+  if (session.phase === "pause") drawPauseScreen(ctx, state, sink);
+  if (session.phase === "result") drawResultScreen(ctx, state, sink);
+  const needle = chrome?.needle;
+  return {
+    needleDeg: needle ? needle.deg : null,
+    pedalDeg: chrome ? chrome.pedalDeg : session.phase === "result" ? 0 : null,
+    hubX: needle?.hubX ?? null,
+    hubY: needle?.hubY ?? null,
+    tipX: needle?.tipX ?? null,
+    tipY: needle?.tipY ?? null,
+    padX: chrome?.pad?.x ?? null,
+    padY: chrome?.pad?.y ?? null,
+  };
 }
 
-function drawHud(ctx, state, sim) {
-  const mission = state.session.mission;
-  roundRect(ctx, 44, 40, 210, 60, 12);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-  const lesson = mission.infinite ? "∞" : String(mission.lesson).padStart(2, "0");
-  paintCenter(ctx, `УРОК ${lesson}`, 44, 40, 210, 60, 22, P.YEL, true, false);
-
-  roundRect(ctx, 268, 40, 500, 60, 12);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  const goal = mission.infinite ? `${Math.floor(sim.s)} м` : mission.objective;
-  paintCenter(ctx, goal, 280, 46, 360, 28, 20, P.INK, false, false);
-  if (!mission.infinite) {
-    const p = Math.max(0, Math.min(1, sim.s / mission.length));
-    ctx.fillStyle = "#E7DCC6";
-    ctx.fillRect(292, 80, 360, 8);
-    ctx.fillStyle = P.PAT_GREEN;
-    ctx.fillRect(292, 80, Math.max(0, 360 * p), 8);
+/**
+ * One camera sample for the road, the car, and every actor.
+ * Screen positions are not linear in alpha; the meters are.
+ * Pointers and collision do not read this.
+ */
+export function placedScene(sim, alpha = 1, legacy = false) {
+  const pose = renderPose(sim, alpha);
+  bindView(pose.s);
+  const car = viewProject(CFG.carHalfFront, pose.x);
+  const actors = [];
+  for (const h of sim.hazards || []) {
+    const dist = h.s - pose.s;
+    const hx = pose.hazardX.has(h.id) ? pose.hazardX.get(h.id) : hazardWorldX(h, sim);
+    const travel = pose.hazardTravel?.has(h.id) ? pose.hazardTravel.get(h.id) : actorTravel(h, sim);
+    const kind = anchorKind(h.type);
+    const near = legacy ? dist : groundDs(h, pose.s);
+    const far = legacy ? dist : farDs(h, pose.s);
+    actors.push({
+      id: h.id,
+      dist,
+      hx,
+      travel,
+      kind,
+      legacy,
+      groundDs: near,
+      farDs: far,
+      spot: viewProject(near, hx),
+      farSpot: viewProject(far, hx),
+    });
   }
-  if (mission.cargo === "cake" || mission.cargo === "fish") drawCargoIcon(ctx, 720, 70, mission.cargo, 0.7, sim);
-
-  roundRect(ctx, 940, 34, 72, 72, 14);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  ctx.fillStyle = P.INK;
-  ctx.fillRect(962, 50, 8, 40);
-  ctx.fillRect(982, 50, 8, 40);
-  spots.push({ id: "pause", x: 928, y: 26, w: 96, h: 90 });
+  return { pose, car, actors };
 }
 
-function drawWorld(ctx, sim, boil, motion) {
+function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = false) {
+  const scene = placedScene(sim, alpha, legacy);
+  const cam = scene.pose.s;
+  const actorAt = new Map(scene.actors.map((actor) => [actor.id, actor]));
   const box = VIEW.panel;
   const far = 1600;
   ctx.save();
@@ -358,16 +439,20 @@ function drawWorld(ctx, sim, boil, motion) {
   ctx.fillStyle = P.GLASS;
   ctx.fillRect(box.x, box.y, box.w, VIEW.vanishY - box.y + 8);
 
-  fillQuad(ctx, VIEW.near, far, -VIEW.sideHalf, -VIEW.roadHalf, "#E4D7C4");
-  fillQuad(ctx, VIEW.near, far, VIEW.roadHalf, VIEW.sideHalf, "#E4D7C4");
-  fillQuad(ctx, VIEW.near, far, -VIEW.roadHalf, VIEW.roadHalf, P.ROAD);
-  strokeRay(ctx, -VIEW.roadHalf, far, P.INK, 7);
-  strokeRay(ctx, VIEW.roadHalf, far, P.INK, 7);
+  // Short strips follow a bend. One quad from the bumper to the horizon would cut the corner.
+  for (let ds = VIEW.near; ds < far; ds += ds < VIEW.look ? 8 : 400) {
+    const ds1 = Math.min(far, ds + (ds < VIEW.look ? 8 : 400));
+    fillQuad(ctx, ds, ds1, -VIEW.sideHalf, -VIEW.roadHalf, "#E4D7C4");
+    fillQuad(ctx, ds, ds1, VIEW.roadHalf, VIEW.sideHalf, "#E4D7C4");
+    fillQuad(ctx, ds, ds1, -VIEW.roadHalf, VIEW.roadHalf, P.ROAD);
+  }
+  strokeCurve(ctx, -VIEW.roadHalf, far, P.INK, 7);
+  strokeCurve(ctx, VIEW.roadHalf, far, P.INK, 7);
 
   const curb = 5;
-  for (let s = Math.floor((sim.s + VIEW.near) / curb) * curb; s < sim.s + VIEW.look; s += curb) {
+  for (let s = Math.floor((cam + VIEW.near) / curb) * curb; s < cam + VIEW.look; s += curb) {
     for (const side of [-1, 1]) {
-      const spot = project(s - sim.s, side * (VIEW.roadHalf + 0.08));
+      const spot = viewProject(s - cam, side * (VIEW.roadHalf + 0.08));
       if (spot.y < 40 || spot.y > 900) continue;
       ctx.fillStyle = P.PAPER;
       ctx.fillRect(spot.x - 5 * spot.scale, spot.y, 10 * spot.scale, 7 * spot.scale);
@@ -375,12 +460,12 @@ function drawWorld(ctx, sim, boil, motion) {
   }
 
   for (const zone of sim.slippery || []) {
-    const ds0 = zone.s0 - sim.s;
-    const ds1 = zone.s1 - sim.s;
+    const ds0 = zone.s0 - cam;
+    const ds1 = zone.s1 - cam;
     if (ds1 < VIEW.near || ds0 > VIEW.look) continue;
     fillQuad(ctx, Math.max(ds0, VIEW.near), Math.min(ds1, VIEW.look), -VIEW.roadHalf * 0.92, VIEW.roadHalf * 0.92, "rgba(120,170,190,0.45)");
     if (ds0 > 2 && ds0 < VIEW.look - 6) {
-      const spot = project(ds0, 0);
+      const spot = viewProject(ds0, 0);
       roundRect(ctx, spot.x - 52, spot.y - 16, 104, 32, 8);
       ctx.fillStyle = P.YEL;
       ctx.fill();
@@ -390,13 +475,13 @@ function drawWorld(ctx, sim, boil, motion) {
     }
   }
 
-  for (let s = Math.floor((sim.s + VIEW.near) / 9) * 9; s < sim.s + VIEW.look; s += 9) {
-    fillQuad(ctx, s - sim.s, s - sim.s + 3.4, -0.18, 0.18, P.PAPER);
+  for (let s = Math.floor((cam + VIEW.near) / 9) * 9; s < cam + VIEW.look; s += 9) {
+    fillQuad(ctx, s - cam, s - cam + 3.4, -0.18, 0.18, P.PAPER);
   }
-  for (let s = Math.floor((sim.s - 6) / 17) * 17; s < sim.s + VIEW.look; s += 17) {
-    const ds = s - sim.s;
-    const a = project(ds, -0.9);
-    const b = project(ds + 1.4, 0.4);
+  for (let s = Math.floor((cam - 6) / 17) * 17; s < cam + VIEW.look; s += 17) {
+    const ds = s - cam;
+    const a = viewProject(ds, -0.9);
+    const b = viewProject(ds + 1.4, 0.4);
     ctx.strokeStyle = "rgba(28,22,30,0.35)";
     ctx.lineWidth = Math.max(1, 2 * a.scale);
     ctx.beginPath();
@@ -404,8 +489,8 @@ function drawWorld(ctx, sim, boil, motion) {
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
   }
-  for (let s = Math.floor((sim.s - 4) / 36) * 36; s < sim.s + VIEW.look; s += 36) {
-    const spot = project(s - sim.s, 0.55);
+  for (let s = Math.floor((cam - 4) / 36) * 36; s < cam + VIEW.look; s += 36) {
+    const spot = viewProject(s - cam, 0.55);
     if (spot.y < 50 || spot.y > 880) continue;
     ctx.beginPath();
     ctx.ellipse(spot.x, spot.y, 16 * spot.scale, 8 * spot.scale, 0, 0, Math.PI * 2);
@@ -415,27 +500,8 @@ function drawWorld(ctx, sim, boil, motion) {
     ctx.stroke();
   }
 
-  const props = [];
-  for (let s = Math.floor((sim.s - 8) / 14) * 14; s < sim.s + VIEW.look; s += 14) {
-    const n = Math.round(s / 14);
-    for (const side of [-1, 1]) {
-      props.push({ ds: s - sim.s, xm: side * 4.55, n, side, band: districtAt(s), kind: "prop" });
-    }
-  }
-  for (const h of sim.hazards) {
-    const dist = h.s - sim.s;
-    if (h.resolved && dist < -10) continue;
-    if (dist < VIEW.near || dist > VIEW.look) continue;
-    props.push({ ds: dist, xm: hazardWorldX(h, sim), kind: "hazard", h });
-  }
-  props.sort((a, b) => b.ds - a.ds);
-  for (const item of props) {
-    if (item.kind === "prop") drawProp(ctx, item, boil);
-    else drawHazard(ctx, sim, item.h, boil);
-  }
-
   for (const skid of sim.skids || []) {
-    const spot = project(skid.s - sim.s, skid.x);
+    const spot = viewProject(skid.s - cam, skid.x);
     if (spot.y < 40 || spot.y > 880) continue;
     ctx.strokeStyle = "rgba(28,22,30,0.45)";
     ctx.lineWidth = 5 * spot.scale;
@@ -447,8 +513,38 @@ function drawWorld(ctx, sim, boil, motion) {
     ctx.stroke();
   }
 
+  const props = [];
+  for (let s = Math.floor((cam - 8) / 14) * 14; s < cam + VIEW.look; s += 14) {
+    const n = Math.round(s / 14);
+    for (const side of [-1, 1]) {
+      const band = sim.district === "market" ? "shops" : sim.district === "country" ? "country" : districtAt(s);
+      props.push({ ds: s - cam, xm: side * sceneryAnchor(), n, side, band, kind: "prop" });
+    }
+  }
+  for (const h of sim.hazards) {
+    const placed = actorAt.get(h.id);
+    const dist = placed.dist;
+    if (h.resolved && dist < -10) continue;
+    if (dist < VIEW.near || dist > VIEW.look) continue;
+    props.push({ ds: legacy ? dist : placed.groundDs, layer: 1, xm: placed.hx, kind: "hazard", h, placed });
+  }
+  // The nose, not the tail. A body whose near face is still ahead of the
+  // bumper is farther up the screen and paints first. A body on the nose
+  // or closer paints after the car: its feet sit on the yellow because
+  // the near face has reached the bumper, and covering them made the
+  // torso look as if it were standing on the roof. The tail stays the
+  // hitbox's near edge; it is not the sort key.
+  if (!legacy) props.push({ ds: CFG.carHalfFront, layer: 0, kind: "car" });
+  const ordered = paintFarToNear(props);
+  for (const item of ordered) {
+    if (item.kind === "prop") drawProp(ctx, item, boil);
+    else if (item.kind === "car") drawCar(ctx, sim, boil, scene.pose, legacy);
+    else drawHazard(ctx, sim, item.h, boil, item.placed, reduced);
+  }
+  if (legacy) drawCar(ctx, sim, boil, scene.pose, true);
+
   if (motion && sim.v > 11) {
-    const shift = (sim.s * 28) % 70;
+    const shift = (cam * 28) % 70;
     ctx.strokeStyle = "rgba(28,22,30,0.22)";
     ctx.lineWidth = 3;
     for (let i = 0; i < 3; i++) {
@@ -461,7 +557,6 @@ function drawWorld(ctx, sim, boil, motion) {
       ctx.stroke();
     }
   }
-  drawCar(ctx, sim, boil);
   ctx.restore();
   roundRect(ctx, box.x, box.y, box.w, box.h, 8);
   ink(ctx, 8);
@@ -469,10 +564,10 @@ function drawWorld(ctx, sim, boil, motion) {
 }
 
 function fillQuad(ctx, ds0, ds1, x0, x1, color) {
-  const a = project(ds0, x0);
-  const b = project(ds0, x1);
-  const c = project(ds1, x1);
-  const d = project(ds1, x0);
+  const a = viewProject(ds0, x0);
+  const b = viewProject(ds0, x1);
+  const c = viewProject(ds1, x1);
+  const d = viewProject(ds1, x0);
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
   ctx.lineTo(b.x, b.y);
@@ -483,12 +578,17 @@ function fillQuad(ctx, ds0, ds1, x0, x1, color) {
   ctx.fill();
 }
 
-function strokeRay(ctx, xm, far, color, width) {
-  const a = project(VIEW.near, xm);
-  const b = project(far, xm);
+function strokeCurve(ctx, xm, far, color, width) {
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
+  let started = false;
+  for (let ds = VIEW.near; ds <= VIEW.look; ds += 4) {
+    const p = viewProject(ds, xm);
+    if (!started) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+    started = true;
+  }
+  const end = viewProject(far, xm);
+  ctx.lineTo(end.x, end.y);
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
   ctx.stroke();
@@ -496,6 +596,20 @@ function strokeRay(ctx, xm, far, color, width) {
 
 function districtAt(worldS) {
   return ["yard", "market", "edge"][Math.abs(Math.floor(worldS / 220)) % 3];
+}
+
+/**
+ * Metres from the centre line to the scenery anchor.
+ * The anchor is the middle of the drawing. The widest house base
+ * reaches 2.72 m toward the road, so the anchor sits that far
+ * outside the curb. The inner edge of the base then lands on the
+ * sidewalk, not on the asphalt.
+ */
+export const SCENERY_REACH = 2.72;
+export const SCENERY_GAP = 0.28;
+
+export function sceneryAnchor() {
+  return VIEW.roadHalf + SCENERY_GAP + SCENERY_REACH;
 }
 
 function shadowAt(ctx, x, y, sc, rx) {
@@ -510,11 +624,12 @@ function shadowAt(ctx, x, y, sc, rx) {
 }
 
 function drawProp(ctx, item, boil) {
-  const spot = project(item.ds, item.xm);
+  const spot = viewProject(item.ds, item.xm);
   if (spot.y < -30 || spot.y > 940) return;
   const sc = Math.max(0.42, Math.min(1.2, spot.scale));
   const color = [P.PINK, P.BLUE, P.ORANGE, P.YEL, P.TEAL][Math.abs(item.n + item.side) % 5];
   const cycle = Math.abs(item.n * 2 + (item.side > 0 ? 1 : 4)) % 7;
+  if (drawCastScenery(ctx, sceneryKey(item), spot.x, spot.y, spot.scale)) return;
   shadowAt(ctx, spot.x, spot.y, sc, 46);
   // Houses and trees stay put. The 110 ms boil is only for people, dogs and Anton.
   if (item.band === "market") {
@@ -658,20 +773,36 @@ function drawTree(ctx, x, y, sc, boil, seed) {
   ctx.restore();
 }
 
-function drawHazard(ctx, sim, h, boil) {
-  const dist = h.s - sim.s;
-  const hx = hazardWorldX(h, sim);
-  const spot = project(dist, hx);
-  if (spot.y < -40 || spot.y > 940) return;
+function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
+  const dist = placed ? placed.dist : h.s - sim.s;
+  const hx = placed ? placed.hx : hazardWorldX(h, sim);
+  const spot = placed ? placed.spot : viewProject(dist, hx);
+  const travel = reduced ? 0 : placed?.travel ?? actorTravel(h, sim);
+  const step = gaitOffset(travel, h.type, reduced);
+  const farY = placed?.farSpot?.y ?? spot.y;
+  const top = Math.min(spot.y, farY);
+  const bottom = Math.max(spot.y, farY);
+  if (bottom < -40 || top > 960) return;
   const sc = Math.max(0.62, Math.min(1.45, spot.scale * 1.55));
   const hop = h.hopped ? -22 * sc : 0;
-  shadowAt(ctx, spot.x, spot.y, sc, h.type === "cutin" || h.type === "stopped" ? 34 : 22);
-  if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, boil, true);
-  else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, boil);
-  else if (h.type === "pothole") drawHole(ctx, spot.x, spot.y, sc);
-  else if (h.type === "bin") drawBin(ctx, spot.x, spot.y + hop, sc, dist, h.hopped);
-  else if (h.type === "roller") drawRoller(ctx, spot.x, spot.y, sc, h);
-  else drawNpc(ctx, spot.x, spot.y, sc, h, dist, boil);
+  const planVehicle = (h.type === "cutin" || h.type === "stopped") && !placed?.legacy && imageReady(CORAL_STRAIGHT);
+  let cast = false;
+  if (!placed?.legacy) {
+    if (h.type === "pedestrian") cast = drawCastPed(ctx, spot.x, spot.y + hop, spot.scale, travel, reduced, h);
+    else if (h.type === "dog") cast = drawCastDog(ctx, spot.x, spot.y, spot.scale, travel, reduced);
+    else if (h.type === "pothole") cast = drawCastHole(ctx, placed, h);
+    else if (h.type === "bin") cast = drawCastBin(ctx, spot.x, spot.y, spot.scale, !!h.hopped);
+    else if (h.type === "roller") cast = drawCastLid(ctx, spot.x, spot.y, spot.scale, h.crossT >= 0);
+  }
+  if (!cast && !planVehicle) shadowAt(ctx, spot.x, spot.y, sc, h.type === "cutin" || h.type === "stopped" ? 34 : 22);
+  if (!cast) {
+    if (h.type === "pedestrian") drawPed(ctx, spot.x, spot.y + hop, sc, step, true);
+    else if (h.type === "dog") drawDog(ctx, spot.x, spot.y, sc, step, !!placed?.legacy);
+    else if (h.type === "pothole") drawHole(ctx, placed || { spot, farSpot: spot, hx, groundDs: dist, farDs: dist, legacy: false }, h, sc);
+    else if (h.type === "bin") drawBin(ctx, placed, h, sc, dist);
+    else if (h.type === "roller") drawRoller(ctx, placed, h, sc);
+    else drawNpc(ctx, placed, h, sc, dist, boil);
+  }
 
   if (!h.resolved && dist < (h.telegraph || 60) && dist > 2) {
     const markLift = h.type === "pedestrian" ? 184 : 78;
@@ -686,7 +817,7 @@ function drawHazard(ctx, sim, h, boil) {
   }
   if (h.trust && !h.resolved && h.committed !== "lunge" && dist < (h.telegraph || 60) && dist > 2) {
     const free = -Math.sign(h.x || 1) * 1.6;
-    const chev = project(Math.max(4, Math.min(dist * 0.35, 14)), free);
+    const chev = viewProject(Math.max(4, Math.min(dist * 0.35, 14)), free);
     ctx.fillStyle = P.YEL;
     ctx.beginPath();
     ctx.moveTo(chev.x, chev.y - 16);
@@ -699,12 +830,11 @@ function drawHazard(ctx, sim, h, boil) {
   }
 }
 
-function drawPed(ctx, x, y, sc, boil, phone) {
+function drawPed(ctx, x, y, sc, step, phone) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
   ctx.translate(0, pedestrianFootShift());
-  const step = boil ? 8 : -8;
   ctx.strokeStyle = P.INK;
   ctx.lineWidth = 6;
   ctx.beginPath();
@@ -742,10 +872,11 @@ function drawPed(ctx, x, y, sc, boil, phone) {
   ctx.restore();
 }
 
-function drawDog(ctx, x, y, sc, boil) {
+function drawDog(ctx, x, y, sc, step = 0, legacy = false) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(sc, sc);
+  if (!legacy) ctx.translate(0, -DOG_PAW_LOCAL_Y);
   ctx.fillStyle = "#8A5A3A";
   roundRect(ctx, -40, -18, 70, 36, 8);
   ctx.fill();
@@ -764,23 +895,43 @@ function drawDog(ctx, x, y, sc, boil) {
   ctx.beginPath();
   ctx.arc(41, -18, 2, 0, Math.PI * 2);
   ctx.fill();
-  const leg = boil ? 6 : 0;
-  ctx.fillRect(-28, 14, 8, 16 + leg);
-  ctx.fillRect(-8, 14, 8, 18 - leg);
-  ctx.fillRect(10, 14, 8, 16 + leg);
+  ctx.fillStyle = "#8A5A3A";
+  ctx.fillRect(-28 + step, 14, 8, 18);
+  ctx.fillRect(-8 - step, 14, 8, 18);
+  ctx.fillRect(10 + step, 14, 8, 18);
+  ink(ctx, 4);
   ctx.beginPath();
   ctx.moveTo(-36, -8);
-  ctx.quadraticCurveTo(-52, boil ? -24 : -8, -34, 6);
+  ctx.quadraticCurveTo(-52, -16 - step * 0.6, -34, 6);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawHole(ctx, x, y, sc) {
+function drawHole(ctx, placed, h, sc = 1) {
+  if (placed.legacy) {
+    ctx.save();
+    ctx.translate(placed.spot.x, placed.spot.y);
+    ctx.scale(sc, sc);
+    ctx.beginPath();
+    ctx.ellipse(0, 6, 34, 18, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#241C16";
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  const midS = (placed.groundDs + placed.farDs) / 2;
+  const halfW = h.halfW || 0.7;
+  const left = viewProject(midS, placed.hx - halfW);
+  const right = viewProject(midS, placed.hx + halfW);
+  const cx = (placed.spot.x + placed.farSpot.x) / 2;
+  const cy = (placed.spot.y + placed.farSpot.y) / 2;
+  const rx = Math.max(8, Math.abs(right.x - left.x) / 2);
+  const ry = Math.max(6, Math.abs(placed.spot.y - placed.farSpot.y) / 2);
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sc, sc);
   ctx.beginPath();
-  ctx.ellipse(0, 6, 34, 18, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
   ctx.fillStyle = "#241C16";
   ctx.fill();
   ink(ctx, 4);
@@ -788,19 +939,30 @@ function drawHole(ctx, x, y, sc) {
   ctx.strokeStyle = P.YEL;
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(-24, -6);
-  ctx.lineTo(-36, -18);
-  ctx.moveTo(18, -4);
-  ctx.lineTo(32, -16);
+  ctx.moveTo(cx - rx * 0.4, cy);
+  ctx.lineTo(cx - rx * 0.7, cy - ry * 0.6);
+  ctx.moveTo(cx + rx * 0.3, cy);
+  ctx.lineTo(cx + rx * 0.65, cy - ry * 0.55);
   ctx.stroke();
   ctx.restore();
 }
 
-function drawBin(ctx, x, y, sc, dist, hopped) {
-  ctx.save();
-  ctx.translate(x, y);
+function plant(ctx, placed, sc, contactY) {
+  ctx.translate(placed.spot.x, placed.spot.y);
   ctx.scale(sc, sc);
-  ctx.rotate(hopped ? 1.15 : dist < 14 ? 0.7 : 0.18);
+  ctx.translate(0, -contactY);
+}
+
+function drawBin(ctx, placed, h, sc, dist) {
+  ctx.save();
+  if (placed?.legacy) {
+    ctx.translate(placed.spot.x, placed.spot.y);
+    ctx.scale(sc, sc);
+    ctx.rotate(h.hopped ? 1.15 : dist < 14 ? 0.7 : 0.18);
+  } else {
+    plant(ctx, placed, sc, BIN_BOTTOM_LOCAL_Y);
+    if (h.hopped) ctx.rotate(1.15);
+  }
   roundRect(ctx, -20, -36, 40, 54, 5);
   ctx.fillStyle = "#5E7A52";
   ctx.fill();
@@ -811,41 +973,70 @@ function drawBin(ctx, x, y, sc, dist, hopped) {
   ctx.restore();
 }
 
-function drawRoller(ctx, x, y, sc, h) {
+function drawRoller(ctx, placed, h, sc) {
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sc, sc);
-  ctx.rotate((h.crossT > 0 ? h.crossT : 0) * 7);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 28, 16, 0, 0, Math.PI * 2);
-  ctx.fillStyle = "#6E8A62";
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(0, -8);
-  ctx.lineTo(0, -22);
-  ctx.stroke();
+  if (placed?.legacy) {
+    ctx.translate(placed.spot.x, placed.spot.y);
+    ctx.scale(sc, sc);
+    ctx.rotate((h.crossT > 0 ? h.crossT : 0) * 7);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 28, 16, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#6E8A62";
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(0, -22);
+    ctx.stroke();
+  } else {
+    plant(ctx, placed, sc, LID_BOTTOM_LOCAL_Y);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 28, 16, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#6E8A62";
+    ctx.fill();
+    ink(ctx, 4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(0, -22);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
-function drawNpc(ctx, x, y, sc, h, dist, boil) {
+function drawNpc(ctx, placed, h, sc, dist, boil) {
+  const lengthM = (h.halfL || 2.2) * 2;
+  if (placed && !placed.legacy && drawPlanSprite(ctx, CORAL_STRAIGHT, {
+    centerDs: placed.dist,
+    xm: placed.hx,
+    lengthM,
+    artLen: PLAN_ART.coral.artLen,
+    pivot: PLAN_ART.coral.pivot,
+  })) return;
   const colors = [P.BLUE, P.ORANGE, P.TEAL, P.PINK];
   const color = colors[Math.abs(Math.floor(hash(h.s) * 4)) % colors.length];
   ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sc, sc);
-  if (h.type === "cutin" && h.crossT >= 0 && h.crossT < (h.crossDur || 2)) ctx.rotate(-0.4);
-  roundRect(ctx, -30, -48, 60, 92, 10);
+  if (placed?.legacy) {
+    ctx.translate(placed.spot.x, placed.spot.y);
+    ctx.scale(sc, sc);
+    if (h.type === "cutin" && h.crossT >= 0 && h.crossT < (h.crossDur || 2)) ctx.rotate(-0.4);
+  } else {
+    plant(ctx, placed, sc, NPC_BOTTOM_LOCAL_Y);
+  }
+  const bodyY = -48;
+  const wheelY = 24;
+  const glassY = -36;
+  roundRect(ctx, -30, bodyY, 60, 92, 10);
   ctx.fillStyle = color;
   ctx.fill();
   ink(ctx, 5);
   ctx.stroke();
   ctx.fillStyle = P.GLASS;
-  ctx.fillRect(-20, -36, 40, 22);
+  ctx.fillRect(-20, glassY, 40, 22);
   ctx.fillStyle = P.INK;
-  ctx.fillRect(-22, 24, 14, 16);
-  ctx.fillRect(8, 24, 14, 16);
+  ctx.fillRect(-22, wheelY, 14, 16);
+  ctx.fillRect(8, wheelY, 14, 16);
   if (h.type === "cutin" && dist < 40) {
     ctx.strokeStyle = P.YEL;
     ctx.lineWidth = 5;
@@ -857,13 +1048,102 @@ function drawNpc(ctx, x, y, sc, h, dist, boil) {
   ctx.restore();
 }
 
-function drawCar(ctx, sim, boil) {
-  const bumper = project(CFG.carHalfFront, sim.x);
-  const origin = carDrawOrigin(bumper.x, bumper.y, sim.brakeInput, sim.crashT);
-  drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil);
+function playerCarArt(sim) {
+  if (sim.car === "mint" && imageReady(MINT_CAR)) return { img: MINT_CAR, art: PLAN_ART.mint };
+  if (sim.car === "blue" && imageReady(BLUE_CAR)) return { img: BLUE_CAR, art: PLAN_ART.blue };
+  return { img: playerPlanImage(sim), art: PLAN_ART.yellow };
 }
 
-function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0) {
+function playerPlanImage(sim) {
+  const stage = damageStage(sim.body, sim.stats?.collisions);
+  if ((stage >= 2 || (sim.crashT || 0) > 0.05) && imageReady(YELLOW_CRASH)) return YELLOW_CRASH;
+  if ((sim.brakeInput || 0) > 0.35 && imageReady(YELLOW_BRAKE)) return YELLOW_BRAKE;
+  const yaw = routeYaw(viewCam);
+  if (yaw < -0.2 && imageReady(YELLOW_LEFT)) return YELLOW_LEFT;
+  if (yaw > 0.2 && imageReady(YELLOW_RIGHT)) return YELLOW_RIGHT;
+  if (yaw < -0.08 && imageReady(YELLOW_SMALL_LEFT)) return YELLOW_SMALL_LEFT;
+  if (yaw > 0.08 && imageReady(YELLOW_SMALL_RIGHT)) return YELLOW_SMALL_RIGHT;
+  return YELLOW_STRAIGHT;
+}
+
+/**
+ * Yellow uses the approved collision drawing for the medium and heavy stages.
+ * Mint and blue have one approved picture each, so the ink marks stand in
+ * for every damaged stage. The picture files are not edited.
+ */
+export function showsInkDamage(sim) {
+  const stage = damageStage(sim?.body, sim?.stats?.collisions);
+  if (stage <= 0) return false;
+  if (sim?.car === "mint" || sim?.car === "blue") return true;
+  return stage === 1 || stage === 3;
+}
+
+/** Light and heavy still need owner drawings. These marks are not painted into the car file. */
+function drawDamagePlaceholder(ctx, sim, xm) {
+  const stage = damageStage(sim.body, sim.stats?.collisions);
+  if (!showsInkDamage(sim)) return;
+  const nose = viewProject(CFG.carHalfFront * 0.72, xm);
+  ctx.save();
+  ctx.translate(nose.x, nose.y);
+  ctx.lineCap = "round";
+  ctx.strokeStyle = P.INK;
+  ctx.lineWidth = 3;
+  if (stage === 1 || stage === 2) {
+    ctx.beginPath();
+    ctx.moveTo(-10, -4);
+    ctx.lineTo(4, 6);
+    ctx.moveTo(-4, -8);
+    ctx.lineTo(8, -1);
+    if (stage === 2) {
+      ctx.moveTo(-14, 2);
+      ctx.lineTo(0, -8);
+      ctx.lineTo(10, 3);
+    }
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "rgba(28,22,30,0.72)";
+    ctx.beginPath();
+    ctx.moveTo(-16, 2);
+    ctx.lineTo(-2, -14);
+    ctx.lineTo(12, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawCar(ctx, sim, boil, pose, legacy = false) {
+  const xm = pose ? pose.x : sim.x;
+  const lengthM = CFG.carHalfFront + CFG.carHalfBack;
+  const centerDs = (CFG.carHalfFront - CFG.carHalfBack) / 2;
+  const driven = playerCarArt(sim);
+  if (!legacy && drawPlanSprite(ctx, driven.img, {
+    centerDs,
+    xm,
+    lengthM,
+    artLen: driven.art.artLen,
+    pivot: driven.art.pivot,
+  })) {
+    if (sim.cargoType) {
+      const deck = viewProject(centerDs - 0.7, xm);
+      if (!drawCastCargo(ctx, deck.x, deck.y, deck.scale, sim)) {
+        const sc = Math.min(0.4, ((CFG.carHalfW * VIEW.focal) / deck.z) / 90);
+        ctx.save();
+        ctx.translate(deck.x, deck.y);
+        drawCargoIcon(ctx, 0, 0, sim.cargoType, sc, sim);
+        ctx.restore();
+      }
+    }
+    drawDamagePlaceholder(ctx, sim, xm);
+    return;
+  }
+  const bumper = viewProject(CFG.carHalfFront, xm);
+  const origin = carDrawOrigin(bumper.x, bumper.y, sim.brakeInput, sim.crashT);
+  drawCarSprite(ctx, origin.x, origin.y, CAR_SPRITE_SCALE, sim.brakeInput, sim, boil, pose ? pose.s : sim.s);
+}
+
+function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0, travelS = null) {
   ctx.save();
   ctx.translate(x, y);
   const live = sim || { s: 0, cargoType: null, cargo: 100, body: 100, t: 0, cargoFlash: 0, nearT: 0, crashT: 0, lastSelfBrake: 0 };
@@ -896,7 +1176,7 @@ function drawCarSprite(ctx, x, y, sc, brake, sim, boil = 0) {
   ctx.fillRect(12, 32, 16, 10);
   // Distance turns the wheels. The 110 ms boil used to add half a radian
   // even while the title car was standing still.
-  const spin = live.s * 2.6;
+  const spin = (travelS ?? live.s) * 2.6;
   drawWheel(ctx, -28, -30, spin);
   drawWheel(ctx, 28, -30, spin);
   drawWheel(ctx, -28, 26, spin);
@@ -978,26 +1258,31 @@ function drawCargoIcon(ctx, x, y, type, sc, sim) {
   ctx.restore();
 }
 
-function drawCabin(ctx, sim, state, boil, visual) {
-  panel(ctx, 1056, 24, 520, 600, P.CABIN);
+function drawDriverPlate(ctx) {
+  const plate = DRIVER_PLATE;
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(1056, 24, 520, 600);
-  ctx.clip();
-  ctx.fillStyle = P.GLASS;
-  ctx.fillRect(1056, 24, 520, 150);
-  ink(ctx, 6);
-  ctx.beginPath();
-  ctx.moveTo(1056, 174);
-  ctx.lineTo(1576, 174);
-  ctx.stroke();
-  ctx.fillStyle = "#E08A3C";
-  roundRect(ctx, 1140, 470, 360, 150, 24);
+  roundRect(ctx, plate.x, plate.y, plate.w, plate.h, plate.radius);
+  ctx.fillStyle = "#F4E2B8";
   ctx.fill();
-  ink(ctx, 5);
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = P.INK;
   ctx.stroke();
-  const exp = state.pose || expressionId(sim);
-  drawAnton(ctx, exp, boil, visual, sim);
+  ctx.restore();
+}
+
+function drawCabin(ctx, sim, state) {
+  drawDriverPlate(ctx);
+  paintCabin(ctx, sim, state);
+  if (state.session?.mission?.passenger) drawPassenger(ctx, state.session.mission.passenger);
+  ctx.save();
+  roundRect(ctx, DRIVER_PLATE.x, DRIVER_PLATE.y, DRIVER_PLATE.w, DRIVER_PLATE.h, DRIVER_PLATE.radius);
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = P.INK;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.rect(DRIVER_PLATE.x, DRIVER_PLATE.y, DRIVER_PLATE.w, DRIVER_PLATE.h);
+  ctx.clip();
   if (sim.bubble && sim.bubbleT > 0) {
     roundRect(ctx, 1088, 186, 250, 48, 12);
     ctx.fillStyle = P.PAPER;
@@ -1007,390 +1292,4 @@ function drawCabin(ctx, sim, state, boil, visual) {
     paintCenter(ctx, sim.bubble, 1088, 186, 250, 48, 20, P.INK, false, false);
   }
   ctx.restore();
-}
-
-function drawAnton(ctx, exp, boil, lean, sim) {
-  const shift = poseShift(exp);
-  ctx.save();
-  ctx.translate(1316, 268 + shift.y + lean * 10);
-  ctx.rotate(shift.rot);
-
-  roundRect(ctx, -100, 70, 200, 150, 24);
-  ctx.fillStyle = P.TEAL;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = shift.belt;
-  ctx.beginPath();
-  ctx.moveTo(-78, 88);
-  ctx.lineTo(30, 150 + (exp === "belted" ? 10 : 0));
-  ctx.stroke();
-
-  const wheel = Math.max(-0.35, Math.min(0.35, ((sim.targetX || 1.8) - (sim.x || 1.8)) * 0.45));
-  ctx.save();
-  ctx.translate(0, 188);
-  ctx.rotate(wheel);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 58, 24, 0, 0, Math.PI * 2);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-  ctx.strokeStyle = P.PAPER;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(-34, 0);
-  ctx.lineTo(34, 0);
-  ctx.moveTo(0, -14);
-  ctx.lineTo(0, 14);
-  ctx.stroke();
-  if (!shift.hairHand) {
-    ctx.fillStyle = P.SKIN;
-    ctx.beginPath();
-    ctx.arc(-36, 2, 13, 0, Math.PI * 2);
-    ctx.arc(36, 2, 13, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
-  } else {
-    ctx.fillStyle = P.SKIN;
-    ctx.beginPath();
-    ctx.arc(36, 2, 13, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  if (shift.hairHand) {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 8;
-    ctx.beginPath();
-    ctx.moveTo(-70, 120);
-    ctx.quadraticCurveTo(-90, 20, -20, -70);
-    ctx.stroke();
-    ctx.fillStyle = P.SKIN;
-    ctx.beginPath();
-    ctx.arc(-18, -78, 14, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
-  }
-
-  ctx.beginPath();
-  ctx.ellipse(shift.head, 0, 112, 100, 0, 0, Math.PI * 2);
-  ctx.fillStyle = P.SKIN;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-  ctx.fillStyle = P.SKIN;
-  ctx.beginPath();
-  ctx.ellipse(-104, 18, 16, 22, 0, 0, Math.PI * 2);
-  ctx.ellipse(104, 26, 14, 18, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  [-36, -12, 14, 40].forEach((hx, i) => {
-    const lift = exp === "furious" || exp === "preen" ? 14 : exp === "proud" ? 8 : 0;
-    ctx.moveTo(hx + shift.head, -86);
-    ctx.quadraticCurveTo(hx + (i - 1.5) * 8, -132 - lift - (boil && i % 2 ? 6 : 0), hx + 10, -100);
-  });
-  ctx.stroke();
-
-  const look = lookFor(exp);
-  eye(ctx, -32 + shift.head, -10, exp === "belted" ? 30 : 26, exp === "belted" ? 26 : 22, 8, look.left);
-  eye(ctx, 30 + shift.head, 8, 16, 14, 5, look.right, false);
-  brows(ctx, exp, shift.head);
-  mouth(ctx, exp, shift.head);
-
-  if (exp === "furious") {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(-78, -70);
-    ctx.quadraticCurveTo(-110, -110, -60, -120);
-    ctx.moveTo(80, -64);
-    ctx.quadraticCurveTo(112, -104, 64, -116);
-    ctx.stroke();
-  }
-  if (shift.notes) {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(92, -40, 8, 0, Math.PI * 1.4);
-    ctx.moveTo(100, -40);
-    ctx.lineTo(100, -62);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function poseShift(exp) {
-  if (exp === "preen") return { y: -10, rot: -0.06, hairHand: true, belt: 5, head: 6, notes: true };
-  if (exp === "focused") return { y: 12, rot: 0.05, hairHand: false, belt: 5, head: 0, notes: false };
-  if (exp === "belted") return { y: 26, rot: 0.1, hairHand: false, belt: 10, head: -4, notes: false };
-  if (exp === "angry" || exp === "furious") return { y: 2, rot: 0, hairHand: false, belt: 6, head: 0, notes: false };
-  if (exp === "ashamed") return { y: 8, rot: 0.12, hairHand: false, belt: 5, head: -8, notes: false };
-  if (exp === "proud") return { y: -12, rot: -0.04, hairHand: false, belt: 5, head: 4, notes: false };
-  if (exp === "annoyed") return { y: 0, rot: 0.04, hairHand: false, belt: 5, head: 2, notes: false };
-  return { y: 0, rot: -0.02, hairHand: false, belt: 5, head: 0, notes: false };
-}
-
-function lookFor(exp) {
-  if (exp === "focused") return { left: { x: 1, y: 7 }, right: { x: 1, y: 4 } };
-  if (exp === "preen") return { left: { x: -2, y: -6 }, right: { x: 0, y: -4 } };
-  if (exp === "belted") return { left: { x: 0, y: -8 }, right: { x: 1, y: -5 } };
-  if (exp === "ashamed") return { left: { x: -7, y: 4 }, right: { x: -4, y: 2 } };
-  if (exp === "angry" || exp === "furious") return { left: { x: 4, y: 2 }, right: { x: 2, y: 1 } };
-  if (exp === "proud") return { left: { x: 2, y: -3 }, right: { x: 0, y: -1 } };
-  return { left: { x: 3, y: 1 }, right: { x: 0, y: 2 } };
-}
-
-function eye(ctx, x, y, rx, ry, pupil, look, shut) {
-  ctx.beginPath();
-  ctx.ellipse(x, y, rx, shut ? 4 : ry, 0, 0, Math.PI * 2);
-  ctx.fillStyle = P.WHITE;
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  if (shut) return;
-  ctx.beginPath();
-  ctx.arc(x + look.x, y + look.y, pupil, 0, Math.PI * 2);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-}
-
-function brows(ctx, exp, hx) {
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  const x = hx || 0;
-  if (exp === "angry" || exp === "furious") {
-    ctx.moveTo(-60 + x, -42);
-    ctx.lineTo(-8 + x, -28);
-    ctx.moveTo(12 + x, -20);
-    ctx.lineTo(52 + x, -38);
-  } else if (exp === "preen") {
-    ctx.moveTo(-58 + x, -48);
-    ctx.quadraticCurveTo(-30 + x, -60, -8 + x, -46);
-    ctx.moveTo(14 + x, -24);
-    ctx.quadraticCurveTo(32 + x, -34, 50 + x, -20);
-  } else if (exp === "focused") {
-    ctx.moveTo(-58 + x, -36);
-    ctx.lineTo(-8 + x, -44);
-    ctx.moveTo(14 + x, -16);
-    ctx.lineTo(50 + x, -24);
-  } else if (exp === "belted") {
-    ctx.moveTo(-58 + x, -54);
-    ctx.lineTo(-8 + x, -42);
-    ctx.moveTo(12 + x, -30);
-    ctx.lineTo(50 + x, -40);
-  } else if (exp === "annoyed") {
-    ctx.moveTo(-58 + x, -34);
-    ctx.lineTo(-10 + x, -46);
-    ctx.moveTo(12 + x, -16);
-    ctx.lineTo(50 + x, -28);
-  } else {
-    ctx.moveTo(-58 + x, -40);
-    ctx.quadraticCurveTo(-32 + x, -54, -8 + x, -40);
-    ctx.moveTo(14 + x, -18);
-    ctx.quadraticCurveTo(32 + x, -28, 52 + x, -16);
-  }
-  ctx.stroke();
-}
-
-function mouth(ctx, exp, hx) {
-  const x = hx || 0;
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  if (exp === "angry" || exp === "furious") {
-    ctx.moveTo(-22 + x, 46);
-    ctx.lineTo(28 + x, 46);
-    ctx.lineTo(18 + x, 66);
-    ctx.lineTo(-14 + x, 66);
-    ctx.closePath();
-    ctx.fillStyle = "#7A3030";
-    ctx.fill();
-    ctx.stroke();
-    return;
-  }
-  if (exp === "annoyed") {
-    ctx.moveTo(-18 + x, 50);
-    ctx.quadraticCurveTo(x, 42, 24 + x, 56);
-  } else if (exp === "focused") {
-    ctx.moveTo(-16 + x, 52);
-    ctx.lineTo(20 + x, 52);
-  } else if (exp === "belted") {
-    ctx.arc(x, 56, 12, 0, Math.PI * 2);
-  } else if (exp === "preen") {
-    ctx.moveTo(-10 + x, 48);
-    ctx.quadraticCurveTo(8 + x, 40, 18 + x, 50);
-  } else if (exp === "proud") {
-    ctx.moveTo(-28 + x, 44);
-    ctx.quadraticCurveTo(4 + x, 78, 32 + x, 40);
-  } else if (exp === "ashamed") {
-    ctx.moveTo(-14 + x, 58);
-    ctx.quadraticCurveTo(4 + x, 48, 20 + x, 56);
-  } else {
-    ctx.moveTo(-24 + x, 48);
-    ctx.quadraticCurveTo(2 + x, 70, 28 + x, 46);
-  }
-  ctx.stroke();
-}
-
-function drawPatience(ctx, sim, paused) {
-  roundRect(ctx, 1056, 640, 520, 88, 8);
-  ctx.fillStyle = paused ? "#E7DCC6" : P.PAPER;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-  const word = moodWord(sim.patience, sim.outburstT > 0);
-  const glyph = moodGlyph(sim.patience, sim.outburstT > 0);
-  paintCenter(ctx, word, 1072, 652, 150, 64, 22, P.INK, false, false);
-  drawGlyph(ctx, 1238, 684, glyph);
-  const x = 1266;
-  const y = 658;
-  const w = 280;
-  const h = 46;
-  [P.PAT_GREEN, P.PAT_YELLOW, P.PAT_RED].forEach((color, i) => {
-    ctx.fillStyle = color;
-    ctx.fillRect(x + (w / 3) * i, y, w / 3 + 1, h);
-  });
-  ink(ctx, 4);
-  ctx.strokeRect(x, y, w, h);
-  const nx = x + (w * Math.max(0, Math.min(100, sim.patience))) / 100;
-  ctx.beginPath();
-  ctx.moveTo(nx, y - 8);
-  ctx.lineTo(nx + 10, y + 10);
-  ctx.lineTo(nx - 10, y + 10);
-  ctx.closePath();
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-}
-
-function drawGlyph(ctx, x, y, glyph) {
-  ctx.fillStyle = P.INK;
-  ctx.beginPath();
-  if (glyph === "square") {
-    ctx.rect(x - 10, y - 10, 20, 20);
-    ctx.fill();
-  } else if (glyph === "triangle") {
-    ctx.moveTo(x, y - 12);
-    ctx.lineTo(x + 12, y + 10);
-    ctx.lineTo(x - 12, y + 10);
-    ctx.closePath();
-    ctx.fill();
-  } else {
-    ctx.arc(x, y, 10, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function drawPedal(ctx, visual, disabled) {
-  const y = 752 + visual * 18;
-  ctx.fillStyle = "rgba(28,22,30,0.22)";
-  roundRect(ctx, 1160, 820, 300, 28, 8);
-  ctx.fill();
-  roundRect(ctx, 1128, y, 340, 100, 18);
-  ctx.fillStyle = disabled ? "#B7A898" : P.RED;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-  paintCenter(ctx, "ТОРМОЗ", 1128, y, 340, 100, 30, disabled ? P.INK : P.PAPER, true, false);
-}
-
-function drawPause(ctx, state) {
-  ctx.fillStyle = "rgba(28,22,30,0.45)";
-  ctx.fillRect(0, 0, 1600, 900);
-  roundRect(ctx, 500, 160, 600, 560, 20);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 8);
-  ctx.stroke();
-  paintCenter(ctx, "ПАУЗА", 540, 184, 520, 60, 36, P.INK, true, false);
-  paintCenter(ctx, "Педаль отпущена", 540, 250, 520, 36, 22, P.INK, false, false);
-  button(ctx, "resume", 590, 310, 420, 80, "Продолжить", "primary");
-  button(ctx, "retry", 590, 406, 420, 80, "Ещё раз", "paper");
-  button(ctx, "to-garage", 590, 502, 420, 76, "В гараж", "paper");
-  button(ctx, "sound", 590, 600, 200, 72, state.save.settings.sound ? "Звук вкл" : "Звук выкл", "paper");
-  button(ctx, "shake", 810, 600, 200, 72, state.save.settings.shake ? "Тряска вкл" : "Тряска выкл", "paper");
-}
-
-function drawResult(ctx, state) {
-  const sim = state.session.sim;
-  const graded = state.session.result;
-  ctx.fillStyle = P.PAPER;
-  ctx.fillRect(0, 0, 1600, 900);
-  panel(ctx, 24, 24, 1552, 852, "#B7D48A");
-  roundRect(ctx, 80, 48, 1440, 84, 16);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  paintCenter(ctx, resultPhrase(sim, graded), 80, 48, 1440, 84, 32, P.INK, true, false);
-  ctx.save();
-  ctx.translate(-760, 40);
-  drawAnton(ctx, resultPose(sim, graded), 0, 0, sim);
-  ctx.restore();
-  const rows = [
-    ["Машина", graded.body],
-    ["Нервы", graded.mood],
-    [sim.cargoType ? "Груз" : "Комфорт", graded.comfort],
-  ];
-  rows.forEach((row, i) => {
-    const y = 200 + i * 110;
-    paintCenter(ctx, row[0], 860, y, 200, 40, 24, P.INK, false, false);
-    roundRect(ctx, 1080, y, 360, 40, 10);
-    ctx.fillStyle = "#E7DCC6";
-    ctx.fill();
-    roundRect(ctx, 1080, y, Math.max(12, 3.6 * row[1]), 40, 10);
-    ctx.fillStyle = row[1] >= 70 ? P.PAT_GREEN : row[1] >= 40 ? P.PAT_YELLOW : P.PAT_RED;
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-    paintCenter(ctx, String(Math.round(row[1])), 1460, y, 80, 40, 20, P.INK, false, false);
-  });
-  if (!sim.infinite) {
-    const stars = "★".repeat(graded.stars) + "☆".repeat(3 - graded.stars);
-    paintCenter(ctx, stars, 980, 540, 300, 56, 40, P.INK, false, false);
-  }
-  if (graded.badge) {
-    roundRect(ctx, 900, 610, 520, 48, 12);
-    ctx.fillStyle = P.YEL;
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-    paintCenter(ctx, "Почти не понадобился", 900, 610, 520, 48, 20, P.INK, false, false);
-  }
-  if (sim.infinite) {
-    const bill = repairInvoice(sim.stats, sim.t);
-    bill.lines.slice(0, 4).forEach((entry, i) => {
-      paintCenter(ctx, `${entry[0]}  ${entry[1]}`, 900, 560 + i * 30, 520, 28, 16, P.INK, false, false);
-    });
-    paintCenter(ctx, `Итого ${bill.total}`, 900, 690, 520, 32, 22, P.INK, false, false);
-  }
-  button(ctx, "retry", 80, 736, 420, 120, "Ещё раз", graded.success ? "paper" : "primary");
-  button(ctx, "next", 1100, 736, 420, 120, graded.success && !sim.infinite ? "Дальше" : "В гараж", graded.success ? "primary" : "paper");
-}
-
-function resultPhrase(sim, graded) {
-  if (sim.infinite) return "Смета готова. Машина — нет.";
-  if (!graded.success && sim.failReason === "cargo" && sim.cargoType === "cake") return "Крем на потолке.";
-  if (!graded.success && sim.failReason === "cargo") return "Рыбка видела всё.";
-  if (!graded.success) return "Ну что, по коням?";
-  if (graded.badge) return "Ты почти не понадобился";
-  if (graded.stars >= 3) return "Даже Антон удивился.";
-  if (graded.stars >= 2) return "Доехали. Нервно, но да.";
-  return "Живые. Это уже сюжет.";
-}
-
-function resultPose(sim, graded) {
-  if (!graded.success) return "ashamed";
-  if (graded.badge || graded.stars >= 2) return "proud";
-  return "annoyed";
 }

@@ -1,5 +1,5 @@
 import { grade } from "./physics.js";
-import { createSim, stepSim } from "./sim.js";
+import { createSim, snapRenderPose, stepSim } from "./sim.js";
 
 /**
  * Countdown, pause and the single brake pointer live outside the integrator
@@ -16,6 +16,8 @@ export function createSession(mission, opts = {}) {
     countdownAcc: 0,
     brakeHeld: false,
     pointerId: null,
+    wakeId: null,
+    tapQueued: false,
     keysDown: new Set(),
     pauseReason: null,
     result: null,
@@ -28,6 +30,8 @@ export function createSession(mission, opts = {}) {
 export function clearControls(session) {
   session.brakeHeld = false;
   session.pointerId = null;
+  session.wakeId = null;
+  session.tapQueued = false;
   session.keysDown.clear();
   const sim = session.sim;
   if (!sim) return;
@@ -45,6 +49,7 @@ export function pauseSession(session, reason = "pause") {
   session.pauseReason = reason;
   session.armBrake = true;
   clearControls(session);
+  snapRenderPose(session.sim);
 }
 
 export function resumeSession(session) {
@@ -52,6 +57,7 @@ export function resumeSession(session) {
   session.pauseReason = null;
   session.phase = session.countdownAcc >= 3 ? "drive" : "countdown";
   clearControls(session);
+  snapRenderPose(session.sim);
 }
 
 export function restartSession(session) {
@@ -69,10 +75,44 @@ export function restartSession(session) {
   session.armBrake = true;
   clearControls(session);
   if (session.sim.v < 1) session.sim.v = session.mission.roll ?? 10;
+  snapRenderPose(session.sim);
 }
 
 export function onBlur(session) {
   pauseSession(session, "blur");
+}
+
+/**
+ * Pedal and Anton are different fingers. A tap does not press the brake,
+ * and the brake does not wake him. Ending one pointer releases only that finger.
+ */
+export function pointerDown(session, id, pointerId) {
+  if (!session || session.phase !== "drive") return "ignore";
+  if (pointerId === null || pointerId === undefined) return "ignore";
+  // One finger cannot own both targets. A second down from that finger,
+  // or a drag from one control onto the other, does not move ownership.
+  if (id === "pedal" && (session.pointerId === null || session.pointerId === undefined)) {
+    if (session.wakeId === pointerId) return "ignore";
+    session.pointerId = pointerId;
+    session.brakeHeld = true;
+    return "brake";
+  }
+  if (id === "anton" && (session.wakeId === null || session.wakeId === undefined)) {
+    if (session.pointerId === pointerId) return "ignore";
+    session.wakeId = pointerId;
+    session.tapQueued = true;
+    return "wake";
+  }
+  return "ignore";
+}
+
+export function releasePointer(session, pointerId) {
+  if (!session) return;
+  if (session.pointerId === pointerId) {
+    session.pointerId = null;
+    session.brakeHeld = false;
+  }
+  if (session.wakeId === pointerId) session.wakeId = null;
 }
 
 export function onVisibility(session, hidden) {
@@ -83,6 +123,11 @@ export function keyDown(session, code, opts = {}) {
   if (!session) return;
   if (code === "Escape") {
     if (session.phase === "drive" || session.phase === "countdown") pauseSession(session, "escape");
+    return;
+  }
+  if (code === "KeyF" && session.phase === "drive") {
+    if (opts.repeat) return;
+    session.tapQueued = true;
     return;
   }
   if (code === "Space" && session.phase === "drive") {
@@ -106,16 +151,20 @@ export function sessionStep(session, dt) {
       session.phase = "drive";
       session.countdown = 0;
       if (session.sim.v < 1) session.sim.v = session.mission.roll ?? 10;
+      snapRenderPose(session.sim);
       return;
     }
     session.countdown = Math.ceil(3 - session.countdownAcc);
     return;
   }
   const held = session.brakeHeld || session.keysDown.has("Space");
-  stepSim(session.sim, dt, { held });
+  const tap = session.tapQueued;
+  session.tapQueued = false;
+  stepSim(session.sim, dt, { held, tap });
   if (session.sim.done) {
     session.phase = "result";
     session.result = grade(session.sim);
     clearControls(session);
+    snapRenderPose(session.sim);
   }
 }

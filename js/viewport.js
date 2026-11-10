@@ -15,6 +15,18 @@ export function contentBox(clientW, clientH, padding = {}) {
   };
 }
 
+/**
+ * How many backing pixels per CSS pixel.
+ * Never above 2, and 1 when the player asked for less motion.
+ * Also never larger than the 1600×900 drawing.
+ */
+export function backingScale(cssW, cssH, deviceRatio, lowPower, logicalW = 1600, logicalH = 900) {
+  const cap = lowPower ? 1 : 2;
+  const dpr = Math.min(cap, Math.max(0.5, Number(deviceRatio) || 1));
+  const fit = Math.min(logicalW / Math.max(1, cssW), logicalH / Math.max(1, cssH));
+  return Math.min(dpr, fit);
+}
+
 export function frameSize(viewW, viewH, logicalW = 1600, logicalH = 900) {
   const availW = Math.max(1, Math.floor(viewW));
   const availH = Math.max(1, Math.floor(viewH));

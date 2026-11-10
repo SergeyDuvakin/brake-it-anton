@@ -4,13 +4,16 @@
  */
 
 import { createAudio } from "./audio.js";
+import { pulse } from "./haptics.js";
+import { createReplay } from "./replay.js";
 import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
-import { bumperFootGap, render } from "./draw.js";
+import { whenCabinReady, cabinReady } from "./cabin.js";
+import { bumperFootGap, render, whenCarsReady } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
-import { LESSONS, getMission } from "./missions.js";
+import { LESSONS, futureMissions, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
-import { createSim, nextHazard } from "./sim.js";
+import { applyHazardSnap, createSim, hazardSnap, nextHazard, renderAlpha, renderPose, snapRenderPose } from "./sim.js";
 import {
   createSession,
   keyDown,
@@ -18,13 +21,15 @@ import {
   onBlur,
   onVisibility,
   pauseSession,
+  pointerDown,
+  releasePointer,
   restartSession,
   resumeSession,
   sessionStep,
 } from "./session.js";
-import { applyVictory, freshSave, noteInfiniteDistance, parseSave } from "./storage.js";
+import { applyVictory, freshSave, noteInfiniteDistance, parseSave, toggleSetting } from "./storage.js";
 import { drainFrame } from "./clock.js";
-import { contentBox, stablePlacement } from "./viewport.js";
+import { backingScale, contentBox, stablePlacement } from "./viewport.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -34,12 +39,16 @@ const showDebug = params.has("debug");
 let timeScale = params.has("e2e") ? 6 : 1;
 
 const audio = createAudio();
+const moment = createReplay();
+let replayHold = null;
 let save = loadSave();
 let screen = "title";
 let session = null;
 let selected = "lesson1";
 let hotspots = [];
 let labels = [];
+let readout = { needleDeg: null, pedalDeg: null, hubX: null, hubY: null, tipX: null, tipY: null, padX: null, padY: null };
+let uiPointer = { over: null, pressed: null };
 let autopilot = null;
 let hint = true;
 let notice = save.notice;
@@ -48,8 +57,13 @@ let lastHonks = 0;
 let lastClears = 0;
 let lastNear = 0;
 let wasDown = false;
+let hardPulsed = false;
+let lastBubble = "";
+let lastBubbleT = 0;
+let lastCargo = 100;
 let last = performance.now();
 let acc = 0;
+let presentedAlpha = 1;
 
 const preview = createSim(getMission("lesson1"), 11);
 preview.s = 30;
@@ -61,7 +75,13 @@ function loadSave() {
   try {
     const parsed = parseSave(localStorage.getItem(SAVE_KEY));
     if (!parsed.ok) {
-      parsed.save.notice = "Сохранение не читается. Начали заново.";
+      parsed.save.notice = "Сохранение не читается. Начали заново с первого урока.";
+      try {
+        const repaired = { ...parsed.save, notice: null };
+        localStorage.setItem(SAVE_KEY, JSON.stringify(repaired));
+      } catch {
+        /* the fresh profile still plays, even if it cannot be written */
+      }
       return parsed.save;
     }
     if (parsed.empty && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -87,11 +107,36 @@ function persist() {
 function canPlay(id) {
   if (id === "infinite") return save.infinite === true;
   const lesson = getMission(id);
+  if (lesson?.open) return true;
   return !!lesson && lesson.lesson <= save.unlocked;
+}
+
+function beginRide() {
+  moment.reset();
+  replayHold = null;
+}
+
+function showReplaySample(sim, sample) {
+  sim.s = sample.s;
+  sim.prevS = sample.s;
+  sim.x = sample.x;
+  sim.prevX = sample.x;
+  sim.v = sample.v;
+  sim.brakeInput = sample.brake;
+  applyHazardSnap(sim.hazards, sample.hazards);
+  snapRenderPose(sim);
+}
+
+function finishReplay() {
+  moment.cancel();
+  if (session && replayHold) showReplaySample(session.sim, replayHold);
+  replayHold = null;
+  if (session && session.phase === "replay") session.phase = "result";
 }
 
 function startMission(id) {
   if (!canPlay(id)) return;
+  beginRide();
   const seed = id === "infinite" ? (Date.now() % 90000) + 1 : getMission(id).seed;
   const mission = getMission(id, seed);
   session = createSession(mission, { seed });
@@ -104,7 +149,13 @@ function startMission(id) {
   wasDown = false;
   acc = 0;
   audio.unlock();
-  if (save.settings.sound) audio.startRadio();
+  if (save.settings.music) audio.startRadio();
+}
+
+function applyAudio() {
+  audio.setEffects(save.settings.sound);
+  audio.setMusic(save.settings.music);
+  audio.setVoice(save.settings.voice);
 }
 
 function settle() {
@@ -113,21 +164,18 @@ function settle() {
   audio.stopRadio();
   if (session.mission.infinite) save = noteInfiniteDistance(save, session.sim.s);
   else if (session.result?.success) save = applyVictory(save, session.mission.id, session.result.stars);
+  audio.sting();
   persist();
 }
 
 function toggle(which) {
-  if (which === "sound") {
-    save.settings.sound = !save.settings.sound;
-    audio.setEnabled(save.settings.sound);
-    if (save.settings.sound && screen === "play" && session?.phase === "drive") audio.startRadio();
-    else audio.stopRadio();
-  } else {
-    save.settings.shake = !save.settings.shake;
-    save.settings.reducedMotion = !save.settings.shake;
-  }
+  save = toggleSetting(save, which);
+  applyAudio();
+  const driving = screen === "play" && session?.phase === "drive";
+  if (save.settings.music && driving) audio.startRadio();
+  else audio.stopRadio();
   persist();
-  audio.ui();
+  if (save.settings.sound) audio.ui();
 }
 
 function activate(id) {
@@ -141,7 +189,9 @@ function activate(id) {
     audio.ui();
     return;
   }
-  if (id === "sound" || id === "shake") return toggle(id);
+  if (id === "sound" || id === "music" || id === "voice" || id === "vibrate" || id === "motion" || id === "shake" || id === "large") {
+    return toggle(id);
+  }
   if (id.startsWith("mission-")) {
     const missionId = id.slice("mission-".length);
     if (!canPlay(missionId)) return;
@@ -158,13 +208,14 @@ function activate(id) {
   }
   if (id === "resume") {
     resumeSession(session);
-    if (save.settings.sound) audio.startRadio();
+    if (save.settings.music) audio.startRadio();
     audio.ui();
     return;
   }
   if (id === "retry" && session) {
     const mission = session.mission;
     const pointerId = session.pointerId;
+    beginRide();
     restartSession(session);
     if (pointerId !== null && pointerId !== undefined) {
       try {
@@ -181,7 +232,19 @@ function activate(id) {
     wasDown = false;
     acc = 0;
     last = performance.now();
-    if (save.settings.sound) audio.startRadio();
+    if (save.settings.music) audio.startRadio();
+    audio.ui();
+    return;
+  }
+  if (id === "moment" && session && moment.start()) {
+    replayHold = {
+      s: session.sim.s,
+      x: session.sim.x,
+      v: session.sim.v,
+      brake: session.sim.brakeInput,
+      hazards: hazardSnap(session.sim.hazards),
+    };
+    session.phase = "replay";
     audio.ui();
     return;
   }
@@ -200,22 +263,55 @@ function activate(id) {
 
 function tick(dt) {
   if (screen !== "play" || !session) return;
+  if (session.phase === "replay") {
+    const sample = moment.step();
+    if (!sample) {
+      finishReplay();
+      return;
+    }
+    showReplaySample(session.sim, sample);
+    return;
+  }
   if (session.phase !== "drive" && session.phase !== "countdown") audio.stopRadio();
   if (autopilot && debug && session.phase === "drive") {
     const policy = POLICIES[autopilot];
     if (policy) session.brakeHeld = !!policy(session.sim);
+    const attention = session.sim.attention;
+    if (attention === "phone" || attention === "drowsy" || attention === "asleep") session.tapQueued = true;
   }
   const before = session.phase;
   sessionStep(session, dt);
   if (!session) return;
   const sim = session.sim;
   const down = session.phase === "drive" && (session.brakeHeld || session.keysDown.has("Space"));
-  if (down && !wasDown) audio.pedal(true);
+  if (down && !wasDown) {
+    audio.pedal(true);
+    pulse("tap", save.settings.vibration);
+  }
+  if (!down) hardPulsed = false;
+  else if (!hardPulsed && sim.brakeInput > 0.8 && sim.v > 8) {
+    hardPulsed = true;
+    pulse("hard", save.settings.vibration);
+  }
   if (!down && wasDown) {
     audio.pedal(false);
     hint = false;
   }
   wasDown = down;
+  if (sim.bubble && (sim.bubble !== lastBubble || sim.bubbleT > lastBubbleT + 0.2)) audio.voice(sim.bubble);
+  lastBubble = sim.bubble || "";
+  lastBubbleT = sim.bubbleT || 0;
+  if (sim.cargo + 1 < lastCargo) audio.cargo(sim.cargoType);
+  lastCargo = sim.cargo ?? lastCargo;
+    if (session.phase === "drive") {
+    moment.push({
+      s: sim.s,
+      x: sim.x,
+      v: sim.v,
+      brake: sim.brakeInput,
+      hazards: hazardSnap(sim.hazards),
+    });
+  }
   audio.brakeAmount(sim.brakeInput, sim.v);
   if (sim.stats.collisions > lastHits) {
     lastHits = sim.stats.collisions;
@@ -238,10 +334,14 @@ function tick(dt) {
 }
 
 function frame(now) {
+  const frameStart = performance.now();
+  applyBuffer();
   const drained = drainFrame(acc, (now - last) / 1000, timeScale);
   last = now;
   acc = drained.acc;
   for (let step = 0; step < drained.steps; step += 1) tick(1 / 60);
+  const driving = screen === "play" && session?.phase === "drive";
+  presentedAlpha = driving ? renderAlpha(acc, 1 / 60) : 1;
   const drawn = render(ctx, {
     screen,
     session,
@@ -252,11 +352,17 @@ function frame(now) {
     notice,
     preview,
     missions: LESSONS,
+    futureTrips: futureMissions(),
     selected,
     pose: null,
+    alpha: presentedAlpha,
+    replayReady: moment.ready(),
+    pointer: uiPointer,
   });
   hotspots = drawn.spots;
   labels = drawn.labels;
+  readout = drawn.readout || readout;
+  lastFrameMs = performance.now() - frameStart;
   requestAnimationFrame(frame);
 }
 
@@ -272,31 +378,62 @@ function hit(point) {
   return null;
 }
 
-canvas.addEventListener("pointerdown", (event) => {
+function trackPointer(event) {
+  uiPointer.over = hit(eventPoint(event));
+}
+
+function finishPress(event, fire) {
+  releasePointer(session, event.pointerId);
+  const pressed = uiPointer.pressed;
+  uiPointer.pressed = null;
+  if (!fire || !pressed) return;
+  if (hit(eventPoint(event)) === pressed) activate(pressed);
+}
+
+canvas.addEventListener("pointermove", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
-  audio.unlock();
-  const id = hit(eventPoint(event));
-  if (id === "pedal" && session?.phase === "drive" && (session.pointerId === null || session.pointerId === undefined)) {
-    session.pointerId = event.pointerId;
-    session.brakeHeld = true;
-    canvas.setPointerCapture?.(event.pointerId);
-    return;
-  }
-  if (id && id !== "pedal") activate(id);
+  trackPointer(event);
 });
 
-canvas.addEventListener("pointerup", (event) => releasePointer(event.pointerId));
-canvas.addEventListener("pointercancel", (event) => releasePointer(event.pointerId));
-canvas.addEventListener("lostpointercapture", (event) => releasePointer(event.pointerId));
+canvas.addEventListener("pointerdown", (event) => {
+  if (document.body.classList.contains("is-portrait")) return;
+  if (session?.phase === "replay") {
+    finishReplay();
+    return;
+  }
+  audio.unlock();
+  const id = hit(eventPoint(event));
+  uiPointer.over = id;
+  const action = pointerDown(session, id, event.pointerId);
+  if (action === "brake" || action === "wake") {
+    try {
+      canvas.setPointerCapture?.(event.pointerId);
+    } catch {
+      /* A synthetic pointer has no capture target. The id is still tracked. */
+    }
+    return;
+  }
+  if (id && id !== "pedal" && id !== "anton") {
+    uiPointer.pressed = id;
+    try {
+      canvas.setPointerCapture?.(event.pointerId);
+    } catch {
+      /* The click still resolves on pointerup. */
+    }
+  }
+});
 
-function releasePointer(pointerId) {
-  if (!session || session.pointerId !== pointerId) return;
-  session.pointerId = null;
-  session.brakeHeld = false;
-}
+canvas.addEventListener("pointerup", (event) => finishPress(event, true));
+canvas.addEventListener("pointercancel", (event) => finishPress(event, false));
+canvas.addEventListener("lostpointercapture", (event) => finishPress(event, false));
 
 window.addEventListener("keydown", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
+  if (session?.phase === "replay" && (event.code === "Escape" || event.code === "Space" || event.code === "Enter")) {
+    event.preventDefault();
+    finishReplay();
+    return;
+  }
   audio.unlock();
   if (event.code === "Space") event.preventDefault();
   if (event.repeat && event.code !== "Space") return;
@@ -328,6 +465,22 @@ function syncOrient() {
 }
 
 let placement = null;
+let bufferScale = 1;
+let lastFrameMs = 0;
+
+function applyBuffer() {
+  const cssW = placement?.width || 1600;
+  const cssH = placement?.height || 900;
+  const low = !!save.settings.reducedMotion;
+  // The drawing stays 1600×900. devicePixelRatio is not allowed to enlarge it,
+  // and the scale we would grant a screen is capped at 2 (1 if motion is reduced).
+  bufferScale = backingScale(cssW, cssH, window.devicePixelRatio, low);
+  if (canvas.width !== 1600 || canvas.height !== 900) {
+    canvas.width = 1600;
+    canvas.height = 900;
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
 
 function fitCanvas() {
   const wrap = document.getElementById("wrap");
@@ -367,6 +520,7 @@ function fitCanvas() {
   canvas.style.top = `${Math.round(originY + next.top)}px`;
   canvas.style.width = `${next.width}px`;
   canvas.style.height = `${next.height}px`;
+  applyBuffer();
 }
 
 window.addEventListener("resize", () => {
@@ -378,6 +532,9 @@ syncOrient();
 fitCanvas();
 
 window.__anton = {
+  cabinReady,
+  frameBudget: () => lastFrameMs,
+  bufferScale: () => bufferScale,
   getState() {
     return {
       screen,
@@ -401,6 +558,21 @@ window.__anton = {
       hazard: hazardState(),
       stopGap: gapState(),
       pose: session ? expressionId(session.sim) : expressionId(preview),
+      cabinReady: cabinReady(),
+      attention: session?.sim.attention ?? null,
+      pokes: session?.sim.stats.attentionPokes ?? 0,
+      brakePointer: session?.pointerId ?? null,
+      wakePointer: session?.wakeId ?? null,
+      needleDeg: readout.needleDeg,
+      pedalDeg: readout.pedalDeg,
+      hubX: readout.hubX,
+      hubY: readout.hubY,
+      tipX: readout.tipX,
+      tipY: readout.tipY,
+      padX: readout.padX,
+      padY: readout.padY,
+      pressed: uiPointer.pressed,
+      over: uiPointer.over,
     };
   },
   hotspots() {
@@ -424,8 +596,57 @@ window.__anton = {
   getTimeScale() {
     return timeScale;
   },
+  getPresented() {
+    if (!debug || !session) return null;
+    const pose = renderPose(session.sim, presentedAlpha);
+    return {
+      alpha: presentedAlpha,
+      phase: session.phase,
+      s: session.sim.s,
+      prevS: session.sim.prevS,
+      x: session.sim.x,
+      prevX: session.sim.prevX,
+      poseS: pose.s,
+      poseX: pose.x,
+    };
+  },
+  debugPlace(pose = {}) {
+    if (!debug || !session) return;
+    const sim = session.sim;
+    if (Number.isFinite(pose.x)) {
+      sim.x = pose.x;
+      sim.prevX = pose.x;
+    }
+    if (Number.isFinite(pose.s)) {
+      sim.s = pose.s;
+      sim.prevS = pose.s;
+    }
+    if (Number.isFinite(pose.brake)) sim.brakeInput = pose.brake;
+    if (Number.isFinite(pose.crash)) sim.crashT = pose.crash;
+    sim.v = 0;
+  },
+  setPatience(value) {
+    if (!debug || !session) return;
+    session.sim.patience = Math.max(0, Math.min(100, Number(value) || 0));
+  },
+  setBrakeInput(value) {
+    if (!debug || !session) return;
+    session.sim.brakeInput = Math.max(0, Math.min(1, Number(value) || 0));
+  },
+  debugHurt(body, hits) {
+    if (!debug || !session) return;
+    session.sim.body = Math.max(0, Math.min(100, Number(body) || 0));
+    session.sim.stats.collisions = Math.max(0, Number(hits) || 0);
+  },
+  debugSeek(metres) {
+    if (!debug || !session) return;
+    const s = Math.max(0, Number(metres) || 0);
+    session.sim.s = s;
+    session.sim.prevS = s;
+  },
   debugStart(id) {
     if (!debug) return;
+    beginRide();
     const mission = getMission(id, id === "infinite" ? 7 : undefined);
     if (!mission) return;
     session = createSession(mission, { seed: mission.seed || 7 });
@@ -473,7 +694,17 @@ async function boot() {
   } catch (error) {
     console.warn("Font load failed, falling back to system faces.", error);
   }
-  audio.setEnabled(save.settings.sound);
+  applyAudio();
+  try {
+    await whenCarsReady();
+  } catch {
+    /* A missing picture falls back to flat shapes. The ride still starts. */
+  }
+  try {
+    await whenCabinReady();
+  } catch {
+    /* The cabin stays a flat panel until the approved stills load. */
+  }
   requestAnimationFrame(frame);
 }
 

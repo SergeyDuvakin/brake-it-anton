@@ -49,14 +49,23 @@ export function createSim(mission, seed = 1) {
     infinite: !!mission.infinite,
     length: mission.length,
     cruise: mission.cruise ?? 16,
+    brakeMul: mission.brakeMul ?? 1,
+    patienceMul: mission.patienceMul ?? 1,
+    ignoresMarkings: mission.ignoresMarkings === true,
+    district: mission.district || null,
+    passenger: mission.passenger || null,
+    car: mission.car || "yellow",
+    portrait: mission.portrait || null,
     cargoType: mission.cargo || null,
     slippery: (mission.slippery || []).map((z) => ({ s0: z.s0, s1: z.s1 })),
     hazards,
     seed,
     rng: mulberry32(seed),
     s: 0,
+    prevS: 0,
     v: 0,
     x: CFG.defaultX,
+    prevX: CFG.defaultX,
     brakeInput: 0,
     holdTime: 0,
     pressTime: 0,
@@ -97,6 +106,17 @@ export function createSim(mission, seed = 1) {
     gagT: 0,
     nearT: 0,
     cargoFlash: 0,
+    phoneAt: mission.phoneAt ?? null,
+    phoneFor: mission.phoneFor ?? null,
+    sleepDrowsyAt: mission.sleepDrowsyAt ?? null,
+    sleepAt: mission.sleepAt ?? null,
+    sleepFor: mission.sleepFor ?? null,
+    attention: "road",
+    phonePlayed: false,
+    sleepPlayed: false,
+    wokeFrom: null,
+    stowT: 0,
+    wakeT: 0,
     stats: {
       collisions: 0,
       trustClears: 0,
@@ -110,6 +130,7 @@ export function createSim(mission, seed = 1) {
       shortReleases: 0,
       nearMisses: 0,
       yields: 0,
+      attentionPokes: 0,
       minV: Infinity,
       maxV: 0,
       maxThrottle: 0,
@@ -222,27 +243,97 @@ function selfBrake(sim) {
   return 0.24 * skill * urgency;
 }
 
+/**
+ * Furthest the centre may sit. The body then ends on the asphalt edge.
+ * Mirrors painted past carHalfW are not included.
+ */
+export function bodyCenterLimit() {
+  return CFG.roadHalf - CFG.carHalfW;
+}
+
 function desiredX(sim) {
   const h = nextHazard(sim);
-  if (h && h.committed === "lunge" && h.dist > -4 && h.dist < 50) return h.x;
-  if (h && h.committed === "avoid" && h.dist > -8 && h.dist < 55) {
+  let x = CFG.defaultX;
+  if (h && h.committed === "lunge" && h.dist > -4 && h.dist < 50) x = h.x;
+  else if (h && h.committed === "avoid" && h.dist > -8 && h.dist < 55) {
     const params = steerParams(sim.patience, sim.outburstT > 0);
     const sign = Math.sign(h.x || 1);
-    return clamp(-sign * CFG.defaultX - sign * params.overshoot, -CFG.roadEdge + 0.15, CFG.roadEdge - 0.15);
+    x = -sign * CFG.defaultX - sign * params.overshoot;
+  } else if (sim.outburstT > 0) {
+    x = CFG.defaultX + Math.sin(sim.t * 2.4) * 0.35;
+  } else if (h && h.dist < 78) x = CFG.defaultX;
+  else if (sim.patience >= 70) x = CFG.defaultX + Math.sin(sim.t * 1.3 + sim.seed) * 0.42;
+  else if (sim.patience >= 40) x = CFG.defaultX + Math.sin(sim.t * 1.15) * 0.16;
+  if (sim.ignoresMarkings && !(h && (h.committed === "avoid" || h.committed === "lunge"))) {
+    x += Math.sin(sim.s * 0.08) * 1.1;
   }
-  if (sim.outburstT > 0) {
-    return CFG.defaultX + Math.sin(sim.t * 2.4) * 0.35;
+  const limit = bodyCenterLimit();
+  return clamp(x, -limit, limit);
+}
+
+function outOfIt(sim) {
+  return sim.attention === "phone" || sim.attention === "asleep";
+}
+
+/** One tap puts the phone away or wakes him. A second tap in the same state does nothing. */
+export function pokeAttention(sim) {
+  if (!sim) return false;
+  if (sim.attention === "phone") {
+    sim.attention = "stow";
+    sim.stowT = 0;
+    sim.wokeFrom = "phone";
+    sim.stats.attentionPokes += 1;
+    return true;
   }
-  if (h && h.dist < 78) return CFG.defaultX;
-  if (sim.patience >= 70) return CFG.defaultX + Math.sin(sim.t * 1.3 + sim.seed) * 0.42;
-  if (sim.patience >= 40) return CFG.defaultX + Math.sin(sim.t * 1.15) * 0.16;
-  return CFG.defaultX;
+  if (sim.attention === "drowsy" || sim.attention === "asleep") {
+    sim.attention = "wake";
+    sim.wakeT = 0;
+    sim.wokeFrom = "sleep";
+    sim.stats.attentionPokes += 1;
+    return true;
+  }
+  return false;
+}
+
+function advanceAttention(sim, dt) {
+  if (sim.attention === "road" && sim.phoneAt !== null && sim.phoneAt !== undefined && !sim.phonePlayed && sim.s >= sim.phoneAt) {
+    sim.phonePlayed = true;
+    sim.attention = "phone";
+  }
+  if (sim.attention === "road" && sim.sleepDrowsyAt !== null && sim.sleepDrowsyAt !== undefined && !sim.sleepPlayed && sim.s >= sim.sleepDrowsyAt) {
+    sim.sleepPlayed = true;
+    sim.attention = "drowsy";
+  }
+  if (sim.attention === "drowsy" && sim.sleepAt !== null && sim.sleepAt !== undefined && sim.s >= sim.sleepAt) {
+    sim.attention = "asleep";
+  }
+  if (sim.attention === "stow") {
+    sim.stowT += dt;
+    if (sim.stowT >= 0.72) sim.attention = "earnest";
+  }
+  if (sim.attention === "wake") {
+    sim.wakeT += dt;
+    if (sim.wakeT >= 0.62) sim.attention = "earnest";
+  }
+  if (sim.attention === "earnest") {
+    const linkedId = sim.wokeFrom === "sleep" ? sim.sleepFor : sim.phoneFor;
+    const linked = linkedId ? sim.hazards.find((hazard) => hazard.id === linkedId) : null;
+    if (linked && linked.resolved) sim.attention = "road";
+  }
 }
 
 function commitHazards(sim, held) {
   for (const h of sim.hazards) {
-    if (h.resolved || h.committed) continue;
+    if (h.resolved) continue;
     const dist = h.s - sim.s;
+    if (h.committed === "asleep" && !outOfIt(sim) && dist > 14) {
+      h.committed = "avoid";
+      h.commitAt = sim.t;
+      sim.intent = "avoid";
+      say(sim, "Я САМ!");
+      log(sim, { kind: "avoid", id: h.id });
+    }
+    if (h.committed) continue;
     const braking = held && sim.brakeInput > CFG.irritationBrake;
     if (braking && dist < h.telegraph && dist > 0) {
       if (h.trust) {
@@ -258,6 +349,12 @@ function commitHazards(sim, held) {
     if (dist <= h.commit && dist > -5) {
       h.commitAt = sim.t;
       if (h.trust) {
+        if (outOfIt(sim)) {
+          h.committed = "asleep";
+          sim.intent = sim.attention === "asleep" ? "sleep" : "phone";
+          log(sim, { kind: "asleep", id: h.id });
+          continue;
+        }
         h.committed = h.seenBrake > CFG.irritationBrake ? "lunge" : "avoid";
         if (h.committed === "lunge") {
           sim.stats.lunges += 1;
@@ -279,24 +376,191 @@ function commitHazards(sim, held) {
   }
 }
 
+/** Houses and trees are props. They are drawn, and they are not solid. */
+export function isSolidHazard(h) {
+  if (!h || h.alive === false) return false;
+  if (h.solid === false) return false;
+  if (h.category === "decor" || h.kind === "prop") return false;
+  return true;
+}
+
+function lateralReach(h) {
+  return CFG.carHalfW + h.halfW - 0.04;
+}
+
+function lateralOverlapAt(carX, hx, h) {
+  return Math.abs(carX - hx) < lateralReach(h);
+}
+
+/** Where the body is now. Yield and "have they left" use only this. */
 function lateralOverlap(sim, h) {
-  const hx = hazardWorldX(h, sim);
-  return Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW - 0.04;
+  return lateralOverlapAt(sim.x, hazardWorldX(h, sim), h);
+}
+
+/**
+ * Times in [0, 1] when a straight move from a0 to a1 sits strictly inside (lo, hi).
+ * The whole step is one line, so the answer is a single interval.
+ */
+export function overlapTimes(a0, a1, lo, hi) {
+  const inside = (value) => value > lo && value < hi;
+  if (a0 === a1) return inside(a0) ? [0, 1] : null;
+  let t0 = (lo - a0) / (a1 - a0);
+  let t1 = (hi - a0) / (a1 - a0);
+  if (t0 > t1) {
+    const swap = t0;
+    t0 = t1;
+    t1 = swap;
+  }
+  const start = Math.max(0, t0);
+  const end = Math.min(1, t1);
+  if (!(end > start)) return null;
+  const mid = a0 + (a1 - a0) * ((start + end) / 2);
+  if (!inside(mid)) return null;
+  return [start, end];
+}
+
+export function windowsOverlap(left, right) {
+  if (!left || !right) return false;
+  return left[0] < right[1] && right[0] < left[1];
+}
+
+/**
+ * Contact only while the lane overlap and the bumper overlap happen together.
+ * Endpoints alone miss a crossing through the middle, and they also count a
+ * miss when the car leaves the lane before the nose arrives.
+ * Actor x is the straight line between the two samples this step produced.
+ */
+export function contactDuringStep(sim, h, prevS) {
+  const hx0 = h.prevX ?? hazardWorldX(h, sim);
+  const hx1 = hazardWorldX(h, sim);
+  const reach = lateralReach(h);
+  const lateral = overlapTimes((sim.prevX ?? sim.x) - hx0, sim.x - hx1, -reach, reach);
+  const near = h.s - h.halfL;
+  const far = h.s + h.halfL;
+  const along = overlapTimes(prevS, sim.s, near - CFG.carHalfFront, far + CFG.carHalfBack);
+  return windowsOverlap(lateral, along);
+}
+
+function snapshotPose(sim) {
+  sim.prevS = sim.s;
+  sim.prevX = sim.x;
+  for (const h of sim.hazards) {
+    h.prevX = hazardWorldX(h, sim);
+    h.prevTravel = actorTravel(h, sim);
+  }
+}
+
+/** Freeze the drawn pose on the authoritative state. Render must not be the one to write this. */
+export function snapRenderPose(sim) {
+  if (!sim) return;
+  snapshotPose(sim);
+}
+
+/** Fields the picture needs so a replay can put a body back where it was. */
+export function hazardSnap(hazards) {
+  return (hazards || []).map((h) => ({
+    id: h.id,
+    resolved: h.resolved,
+    committed: h.committed,
+    crossT: h.crossT,
+    hopped: !!h.hopped,
+    yielded: !!h.yielded,
+  }));
+}
+
+export function applyHazardSnap(hazards, snap) {
+  if (!snap) return;
+  for (const item of snap) {
+    const h = (hazards || []).find((hazard) => hazard.id === item.id);
+    if (!h) continue;
+    h.resolved = item.resolved;
+    h.committed = item.committed;
+    h.crossT = item.crossT;
+    h.hopped = item.hopped;
+    h.yielded = item.yielded;
+  }
+}
+
+export function renderAlpha(accumulator, step = 1 / 60) {
+  if (!(step > 0) || !Number.isFinite(accumulator)) return 1;
+  const alpha = accumulator / step;
+  if (alpha <= 0) return 0;
+  if (alpha >= 1) return 1;
+  return alpha;
+}
+
+/**
+ * Picture between the previous sim step and the current one.
+ * Does not write the sim. Alpha 0 is the previous step, alpha 1 is the live step.
+ * UI and collision keep using the live sim, not this pose.
+ */
+export function renderPose(sim, alpha = 1) {
+  const t = renderAlpha(alpha, 1);
+  const prevS = sim.prevS ?? sim.s;
+  const prevX = sim.prevX ?? sim.x;
+  const hazardX = new Map();
+  const hazardTravel = new Map();
+  for (const h of sim.hazards || []) {
+    const now = hazardWorldX(h, sim);
+    const prev = h.prevX ?? now;
+    hazardX.set(h.id, prev + (now - prev) * t);
+    const nowTravel = actorTravel(h, sim);
+    const prevTravel = h.prevTravel ?? nowTravel;
+    hazardTravel.set(h.id, prevTravel + (nowTravel - prevTravel) * t);
+  }
+  return {
+    s: prevS + (sim.s - prevS) * t,
+    x: prevX + (sim.x - prevX) * t,
+    alpha: t,
+    hazardX,
+    hazardTravel,
+  };
+}
+
+/**
+ * Metres this body has walked. Waiting, lingering and a finished dart stay put.
+ * The value depends on the pose, not on how many steps reached it.
+ */
+export function actorTravel(h, sim) {
+  if (!h) return 0;
+  if (h.type === "pedestrian") return pedestrianTravel(h);
+  if (h.type === "dog") return dogTravel(h, h.s - (sim?.s || 0));
+  return 0;
+}
+
+function pedestrianTravel(h) {
+  if (h.hopped || !(h.crossT >= 0)) return 0;
+  const dur = h.crossDur || 3.35;
+  const u = clamp(h.crossT / dur, 0, 1);
+  const dummy = { s: h.s - 10 };
+  const at = (uu) => hazardWorldX({ ...h, crossT: uu * dur, hopped: false }, dummy);
+  const side = at(0);
+  const lane = at(0.2);
+  const here = at(u);
+  if (u <= 0.16) return Math.abs(here - side);
+  const inbound = Math.abs(lane - side);
+  if (u <= 0.74) return inbound;
+  return inbound + Math.abs(here - lane);
+}
+
+function dogTravel(h, dist) {
+  if (dist >= 18) return 0;
+  const end = clamp(1 - Math.max(dist, 0) / 18, 0, 1);
+  const steps = 64;
+  const n = Math.max(1, Math.round(steps * end));
+  const at = (t) => hazardWorldX(h, { s: h.s - 18 * (1 - t) });
+  let prev = at(0);
+  let length = 0;
+  for (let i = 1; i <= n; i += 1) {
+    const x = at((end * i) / n);
+    length += Math.abs(x - prev);
+    prev = x;
+  }
+  return length;
 }
 
 function frontOf(s) {
   return s + CFG.carHalfFront;
-}
-
-/** True when the bumper swept across the hazard's near face this step. */
-function sweptInto(prevS, s, h) {
-  const near = h.s - h.halfL;
-  const far = h.s + h.halfL;
-  const prevFront = frontOf(prevS);
-  const front = frontOf(s);
-  const back = Math.min(prevS, s) - CFG.carHalfBack;
-  const nose = Math.max(prevFront, front);
-  return nose > near && back < far;
 }
 
 function markClear(sim, h, how) {
@@ -315,6 +579,8 @@ function markClear(sim, h, how) {
 }
 
 function resolveHit(sim, h) {
+  const hitId = h.hitId || `hit:${h.id}`;
+  h.hitId = hitId;
   const impact = sim.v;
   const excess = Math.max(0, impact - 1.2);
   let bodyLoss = (CFG.bodyPerMs[h.type] || 3) * excess;
@@ -338,7 +604,7 @@ function resolveHit(sim, h) {
   sim.crashT = 0.24;
   sim.beltT = Math.max(sim.beltT, 0.28);
   say(sim, "ОЙ!");
-  log(sim, { kind: "hit", id: h.id, type: h.type, impact: round3(impact), bodyLoss: round3(bodyLoss), cargoLoss });
+  log(sim, { kind: "hit", id: h.id, hitId, type: h.type, impact: round3(impact), bodyLoss: round3(bodyLoss), cargoLoss });
 }
 
 function pinShort(sim, h) {
@@ -370,10 +636,10 @@ function holdYield(sim, h) {
 function collide(sim, prevS) {
   for (const h of sim.hazards) {
     if (h.resolved) continue;
+    if (!isSolidHazard(h)) continue;
     if (holdYield(sim, h)) continue;
 
-    const lateral = lateralOverlap(sim, h);
-    const entered = lateral && sweptInto(prevS, sim.s, h);
+    const entered = contactDuringStep(sim, h, prevS);
     if (!entered) continue;
 
     const near = h.s - h.halfL;
@@ -474,6 +740,9 @@ function fail(sim, reason) {
 
 export function stepSim(sim, dt, input = {}) {
   if (sim.done) return sim;
+  snapshotPose(sim);
+  advanceAttention(sim, dt);
+  if (input.tap) pokeAttention(sim);
   const held = !!input.held;
 
   if (input.snapBrake && held) sim.brakeInput = 1;
@@ -551,7 +820,7 @@ export function stepSim(sim, dt, input = {}) {
   const prevS = sim.s;
   if (!input.lockSpeed) {
     const cap = sim.infinite ? CFG.infiniteSpeedCap : CFG.storySpeedCap;
-    const accel = netAccel(sim.v, throttle, physBrake, CFG.drag, slip);
+    const accel = netAccel(sim.v, throttle, physBrake * (sim.brakeMul || 1), CFG.drag, slip);
     sim.v = clamp(sim.v + accel * dt, 0, cap);
   }
   sim.stats.minV = Math.min(sim.stats.minV, sim.v);
@@ -572,7 +841,7 @@ export function stepSim(sim, dt, input = {}) {
   const want = desiredX(sim);
   sim.targetX = want;
   sim.x += clamp(want - sim.x, -rate * dt, rate * dt);
-  sim.x = clamp(sim.x, -CFG.roadEdge, CFG.roadEdge);
+  sim.x = clamp(sim.x, -bodyCenterLimit(), bodyCenterLimit());
   sim.stats.minX = Math.min(sim.stats.minX, sim.x);
   sim.stats.maxX = Math.max(sim.stats.maxX, sim.x);
 
@@ -596,13 +865,14 @@ export function stepSim(sim, dt, input = {}) {
     sim.brakeInput > 0.5 &&
     sim.holdTime > 0.5 &&
     !fair;
-  const rateMood = irritationRate({
+  let rateMood = irritationRate({
     decel: playerDecel,
     brakeInput: held ? sim.brakeInput : 0,
     holdTime: sim.holdTime,
     justified: fair,
     stopped: stoppedHard,
   });
+  rateMood *= sim.patienceMul || 1;
   sim.patience = clamp(sim.patience + rateMood * dt, 0, 100);
   if (held && playerDecel > CFG.harshSpikeDecel && !sim.spiked) {
     sim.spiked = true;
@@ -685,7 +955,9 @@ export function runSim(mission, policy, opts = {}) {
   let t = 0;
   while (!sim.done && t < max) {
     const held = !!policy(sim, t);
-    stepSim(sim, dt, { held });
+    const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
+    const tap = opts.attend === false ? false : needsTap;
+    stepSim(sim, dt, { held, tap });
     t += dt;
   }
   if (!sim.done) {

@@ -72,6 +72,20 @@ export function cargoSustain(type) {
   return 0;
 }
 
+/**
+ * 0 intact, 1 light, 2 medium, 3 heavy.
+ * Medium and heavy use the approved collision drawing.
+ * Light and the extra heavy mark are placeholders until there is owner art.
+ */
+export function damageStage(body, collisions = 0) {
+  const hull = Number.isFinite(body) ? body : 100;
+  const hits = collisions || 0;
+  if (hits <= 0 && hull > 90) return 0;
+  if (hull > 60 && hits < 3) return 1;
+  if (hull > 25) return 2;
+  return 3;
+}
+
 export function moodWord(patience, outburst) {
   if (outburst || patience >= 100) return "Ну всё!";
   if (patience >= 70) return "Закипает";
@@ -100,6 +114,7 @@ function preening(sim) {
 }
 
 export function expressionId(sim) {
+  if (sim.attention && sim.attention !== "road") return sim.attention;
   if (sim.beltT > 0 || sim.cargoFlash > 0) return "belted";
   if (sim.outburstT > 0 || sim.patience >= 100) return "furious";
   if (sim.intent === "lunge") return "angry";
@@ -152,6 +167,7 @@ export function repairInvoice(stats, time) {
     ["Зеркало с характером", (stats.mirrors || 0) * INVOICE.mirror],
     ["Антикризисное вмешательство", (stats.harshFull || 0) * INVOICE.intervention],
     ["Сигналы в пустоту", (stats.honks || 0) * INVOICE.honk],
+    ["Почти задел", (stats.nearMisses || 0) * INVOICE.near],
     ["Аренда нервов", Math.round((time || 0) * INVOICE.nervesPerSec)],
   ].filter(([, cost]) => cost > 0);
   const total = lines.reduce((sum, [, cost]) => sum + cost, 0);
