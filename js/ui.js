@@ -453,7 +453,7 @@ export function drawResultScreen(ctx, state, sink) {
 
   if (sim.infinite) {
     const bill = repairInvoice(sim.stats, sim.t);
-    const lines = bill.lines.slice(0, 3).map(([name, cost]) => `${name}  ${cost}`);
+    const lines = bill.lines.slice(0, 4).map(([name, cost]) => `${name}  ${cost}`);
     lines.push(`Итого ${bill.total}`);
     lines.forEach((line, index) => {
       const row = place(card, 150, 560 + index * 36, 560, 34);

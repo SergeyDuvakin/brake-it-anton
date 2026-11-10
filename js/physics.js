@@ -167,6 +167,7 @@ export function repairInvoice(stats, time) {
     ["Зеркало с характером", (stats.mirrors || 0) * INVOICE.mirror],
     ["Антикризисное вмешательство", (stats.harshFull || 0) * INVOICE.intervention],
     ["Сигналы в пустоту", (stats.honks || 0) * INVOICE.honk],
+    ["Почти задел", (stats.nearMisses || 0) * INVOICE.near],
     ["Аренда нервов", Math.round((time || 0) * INVOICE.nervesPerSec)],
   ].filter(([, cost]) => cost > 0);
   const total = lines.reduce((sum, [, cost]) => sum + cost, 0);

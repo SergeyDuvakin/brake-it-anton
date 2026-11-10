@@ -145,6 +145,7 @@ export const INVOICE = {
   mirror: 350,
   intervention: 800,
   honk: 90,
+  near: 220,
   nervesPerSec: 12,
 };
 

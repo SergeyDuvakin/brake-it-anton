@@ -454,6 +454,14 @@ test("infinite mode is seeded, capped near 96 km/h, and stays in the lanes", () 
   assert.ok(sim.v <= CFG.infiniteSpeedCap + 1e-6, sim.v);
   const bill = repairInvoice({ collisions: 2, mirrors: 1, harshFull: 1, honks: 3 }, 10);
   assert.equal(bill.total, 2 * 1400 + 350 + 800 + 3 * 90 + 120);
+  const withNear = repairInvoice({ collisions: 0, nearMisses: 2 }, 0);
+  assert.equal(withNear.lines.some(([name]) => name === "Почти задел"), true);
+  assert.equal(withNear.total, 440);
+  const lesson2 = getMission("lesson2");
+  assert.ok(lesson2.hazards.some((h) => h.id === "late-ped" && h.type === "pedestrian"));
+  assert.ok(lesson2.hazards.some((h) => h.id === "late-bin"));
+  const lesson4 = getMission("lesson4");
+  assert.ok(lesson4.hazards.some((h) => h.id === "late-bin" && h.type === "bin"));
 });
 
 function brakeOnly(sim) {
@@ -1880,7 +1888,7 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   assert.equal(lesson2.sleepDrowsyAt, 390);
   assert.equal(lesson2.sleepAt, 430);
   assert.equal(lesson2.hazards.find((h) => h.id === "nap").s, 520);
-  assert.equal(lesson2.length, 640);
+  assert.equal(lesson2.length, 860);
   for (const lesson of [lesson1, lesson2]) {
     let prev = 0;
     for (const hazard of lesson.hazards) {
