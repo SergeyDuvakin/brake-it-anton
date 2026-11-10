@@ -472,10 +472,12 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
   }
 
   const props = [];
+  // On the sidewalk, in from the old 4.55 m mark, still clear of the lane samples.
+  const sceneryX = VIEW.roadHalf + 0.46;
   for (let s = Math.floor((cam - 8) / 14) * 14; s < cam + VIEW.look; s += 14) {
     const n = Math.round(s / 14);
     for (const side of [-1, 1]) {
-      props.push({ ds: s - cam, xm: side * 4.55, n, side, band: districtAt(s), kind: "prop" });
+      props.push({ ds: s - cam, xm: side * sceneryX, n, side, band: districtAt(s), kind: "prop" });
     }
   }
   for (const h of sim.hazards) {

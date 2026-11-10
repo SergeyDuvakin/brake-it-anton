@@ -37,8 +37,12 @@ export const PEDAL = {
   size: 1024,
   maxDeg: 24,
   thickness: 14,
-  dest: { x: 1072, y: 418, w: 504, h: 504 },
+  /** About 70% of the previous 504px rig, sitting low in the cabin. */
+  dest: { x: 1136, y: 548, w: 360, h: 360 },
 };
+
+/** The whole plate is the brake target. It stays inside the cabin, off the road. */
+export const PEDAL_ZONE = { x: 1076, y: 640, w: 480, h: 224 };
 
 const INK = "#1C161E";
 const CREAM_TEXT = "#FFF6E4";
@@ -532,21 +536,24 @@ function projectPedalRow(deg, y, z) {
   return { sy: PEDAL.cy + (ry - PEDAL.cy) * scale, scale };
 }
 
-function drawWarped(ctx, img, dest, deg, z) {
+function drawWarped(ctx, img, dest, deg) {
   if (!ready(img)) return;
   const start = 206;
   const end = 830;
   const step = 2;
   for (let y = start; y < end; y += step) {
-    const a = projectPedalRow(deg, y, z);
-    const b = projectPedalRow(deg, y + step, z);
-    const top = dest.y + (Math.min(a.sy, b.sy) / PEDAL.size) * dest.h;
-    const bot = dest.y + (Math.max(a.sy, b.sy) / PEDAL.size) * dest.h;
+    const y2 = Math.min(end, y + step);
+    const a = projectPedalRow(deg, y, 0);
+    const b = projectPedalRow(deg, y2, 0);
+    const top = Math.min(a.sy, b.sy);
+    const bot = Math.max(a.sy, b.sy);
     const scale = (a.scale + b.scale) / 2;
-    if (scale < 0.2 || scale > 1.5) continue;
+    if (scale < 0.15 || scale > 1.6 || bot - top < 0.2) continue;
     const dw = dest.w * scale;
     const dx = dest.x + ((PEDAL.cx * (1 - scale)) / PEDAL.size) * dest.w;
-    ctx.drawImage(img, 0, y, PEDAL.size, step + 2, dx, top - 1, dw, Math.max(2, bot - top + 2));
+    const dy = dest.y + (top / PEDAL.size) * dest.h;
+    const dh = ((bot - top) / PEDAL.size) * dest.h;
+    ctx.drawImage(img, 0, y, PEDAL.size, y2 - y, dx, dy, dw, Math.max(0.4, dh));
   }
 }
 
@@ -563,20 +570,33 @@ function pedalFrame(deg) {
   const btx = buffer.getContext("2d");
   const dest = { x: 0, y: 0, w: PEDAL.size, h: PEDAL.size };
   btx.imageSmoothingEnabled = true;
-  drawWarped(btx, IMG.lever, dest, key, 0);
+  drawWarped(btx, IMG.lever, dest, key);
   btx.drawImage(IMG.mount, 0, 0);
   pedalFrames.set(key, buffer);
   return buffer;
 }
 
-export function pedalHitBox(dest = PEDAL.dest) {
-  return {
-    id: "pedal",
-    x: dest.x + (220 / PEDAL.size) * dest.w,
-    y: dest.y + (470 / PEDAL.size) * dest.h,
-    w: (620 / PEDAL.size) * dest.w,
-    h: (340 / PEDAL.size) * dest.h,
-  };
+export function pedalHitBox() {
+  return { id: "pedal", ...PEDAL_ZONE };
+}
+
+function drawPedalZone(ctx, pressed) {
+  const zone = PEDAL_ZONE;
+  ctx.save();
+  roundRect(ctx, zone.x, zone.y, zone.w, zone.h, 26);
+  ctx.fillStyle = pressed ? "#D9843A" : "#B5652E";
+  ctx.fill();
+  ctx.lineJoin = "round";
+  ctx.lineWidth = pressed ? 8 : 5;
+  ctx.strokeStyle = pressed ? "#FFF6D0" : INK;
+  ctx.stroke();
+  if (!pressed) {
+    roundRect(ctx, zone.x + 8, zone.y + 8, zone.w - 16, zone.h - 16, 20);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(28,22,30,0.28)";
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 export function pedalPadPoint(brake, dest = PEDAL.dest) {
@@ -615,6 +635,8 @@ function drawFallbackPedal(ctx, dest, deg) {
 export function drawPedalRig(ctx, brake) {
   const deg = pedalHingeDegrees(brake);
   const dest = PEDAL.dest;
+  const pressed = deg > 0.4;
+  drawPedalZone(ctx, pressed);
   if (!ready(IMG.lever) || !ready(IMG.mount)) {
     drawFallbackPedal(ctx, dest, deg);
     return { deg, pad: pedalPadPoint(brake, dest) };
@@ -624,10 +646,7 @@ export function drawPedalRig(ctx, brake) {
     ctx.drawImage(frame, dest.x, dest.y, dest.w, dest.h);
   } else {
     ctx.save();
-    ctx.filter = "brightness(0.45)";
-    drawWarped(ctx, IMG.lever, dest, deg, PEDAL.thickness);
-    ctx.filter = "none";
-    drawWarped(ctx, IMG.lever, dest, deg, 0);
+    drawWarped(ctx, IMG.lever, dest, deg);
     ctx.drawImage(IMG.mount, dest.x, dest.y, dest.w, dest.h);
     ctx.restore();
   }
@@ -671,9 +690,9 @@ export function drawDriveChrome(ctx, state, sink, brake) {
   const pedal = drawPedalRig(ctx, brake);
   if (state.hint && state.session.phase === "drive" && ready(IMG.arrow)) {
     ctx.save();
-    ctx.translate(1288, 560);
-    ctx.rotate(0.9);
-    ctx.drawImage(IMG.arrow, -36, -28, 72, 64);
+    ctx.translate(PEDAL_ZONE.x + 36, PEDAL_ZONE.y - 8);
+    ctx.rotate(0.7);
+    ctx.drawImage(IMG.arrow, -28, -24, 56, 50);
     ctx.restore();
   }
   return { needle, pedalDeg: pedal.deg, pad: pedal.pad };
