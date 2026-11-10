@@ -33,7 +33,7 @@ jobs:
         run: |
           set -eu
           rm -rf .pages-dist
-          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/assets/cars .pages-dist/assets/world .pages-dist/icons
+          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/assets/cars .pages-dist/assets/world .pages-dist/assets/ui .pages-dist/icons
           cp index.html .pages-dist/index.html
           cp style.css .pages-dist/style.css
           cp manifest.webmanifest .pages-dist/manifest.webmanifest
@@ -58,7 +58,9 @@ jobs:
           cp js/session.js .pages-dist/js/session.js
           cp js/sim.js .pages-dist/js/sim.js
           cp js/storage.js .pages-dist/js/storage.js
+          cp js/ui.js .pages-dist/js/ui.js
           cp js/viewport.js .pages-dist/js/viewport.js
+          cp assets/ui/*.png .pages-dist/assets/ui/
           cp assets/fonts/BalsamiqSans-Bold.ttf .pages-dist/assets/fonts/BalsamiqSans-Bold.ttf
           cp assets/fonts/BalsamiqSans-Regular.ttf .pages-dist/assets/fonts/BalsamiqSans-Regular.ttf
           cp assets/fonts/RubikMonoOne-Regular.ttf .pages-dist/assets/fonts/RubikMonoOne-Regular.ttf
@@ -77,6 +79,11 @@ jobs:
           test -f .pages-dist/assets/cars/coral-wagon-straight.png
           test -f .pages-dist/assets/world/18_dog-design.png
           test -f .pages-dist/assets/world/47_bin-hop.png
+          test -f .pages-dist/js/ui.js
+          test -f .pages-dist/assets/ui/gauge-face-empty.png
+          test -f .pages-dist/assets/ui/pedal-lever.png
+          test -f .pages-dist/assets/ui/pedal-mount.png
+          test -f .pages-dist/assets/ui/card-frame.png
           test -f .pages-dist/assets/world/49_aquarium-calm.png
           test ! -e .pages-dist/README.md
           test ! -e .pages-dist/package.json

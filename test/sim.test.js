@@ -10,6 +10,7 @@ import { drainFrame } from "../js/clock.js";
 import { contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
+import { controlState, patienceNeedleDegrees, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
 import {
   CAR_BODY_H,
   CAR_BODY_W,
@@ -2272,6 +2273,141 @@ test("the body stops on the curb, and scenery past it is not a hit", () => {
   const hole = stop.hazards[0];
   const gap = hole.s - hole.halfL - (stop.s + CFG.carHalfFront);
   assert.ok(gap > 0.5, gap);
+});
+
+function boxesOverlap(a, b) {
+  return a.x < b.x + b.w - 1 && a.x + a.w > b.x + 1 && a.y < b.y + b.h - 1 && a.y + a.h > b.y + 1;
+}
+
+test("patience needle and pedal hinge follow the live input", () => {
+  assert.equal(CFG.patienceStart, 15);
+  assert.equal(CFG.irritationRate, 7.2);
+  assert.equal(CFG.irritationDecel, 4.8);
+  assert.equal(CFG.irritationBrake, 0.35);
+  assert.equal(patienceNeedleDegrees(0), 180);
+  assert.equal(patienceNeedleDegrees(15), 153);
+  assert.equal(patienceNeedleDegrees(50), 90);
+  assert.equal(patienceNeedleDegrees(100), 0);
+  assert.ok(patienceNeedleDegrees(10) > patienceNeedleDegrees(70));
+  assert.equal(patienceNeedleDegrees(-4), 180);
+  assert.equal(patienceNeedleDegrees(140), 0);
+  assert.equal(pedalHingeDegrees(0), 0);
+  assert.equal(pedalHingeDegrees(0.5), 12);
+  assert.equal(pedalHingeDegrees(1), 24);
+  assert.equal(pedalHingeDegrees(2), 24);
+  const released = pedalPadPoint(0);
+  const half = pedalPadPoint(0.5);
+  const pressed = pedalPadPoint(1);
+  assert.equal(released.deg, 0);
+  assert.equal(half.deg, 12);
+  assert.equal(pressed.deg, 24);
+  assert.ok(pressed.y < half.y && half.y < released.y, `${pressed.y} ${half.y} ${released.y}`);
+  assert.equal(controlState("go", { over: "go", pressed: null }, {}), "hover");
+  assert.equal(controlState("go", { over: "go", pressed: "go" }, {}), "pressed");
+  assert.equal(controlState("mission-lesson2", {}, { disabled: true }), "disabled");
+  assert.equal(controlState("mission-lesson1", { over: "sound" }, { selected: true }), "selected");
+
+  const save = freshSave();
+  const garage = render(mockCtx().ctx, {
+    screen: "garage",
+    session: null,
+    save,
+    now: 0,
+    hint: false,
+    debug: false,
+    notice: null,
+    preview: null,
+    missions: LESSONS,
+    selected: "lesson1",
+    pose: null,
+    alpha: 1,
+    pointer: { over: null, pressed: null },
+  });
+  const names = garage.labels.map((item) => item.text);
+  assert.ok(names.includes("ГАРАЖ"));
+  assert.ok(names.includes("ВЫБЕРИ УРОК"));
+  assert.ok(names.includes("УРОК 1"));
+  assert.ok(names.includes("ПОЕХАЛИ"));
+  assert.equal(names.includes("Антон газует сам."), false);
+  assert.ok(garage.spots.some((spot) => spot.id === "mission-lesson1"));
+  assert.equal(garage.spots.some((spot) => spot.id === "mission-lesson3"), false);
+  assert.equal(garage.spots.some((spot) => spot.id === "mission-infinite"), false);
+  for (let i = 0; i < garage.labels.length; i += 1) {
+    for (let j = i + 1; j < garage.labels.length; j += 1) {
+      assert.equal(boxesOverlap(garage.labels[i], garage.labels[j]), false, `${garage.labels[i].text}/${garage.labels[j].text}`);
+    }
+  }
+
+  function ride(phase, patience, brake, success, rideSave = save) {
+    const session = createSession(getMission("lesson1"), { seed: 11 });
+    session.phase = phase;
+    session.countdownAcc = 3;
+    session.sim.patience = patience;
+    session.sim.brakeInput = brake;
+    if (phase === "result") {
+      session.sim.done = true;
+      session.sim.success = success;
+      session.result = grade(session.sim);
+      session.result.success = success;
+    }
+    return render(mockCtx().ctx, {
+      screen: "play",
+      session,
+      save: rideSave,
+      now: 0,
+      hint: false,
+      debug: false,
+      notice: null,
+      preview: null,
+      missions: LESSONS,
+      selected: "lesson1",
+      pose: null,
+      alpha: 1,
+      pointer: { over: "resume", pressed: null },
+    });
+  }
+
+  const calm = ride("drive", 15, 0, false);
+  const hot = ride("drive", 90, 1, false);
+  assert.ok(Math.abs(calm.readout.needleDeg - 153) < 1e-9);
+  assert.ok(Math.abs(hot.readout.needleDeg - 18) < 1e-9);
+  assert.ok(Math.hypot(calm.readout.tipX - hot.readout.tipX, calm.readout.tipY - hot.readout.tipY) > 40);
+  assert.equal(calm.readout.pedalDeg, 0);
+  assert.equal(hot.readout.pedalDeg, 24);
+  assert.ok(hot.readout.padY < calm.readout.padY);
+  assert.ok(calm.labels.some((item) => item.text === "ТЕРПЕНИЕ"));
+  assert.ok(calm.spots.some((spot) => spot.id === "pedal"));
+  assert.ok(calm.spots.some((spot) => spot.id === "anton"));
+
+  const paused = ride("pause", 15, 0, false);
+  assert.ok(paused.labels.some((item) => item.text === "ПАУЗА"));
+  assert.ok(paused.labels.some((item) => item.text === "ПРОДОЛЖИТЬ"));
+  assert.ok(paused.labels.some((item) => item.text === "ЗАНОВО"));
+  assert.ok(paused.labels.some((item) => item.text === "В ГАРАЖ"));
+  assert.ok(paused.spots.some((spot) => spot.id === "resume"));
+  for (let i = 0; i < paused.labels.length; i += 1) {
+    for (let j = i + 1; j < paused.labels.length; j += 1) {
+      assert.equal(boxesOverlap(paused.labels[i], paused.labels[j]), false, `${paused.labels[i].text}/${paused.labels[j].text}`);
+    }
+  }
+
+  const won = ride("result", 12, 0, true, applyVictory(freshSave(), "lesson1", 3));
+  assert.ok(won.labels.some((item) => item.text === "ДОЕХАЛИ!"));
+  assert.ok(won.labels.some((item) => item.text === "Машина цела"));
+  assert.ok(won.labels.some((item) => item.text === "ДАЛЬШЕ"));
+  assert.ok(won.spots.some((spot) => spot.id === "next"));
+  const lost = ride("result", 80, 0, false);
+  assert.ok(lost.labels.some((item) => item.text === "НЕ ДОЕХАЛИ"));
+  assert.ok(lost.labels.some((item) => item.text === "ЗАНОВО"));
+  assert.equal(lost.spots.some((spot) => spot.id === "next"), false);
+  assert.ok(lost.spots.some((spot) => spot.id === "retry"));
+  for (const frame of [won, lost]) {
+    for (let i = 0; i < frame.labels.length; i += 1) {
+      for (let j = i + 1; j < frame.labels.length; j += 1) {
+        assert.equal(boxesOverlap(frame.labels[i], frame.labels[j]), false, `${frame.labels[i].text}/${frame.labels[j].text}`);
+      }
+    }
+  }
 });
 
 test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {

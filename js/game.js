@@ -6,7 +6,7 @@
 import { createAudio } from "./audio.js";
 import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
-import { bumperFootGap, render } from "./draw.js";
+import { bumperFootGap, render, whenCarsReady } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
@@ -42,6 +42,8 @@ let session = null;
 let selected = "lesson1";
 let hotspots = [];
 let labels = [];
+let readout = { needleDeg: null, pedalDeg: null, hubX: null, hubY: null, tipX: null, tipY: null, padX: null, padY: null };
+let uiPointer = { over: null, pressed: null };
 let autopilot = null;
 let hint = true;
 let notice = save.notice;
@@ -262,9 +264,11 @@ function frame(now) {
     selected,
     pose: null,
     alpha: presentedAlpha,
+    pointer: uiPointer,
   });
   hotspots = drawn.spots;
   labels = drawn.labels;
+  readout = drawn.readout || readout;
   requestAnimationFrame(frame);
 }
 
@@ -280,10 +284,28 @@ function hit(point) {
   return null;
 }
 
+function trackPointer(event) {
+  uiPointer.over = hit(eventPoint(event));
+}
+
+function finishPress(event, fire) {
+  releasePointer(session, event.pointerId);
+  const pressed = uiPointer.pressed;
+  uiPointer.pressed = null;
+  if (!fire || !pressed) return;
+  if (hit(eventPoint(event)) === pressed) activate(pressed);
+}
+
+canvas.addEventListener("pointermove", (event) => {
+  if (document.body.classList.contains("is-portrait")) return;
+  trackPointer(event);
+});
+
 canvas.addEventListener("pointerdown", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
   audio.unlock();
   const id = hit(eventPoint(event));
+  uiPointer.over = id;
   const action = pointerDown(session, id, event.pointerId);
   if (action === "brake" || action === "wake") {
     try {
@@ -293,12 +315,19 @@ canvas.addEventListener("pointerdown", (event) => {
     }
     return;
   }
-  if (id && id !== "pedal" && id !== "anton") activate(id);
+  if (id && id !== "pedal" && id !== "anton") {
+    uiPointer.pressed = id;
+    try {
+      canvas.setPointerCapture?.(event.pointerId);
+    } catch {
+      /* The click still resolves on pointerup. */
+    }
+  }
 });
 
-canvas.addEventListener("pointerup", (event) => releasePointer(session, event.pointerId));
-canvas.addEventListener("pointercancel", (event) => releasePointer(session, event.pointerId));
-canvas.addEventListener("lostpointercapture", (event) => releasePointer(session, event.pointerId));
+canvas.addEventListener("pointerup", (event) => finishPress(event, true));
+canvas.addEventListener("pointercancel", (event) => finishPress(event, false));
+canvas.addEventListener("lostpointercapture", (event) => finishPress(event, false));
 
 window.addEventListener("keydown", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
@@ -410,6 +439,16 @@ window.__anton = {
       pokes: session?.sim.stats.attentionPokes ?? 0,
       brakePointer: session?.pointerId ?? null,
       wakePointer: session?.wakeId ?? null,
+      needleDeg: readout.needleDeg,
+      pedalDeg: readout.pedalDeg,
+      hubX: readout.hubX,
+      hubY: readout.hubY,
+      tipX: readout.tipX,
+      tipY: readout.tipY,
+      padX: readout.padX,
+      padY: readout.padY,
+      pressed: uiPointer.pressed,
+      over: uiPointer.over,
     };
   },
   hotspots() {
@@ -462,6 +501,14 @@ window.__anton = {
     if (Number.isFinite(pose.crash)) sim.crashT = pose.crash;
     sim.v = 0;
   },
+  setPatience(value) {
+    if (!debug || !session) return;
+    session.sim.patience = Math.max(0, Math.min(100, Number(value) || 0));
+  },
+  setBrakeInput(value) {
+    if (!debug || !session) return;
+    session.sim.brakeInput = Math.max(0, Math.min(1, Number(value) || 0));
+  },
   debugStart(id) {
     if (!debug) return;
     const mission = getMission(id, id === "infinite" ? 7 : undefined);
@@ -512,6 +559,11 @@ async function boot() {
     console.warn("Font load failed, falling back to system faces.", error);
   }
   audio.setEnabled(save.settings.sound);
+  try {
+    await whenCarsReady();
+  } catch {
+    /* A missing picture falls back to flat shapes. The ride still starts. */
+  }
   requestAnimationFrame(frame);
 }
 

@@ -135,12 +135,15 @@ test("title and garage text is centered, present, and locked lessons are not sta
   await page.screenshot({ path: shot("title") });
 
   await clickId(page, "garage");
-  await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "Антон газует сам."));
+  await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "ПОЕХАЛИ"));
   const labels = await page.evaluate(() => window.__anton.labels());
   const texts = labels.map((item) => item.text);
-  expect(texts).toContain("Гараж");
-  expect(texts).toContain("Антон газует сам.");
-  expect(texts.filter((text) => text === "Сначала пройди предыдущий урок").length).toBe(3);
+  expect(texts).toContain("ГАРАЖ");
+  expect(texts).toContain("ВЫБЕРИ УРОК");
+  expect(texts).toContain("УРОК 1");
+  expect(texts).toContain("УРОК 2");
+  expect(texts).toContain("УРОК 4");
+  expect(texts).toContain("ПОЕХАЛИ");
   expect(texts.some((text) => text.includes("закрыт"))).toBe(false);
   expect(texts.some((text) => text.includes("★"))).toBe(false);
   expect(texts.every((text) => text.trim().length > 0)).toBe(true);
@@ -162,7 +165,7 @@ test("title and garage text is centered, present, and locked lessons are not sta
   await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "Brake It, Anton"));
   await page.screenshot({ path: shot("title-844") });
   await clickId(page, "garage");
-  await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "Антон газует сам."));
+  await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "ПОЕХАЛИ"));
   const phoneLabels = await page.evaluate(() => window.__anton.labels());
   assertLabels(phoneLabels);
   await page.screenshot({ path: shot("garage-844") });
@@ -2080,4 +2083,72 @@ test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", asy
   expect(lost.fail).toBe("cargo");
   await page.screenshot({ path: shot("result-fail") });
   expect(errors).toEqual([]);
+});
+
+test("the gauge needle and the pedal angle follow the real input", async ({ page }) => {
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await page.evaluate(() => window.__anton.debugStart("lesson1"));
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.evaluate(() => window.__anton.setTimeScale(0));
+
+  async function pose(patience, brake) {
+    await page.evaluate(({ patience, brake }) => {
+      window.__anton.setPatience(patience);
+      window.__anton.setBrakeInput(brake);
+    }, { patience, brake });
+    const expectDeg = 180 * (1 - patience / 100);
+    const expectPedal = brake * 24;
+    await page.waitForFunction(
+      ({ expectDeg, expectPedal }) => {
+        const state = window.__anton.getState();
+        return state.needleDeg !== null
+          && Math.abs(state.needleDeg - expectDeg) < 0.05
+          && Math.abs(state.pedalDeg - expectPedal) < 0.05;
+      },
+      { expectDeg, expectPedal },
+    );
+    return page.evaluate(() => {
+      const state = window.__anton.getState();
+      const canvas = document.querySelector("canvas");
+      const ctx = canvas.getContext("2d");
+      const ink = (x, y) => {
+        let darkest = 765;
+        for (let dy = -3; dy <= 3; dy += 3) {
+          for (let dx = -3; dx <= 3; dx += 3) {
+            const pix = ctx.getImageData(Math.round(x + dx), Math.round(y + dy), 1, 1).data;
+            darkest = Math.min(darkest, pix[0] + pix[1] + pix[2]);
+          }
+        }
+        return darkest;
+      };
+      const dx = state.hubX - state.tipX;
+      const dy = state.hubY - state.tipY;
+      const len = Math.hypot(dx, dy) || 1;
+      return {
+        needleDeg: state.needleDeg,
+        pedalDeg: state.pedalDeg,
+        tipX: state.tipX,
+        tipY: state.tipY,
+        padY: state.padY,
+        needleInk: ink(state.tipX + (dx / len) * 18, state.tipY + (dy / len) * 18),
+        hubInk: ink(state.hubX, state.hubY),
+        padInk: ink(state.padX, state.padY),
+      };
+    });
+  }
+
+  const calm = await pose(8, 0);
+  const hot = await pose(96, 1);
+  expect(calm.needleDeg).toBeCloseTo(180 * (1 - 8 / 100), 1);
+  expect(hot.needleDeg).toBeCloseTo(180 * (1 - 96 / 100), 1);
+  expect(calm.pedalDeg).toBe(0);
+  expect(hot.pedalDeg).toBeCloseTo(24, 1);
+  expect(hot.padY).toBeLessThan(calm.padY - 10);
+  expect(Math.hypot(calm.tipX - hot.tipX, calm.tipY - hot.tipY)).toBeGreaterThan(50);
+  expect(calm.needleInk).toBeLessThan(240);
+  expect(hot.needleInk).toBeLessThan(240);
+  expect(calm.hubInk).toBeLessThan(220);
+  expect(calm.padInk).toBeLessThan(320);
+  expect(hot.padInk).toBeLessThan(320);
 });

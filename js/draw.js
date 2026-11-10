@@ -4,7 +4,15 @@
  */
 
 import { CFG, PALETTE as P } from "./config.js";
-import { expressionId, moodGlyph, moodWord, repairInvoice } from "./physics.js";
+import { expressionId } from "./physics.js";
+import {
+  drawDriveChrome,
+  drawGarageScreen,
+  drawPauseScreen,
+  drawResultScreen,
+  pedalHitBox,
+  uiImages,
+} from "./ui.js";
 import { VIEW, project } from "./road.js";
 import { anchorKind, farDs, groundDs, paintFarToNear } from "./anchors.js";
 import { gaitOffset } from "./gait.js";
@@ -114,7 +122,7 @@ function imageReady(img) {
 }
 
 export function whenCarsReady() {
-  const imgs = [YELLOW_STRAIGHT, YELLOW_BRAKE, YELLOW_CRASH, CORAL_STRAIGHT, ...worldImages()].filter(Boolean);
+  const imgs = [YELLOW_STRAIGHT, YELLOW_BRAKE, YELLOW_CRASH, CORAL_STRAIGHT, ...worldImages(), ...uiImages()].filter(Boolean);
   if (!imgs.length) return Promise.resolve(false);
   return Promise.all(imgs.map((img) => (img.decode ? img.decode() : Promise.resolve()))).then(() => true);
 }
@@ -244,12 +252,14 @@ function panel(ctx, x, y, w, h, fill) {
 export function render(ctx, state) {
   spots = [];
   labels = [];
+  const sink = { spots, labels };
+  let readout = { needleDeg: null, pedalDeg: null, hubX: null, hubY: null, tipX: null, tipY: null, padX: null, padY: null };
   ctx.clearRect(0, 0, 1600, 900);
   ctx.fillStyle = P.PAPER;
   ctx.fillRect(0, 0, 1600, 900);
-  if (state.screen === "garage") drawGarage(ctx, state);
+  if (state.screen === "garage") drawGarageScreen(ctx, state, sink);
   else if (state.screen === "title") drawTitle(ctx, state);
-  else drawPlay(ctx, state);
+  else readout = drawPlay(ctx, state, sink);
   if (state.notice) {
     roundRect(ctx, 360, 18, 880, 44, 12);
     ctx.fillStyle = P.YEL;
@@ -258,7 +268,7 @@ export function render(ctx, state) {
     ctx.stroke();
     paintCenter(ctx, state.notice, 360, 18, 880, 44, 18, P.INK, false, true);
   }
-  return { spots, labels };
+  return { spots, labels, readout };
 }
 
 function drawTitle(ctx, state) {
@@ -282,120 +292,8 @@ function drawTitle(ctx, state) {
   button(ctx, "garage", 1092, 768, 448, 76, "Гараж", "paper");
 }
 
-function drawGarage(ctx, state) {
-  const { save } = state;
-  panel(ctx, 24, 24, 1552, 852, "#B7D48A");
-  roundRect(ctx, 48, 44, 1504, 72, 16);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-  paintCenter(ctx, "Гараж", 48, 44, 1504, 72, 34, P.YEL, true, true);
 
-  drawYardPoster(ctx, 48, 136, 700, 470);
-  paintCenter(ctx, "Антон газует сам.", 48, 618, 700, 40, 22, P.INK, false, true);
-
-  state.missions.forEach((mission, index) => {
-    drawMissionCard(ctx, state, mission, 780, 136 + index * 112);
-  });
-  drawInfiniteCard(ctx, state, 780, 136 + 4 * 112);
-
-  button(ctx, "sound", 48, 780, 250, 72, save.settings.sound ? "Звук: вкл" : "Звук: выкл", "paper");
-  button(ctx, "shake", 316, 780, 270, 72, save.settings.shake ? "Тряска: вкл" : "Тряска: выкл", "paper");
-  button(ctx, "go", 1188, 776, 340, 80, "В урок", "primary");
-}
-
-function drawYardPoster(ctx, x, y, w, h) {
-  ctx.save();
-  roundRect(ctx, x, y, w, h, 16);
-  ctx.clip();
-  ctx.fillStyle = "#A9CF86";
-  ctx.fillRect(x, y, w, h);
-  drawBuilding(ctx, x + 90, y + 120, 1.05, 0, P.PINK, 0, false);
-  drawBuilding(ctx, x + 250, y + 150, 0.95, 1, P.ORANGE, 0, false);
-  drawBuilding(ctx, x + 70, y + 280, 1, 2, P.BLUE, 0, false);
-  drawTree(ctx, x + 300, y + 300, 0.9, 0, 3);
-  ctx.beginPath();
-  ctx.moveTo(x + 390, y + h - 8);
-  ctx.lineTo(x + 500, y + 28);
-  ctx.lineTo(x + 590, y + 28);
-  ctx.lineTo(x + w - 16, y + h - 8);
-  ctx.closePath();
-  ctx.fillStyle = P.ROAD;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  ctx.strokeStyle = P.PAPER;
-  ctx.lineWidth = 4;
-  ctx.setLineDash([12, 14]);
-  ctx.beginPath();
-  ctx.moveTo(x + 470, y + h - 16);
-  ctx.lineTo(x + 545, y + 40);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  drawPed(ctx, x + 620, y + 210, 0.85, 0, true);
-  drawCarSprite(ctx, x + 530, y + h - 90, 1.15, 0, null);
-  ctx.restore();
-  ink(ctx, 5);
-  roundRect(ctx, x, y, w, h, 16);
-  ctx.stroke();
-}
-
-function missionInk(mission) {
-  if (mission.cargo === "cake") return P.PINK;
-  if (mission.cargo === "fish") return P.GLASS;
-  if (mission.lesson === 2) return P.YEL;
-  return P.PAPER;
-}
-
-function drawMissionCard(ctx, state, mission, x, y) {
-  const unlocked = mission.lesson <= state.save.unlocked;
-  const best = state.save.best[mission.id] || 0;
-  const picked = unlocked && state.selected === mission.id;
-  roundRect(ctx, x, y, 740, 100, 16);
-  ctx.fillStyle = picked ? P.YEL : missionInk(mission);
-  ctx.fill();
-  if (!unlocked) {
-    ctx.fillStyle = "rgba(28,22,30,0.08)";
-    ctx.fill();
-  }
-  ink(ctx, unlocked ? 5 : 4);
-  ctx.stroke();
-  const sub = unlocked ? mission.objective : "Сначала пройди предыдущий урок";
-  paintCenter(ctx, `${mission.lesson}. ${mission.title}`, x + 70, y + 10, 430, 36, 22, P.INK, false, true);
-  paintCenter(ctx, sub, x + 70, y + 50, 650, 36, 18, P.INK, false, true);
-  if (unlocked && best > 0) paintCenter(ctx, "★".repeat(best) + "☆".repeat(3 - best), x + 510, y + 12, 200, 32, 18, P.INK, false, true);
-  if (!unlocked) drawLock(ctx, x + 22, y + 40);
-  if (unlocked) spots.push({ id: `mission-${mission.id}`, x, y, w: 740, h: 100 });
-}
-
-function drawInfiniteCard(ctx, state, x, y) {
-  const open = state.save.infinite === true;
-  const picked = open && state.selected === "infinite";
-  const meters = state.save.bestMeters.infinite || 0;
-  roundRect(ctx, x, y, 740, 100, 16);
-  ctx.fillStyle = picked ? P.ORANGE : P.YEL;
-  ctx.fill();
-  if (!open) {
-    ctx.fillStyle = "rgba(28,22,30,0.08)";
-    ctx.fill();
-  }
-  ink(ctx, 5);
-  ctx.stroke();
-  paintCenter(ctx, "Последний урок", x + 70, y + 10, 650, 36, 22, P.INK, false, true);
-  paintCenter(ctx, open ? (meters ? `${meters} м` : "Пока машина едет") : "После первого урока", x + 70, y + 50, 650, 36, 18, P.INK, false, true);
-  if (!open) drawLock(ctx, x + 22, y + 40);
-  if (open) spots.push({ id: "mission-infinite", x, y, w: 740, h: 100 });
-}
-
-function drawLock(ctx, x, y) {
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(x + 12, y + 10, 8, Math.PI, 0);
-  ctx.stroke();
-  ctx.strokeRect(x, y + 10, 24, 18);
-}
-
-function drawPlay(ctx, state) {
+function drawPlay(ctx, state, sink) {
   const session = state.session;
   const sim = session.sim;
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
@@ -403,81 +301,57 @@ function drawPlay(ctx, state) {
   const mag = state.save.settings.shake && motion ? Math.min(sim.shake, 5) : 0;
   const held = session.phase === "drive" && (session.brakeHeld || session.keysDown.has("Space"));
   const visual = held ? Math.max(sim.brakeInput, 0.2) : 0;
-  const paused = session.phase === "pause" || session.phase === "result";
+  const driving = session.phase === "drive";
+  const brake = driving ? sim.brakeInput : 0;
 
   ctx.save();
   if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
   drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
   drawCabin(ctx, sim, state, boil, visual);
-  drawPatience(ctx, sim, paused);
-  drawPedal(ctx, paused ? 0 : visual, paused);
-  drawHud(ctx, state, sim);
-  if (session.phase === "drive" && !paused) {
-    spots.push({ id: "anton", x: 1088, y: 36, w: 464, h: 560 });
-    spots.push({ id: "pedal", x: 1080, y: 730, w: 480, h: 150 });
+  const showHud = driving || session.phase === "countdown";
+  const chrome = showHud ? drawDriveChrome(ctx, state, sink, brake) : null;
+  if (driving) {
+    spots.push({ id: "anton", x: 1100, y: 90, w: 420, h: 340 });
+    spots.push(pedalHitBox());
   }
   if (session.phase === "countdown") {
-    roundRect(ctx, 44, 124, 120, 84, 14);
+    roundRect(ctx, 640, 150, 120, 84, 14);
     ctx.fillStyle = P.PAPER;
     ctx.fill();
     ink(ctx, 6);
     ctx.stroke();
-    paintCenter(ctx, String(session.countdown || 1), 44, 124, 120, 84, 42, P.INK, true, false);
+    paintCenter(ctx, String(session.countdown || 1), 640, 150, 120, 84, 42, P.INK, true, false);
   }
-  if (session.phase === "pause") drawPause(ctx, state);
-  if (session.phase === "result") drawResult(ctx, state);
   const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
-  if (session.phase === "drive" && needsTap) {
-    roundRect(ctx, 1092, 596, 448, 40, 12);
+  if (driving && needsTap) {
+    roundRect(ctx, 560, 128, 340, 40, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F", 1092, 596, 448, 40, 18, P.INK, false, true);
-  } else if (state.hint && session.phase === "drive") {
-    roundRect(ctx, 1092, 596, 448, 40, 12);
+    paintCenter(ctx, sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F", 560, 128, 340, 40, 18, P.INK, false, true);
+  } else if (state.hint && driving) {
+    roundRect(ctx, 560, 128, 340, 40, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 1092, 596, 448, 40, 18, P.INK, false, true);
+    paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 560, 128, 340, 40, 18, P.INK, false, true);
   }
-}
-
-function drawHud(ctx, state, sim) {
-  const mission = state.session.mission;
-  roundRect(ctx, 44, 40, 210, 60, 12);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-  const lesson = mission.infinite ? "∞" : String(mission.lesson).padStart(2, "0");
-  paintCenter(ctx, `УРОК ${lesson}`, 44, 40, 210, 60, 22, P.YEL, true, false);
-
-  roundRect(ctx, 268, 40, 500, 60, 12);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  const goal = mission.infinite ? `${Math.floor(sim.s)} м` : mission.objective;
-  paintCenter(ctx, goal, 280, 46, 360, 28, 20, P.INK, false, false);
-  if (!mission.infinite) {
-    const p = Math.max(0, Math.min(1, sim.s / mission.length));
-    ctx.fillStyle = "#E7DCC6";
-    ctx.fillRect(292, 80, 360, 8);
-    ctx.fillStyle = P.PAT_GREEN;
-    ctx.fillRect(292, 80, Math.max(0, 360 * p), 8);
-  }
-  if (mission.cargo === "cake" || mission.cargo === "fish") drawCargoIcon(ctx, 720, 70, mission.cargo, 0.7, sim);
-
-  roundRect(ctx, 940, 34, 72, 72, 14);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  ctx.fillStyle = P.INK;
-  ctx.fillRect(962, 50, 8, 40);
-  ctx.fillRect(982, 50, 8, 40);
-  spots.push({ id: "pause", x: 928, y: 26, w: 96, h: 90 });
+  if (session.phase === "pause") drawPauseScreen(ctx, state, sink);
+  if (session.phase === "result") drawResultScreen(ctx, state, sink);
+  const needle = chrome?.needle;
+  return {
+    needleDeg: needle ? needle.deg : null,
+    pedalDeg: chrome ? chrome.pedalDeg : session.phase === "result" ? 0 : null,
+    hubX: needle?.hubX ?? null,
+    hubY: needle?.hubY ?? null,
+    tipX: needle?.tipX ?? null,
+    tipY: needle?.tipY ?? null,
+    padX: chrome?.pad?.x ?? null,
+    padY: chrome?.pad?.y ?? null,
+  };
 }
 
 /**
@@ -1262,10 +1136,10 @@ function drawCargoIcon(ctx, x, y, type, sc, sim) {
 }
 
 function drawCabin(ctx, sim, state, boil, visual) {
-  panel(ctx, 1056, 24, 520, 600, P.CABIN);
+  panel(ctx, 1056, 24, 520, 852, P.CABIN);
   ctx.save();
   ctx.beginPath();
-  ctx.rect(1056, 24, 520, 600);
+  ctx.rect(1056, 24, 520, 852);
   ctx.clip();
   ctx.fillStyle = P.GLASS;
   ctx.fillRect(1056, 24, 520, 150);
@@ -1731,154 +1605,3 @@ function mouth(ctx, exp, hx) {
   ctx.stroke();
 }
 
-function drawPatience(ctx, sim, paused) {
-  roundRect(ctx, 1056, 640, 520, 88, 8);
-  ctx.fillStyle = paused ? "#E7DCC6" : P.PAPER;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-  const word = moodWord(sim.patience, sim.outburstT > 0);
-  const glyph = moodGlyph(sim.patience, sim.outburstT > 0);
-  paintCenter(ctx, word, 1072, 652, 150, 64, 22, P.INK, false, false);
-  drawGlyph(ctx, 1238, 684, glyph);
-  const x = 1266;
-  const y = 658;
-  const w = 280;
-  const h = 46;
-  [P.PAT_GREEN, P.PAT_YELLOW, P.PAT_RED].forEach((color, i) => {
-    ctx.fillStyle = color;
-    ctx.fillRect(x + (w / 3) * i, y, w / 3 + 1, h);
-  });
-  ink(ctx, 4);
-  ctx.strokeRect(x, y, w, h);
-  const nx = x + (w * Math.max(0, Math.min(100, sim.patience))) / 100;
-  ctx.beginPath();
-  ctx.moveTo(nx, y - 8);
-  ctx.lineTo(nx + 10, y + 10);
-  ctx.lineTo(nx - 10, y + 10);
-  ctx.closePath();
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-}
-
-function drawGlyph(ctx, x, y, glyph) {
-  ctx.fillStyle = P.INK;
-  ctx.beginPath();
-  if (glyph === "square") {
-    ctx.rect(x - 10, y - 10, 20, 20);
-    ctx.fill();
-  } else if (glyph === "triangle") {
-    ctx.moveTo(x, y - 12);
-    ctx.lineTo(x + 12, y + 10);
-    ctx.lineTo(x - 12, y + 10);
-    ctx.closePath();
-    ctx.fill();
-  } else {
-    ctx.arc(x, y, 10, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function drawPedal(ctx, visual, disabled) {
-  const y = 752 + visual * 18;
-  ctx.fillStyle = "rgba(28,22,30,0.22)";
-  roundRect(ctx, 1160, 820, 300, 28, 8);
-  ctx.fill();
-  roundRect(ctx, 1128, y, 340, 100, 18);
-  ctx.fillStyle = disabled ? "#B7A898" : P.RED;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-  paintCenter(ctx, "ТОРМОЗ", 1128, y, 340, 100, 30, disabled ? P.INK : P.PAPER, true, false);
-}
-
-function drawPause(ctx, state) {
-  ctx.fillStyle = "rgba(28,22,30,0.45)";
-  ctx.fillRect(0, 0, 1600, 900);
-  roundRect(ctx, 500, 160, 600, 560, 20);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 8);
-  ctx.stroke();
-  paintCenter(ctx, "ПАУЗА", 540, 184, 520, 60, 36, P.INK, true, false);
-  paintCenter(ctx, "Педаль отпущена", 540, 250, 520, 36, 22, P.INK, false, false);
-  button(ctx, "resume", 590, 310, 420, 80, "Продолжить", "primary");
-  button(ctx, "retry", 590, 406, 420, 80, "Ещё раз", "paper");
-  button(ctx, "to-garage", 590, 502, 420, 76, "В гараж", "paper");
-  button(ctx, "sound", 590, 600, 200, 72, state.save.settings.sound ? "Звук вкл" : "Звук выкл", "paper");
-  button(ctx, "shake", 810, 600, 200, 72, state.save.settings.shake ? "Тряска вкл" : "Тряска выкл", "paper");
-}
-
-function drawResult(ctx, state) {
-  const sim = state.session.sim;
-  const graded = state.session.result;
-  ctx.fillStyle = P.PAPER;
-  ctx.fillRect(0, 0, 1600, 900);
-  panel(ctx, 24, 24, 1552, 852, "#B7D48A");
-  roundRect(ctx, 80, 48, 1440, 84, 16);
-  ctx.fillStyle = P.PAPER;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  paintCenter(ctx, resultPhrase(sim, graded), 80, 48, 1440, 84, 32, P.INK, true, false);
-  ctx.save();
-  ctx.translate(-760, 40);
-  drawAnton(ctx, resultPose(sim, graded), 0, 0, sim);
-  ctx.restore();
-  const rows = [
-    ["Машина", graded.body],
-    ["Нервы", graded.mood],
-    [sim.cargoType ? "Груз" : "Комфорт", graded.comfort],
-  ];
-  rows.forEach((row, i) => {
-    const y = 200 + i * 110;
-    paintCenter(ctx, row[0], 860, y, 200, 40, 24, P.INK, false, false);
-    roundRect(ctx, 1080, y, 360, 40, 10);
-    ctx.fillStyle = "#E7DCC6";
-    ctx.fill();
-    roundRect(ctx, 1080, y, Math.max(12, 3.6 * row[1]), 40, 10);
-    ctx.fillStyle = row[1] >= 70 ? P.PAT_GREEN : row[1] >= 40 ? P.PAT_YELLOW : P.PAT_RED;
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-    paintCenter(ctx, String(Math.round(row[1])), 1460, y, 80, 40, 20, P.INK, false, false);
-  });
-  if (!sim.infinite) {
-    const stars = "★".repeat(graded.stars) + "☆".repeat(3 - graded.stars);
-    paintCenter(ctx, stars, 980, 540, 300, 56, 40, P.INK, false, false);
-  }
-  if (graded.badge) {
-    roundRect(ctx, 900, 610, 520, 48, 12);
-    ctx.fillStyle = P.YEL;
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-    paintCenter(ctx, "Почти не понадобился", 900, 610, 520, 48, 20, P.INK, false, false);
-  }
-  if (sim.infinite) {
-    const bill = repairInvoice(sim.stats, sim.t);
-    bill.lines.slice(0, 4).forEach((entry, i) => {
-      paintCenter(ctx, `${entry[0]}  ${entry[1]}`, 900, 560 + i * 30, 520, 28, 16, P.INK, false, false);
-    });
-    paintCenter(ctx, `Итого ${bill.total}`, 900, 690, 520, 32, 22, P.INK, false, false);
-  }
-  button(ctx, "retry", 80, 736, 420, 120, "Ещё раз", graded.success ? "paper" : "primary");
-  button(ctx, "next", 1100, 736, 420, 120, graded.success && !sim.infinite ? "Дальше" : "В гараж", graded.success ? "primary" : "paper");
-}
-
-function resultPhrase(sim, graded) {
-  if (sim.infinite) return "Смета готова. Машина — нет.";
-  if (!graded.success && sim.failReason === "cargo" && sim.cargoType === "cake") return "Крем на потолке.";
-  if (!graded.success && sim.failReason === "cargo") return "Рыбка видела всё.";
-  if (!graded.success) return "Ну что, по коням?";
-  if (graded.badge) return "Ты почти не понадобился";
-  if (graded.stars >= 3) return "Даже Антон удивился.";
-  if (graded.stars >= 2) return "Доехали. Нервно, но да.";
-  return "Живые. Это уже сюжет.";
-}
-
-function resultPose(sim, graded) {
-  if (!graded.success) return "ashamed";
-  if (graded.badge || graded.stars >= 2) return "proud";
-  return "annoyed";
-}
