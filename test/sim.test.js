@@ -44,7 +44,8 @@ import {
   steerParams,
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
-import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset } from "../js/gait.js";
+import { pedPoseKey, dogPoseKey } from "../js/cast.js";
+import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
 import { actorTravel, bodyCenterLimit, contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import {
   createSession,
@@ -1520,6 +1521,26 @@ function walkMission() {
     ],
   };
 }
+
+test("walk cycles use the drawn poses and do not invent a missing stride", () => {
+  const phone = { id: "ped", crossT: 0.4, crossDur: 3, hopped: false };
+  const seen = new Set();
+  for (let d = 0; d < PED_STRIDE; d += PED_STRIDE / 12) seen.add(pedPoseKey(phone, d, false));
+  assert.deepEqual([...seen].sort(), ["pedLift", "pedPass", "pedStand"]);
+  assert.equal(pedPoseKey({ ...phone, crossT: -1 }, 0.4, false), "pedStand");
+  assert.equal(pedPoseKey(phone, 0.4, true), "pedStand");
+  const groc = { id: "groc", crossT: 0.4, hopped: false };
+  const grocSeen = new Set();
+  for (let d = 0; d < PED_STRIDE; d += PED_STRIDE / 8) grocSeen.add(pedPoseKey(groc, d, false));
+  assert.deepEqual([...grocSeen].sort(), ["pedGroc", "pedGrocStand"]);
+  assert.equal(pedPoseKey({ ...groc, crossT: -1 }, 0.2, false), "pedGrocStand");
+  const dog = new Set();
+  for (let d = 0.06; d < DOG_STRIDE; d += DOG_STRIDE / 8) dog.add(dogPoseKey(d, false));
+  assert.deepEqual([...dog].sort(), ["dogPaw", "dogWalk"]);
+  assert.equal(dogPoseKey(0, false), "dogPaw");
+  assert.equal(strideSlot(0, PED_STRIDE, 3), 0);
+  assert.equal(strideSlot(PED_STRIDE * 0.9, PED_STRIDE, 3), 2);
+});
 
 test("pedestrian and dog feet follow distance, and a stride boundary does not flip them", () => {
   let prev = footOffset(0, PED_STRIDE, 8);

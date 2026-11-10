@@ -723,7 +723,7 @@ function drawHazard(ctx, sim, h, boil, placed, reduced = false) {
   const planVehicle = (h.type === "cutin" || h.type === "stopped") && !placed?.legacy && imageReady(CORAL_STRAIGHT);
   let cast = false;
   if (!placed?.legacy) {
-    if (h.type === "pedestrian") cast = drawCastPed(ctx, spot.x, spot.y + hop, spot.scale, step, reduced, h);
+    if (h.type === "pedestrian") cast = drawCastPed(ctx, spot.x, spot.y + hop, spot.scale, travel, reduced, h);
     else if (h.type === "dog") cast = drawCastDog(ctx, spot.x, spot.y, spot.scale, travel, reduced);
     else if (h.type === "pothole") cast = drawCastHole(ctx, placed, h);
     else if (h.type === "bin") cast = drawCastBin(ctx, spot.x, spot.y, spot.scale, !!h.hopped);

@@ -22,6 +22,15 @@ export function footOffset(distance, stride, amplitude) {
   return (phase * 2 - 1) * amplitude;
 }
 
+/** Which drawn pose of a short cycle this distance is on. Slot 0 is the start of the stride. */
+export function strideSlot(distance, stride, slots) {
+  const count = Math.max(1, slots | 0);
+  const span = stride > 0 ? stride : 1;
+  let wrapped = distance % span;
+  if (wrapped < 0) wrapped += span;
+  return Math.min(count - 1, Math.floor((wrapped / span) * count));
+}
+
 export function gaitOffset(distance, kind, reduced = false) {
   if (reduced) return 0;
   if (kind === "dog") return footOffset(distance, DOG_STRIDE, DOG_FOOT);

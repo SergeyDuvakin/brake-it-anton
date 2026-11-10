@@ -5,9 +5,11 @@
  * not a step. Groceries has a standing drawing and a passing drawing.
  */
 
+import { DOG_STRIDE, PED_STRIDE, strideSlot } from "./gait.js";
 import { VIEW, project } from "./road.js";
 
 const SPECS = {
+  pedStand: { file: "16_ped-phone-design.png", ax: 450, ay: 1016, scale: 0.18 },
   pedPass: { file: "19_ped-phone-passing.png", ax: 458, ay: 1030, scale: 0.18 },
   pedLift: { file: "20_ped-phone-raised-foot.png", ax: 457, ay: 1028, scale: 0.18 },
   pedGroc: { file: "21_ped-groceries-passing.png", ax: 416, ay: 1036, scale: 0.18 },
@@ -76,22 +78,27 @@ function idHash(id) {
   return n;
 }
 
-/** Which approved drawing the path phase selects. Raised foot is one pose, not a second stride. */
-export function pedPoseKey(hazard, step, reduced) {
+/**
+ * Approved poses only. The phone kid has three drawings (planted, passing,
+ * one raised foot). Groceries has two; there is no second stride to invent.
+ * The dog alternates the walk drawing and the raised paw.
+ */
+export function pedPoseKey(hazard, travel, reduced) {
   const phone = idHash(hazard?.id) % 3 !== 0;
-  const moving = hazard && hazard.crossT >= 0 && !hazard.hopped;
-  if (phone) return !reduced && moving && step > 3 ? "pedLift" : "pedPass";
-  return moving ? "pedGroc" : "pedGrocStand";
+  const moving = !!(hazard && hazard.crossT >= 0 && !hazard.hopped && !reduced && travel > 0.02);
+  if (!moving) return phone ? "pedStand" : "pedGrocStand";
+  // Slot 0 is the passing drawing the contact tests already sit on.
+  if (phone) return ["pedPass", "pedLift", "pedStand"][strideSlot(travel, PED_STRIDE, 3)];
+  return ["pedGroc", "pedGrocStand"][strideSlot(travel, PED_STRIDE, 2)];
 }
 
-/** Phone kid lifts one drawn foot on the high half of the stride. Not a second stride. */
-export function drawCastPed(ctx, x, y, spotScale, step, reduced, hazard) {
-  return billboard(ctx, pedPoseKey(hazard, step, reduced), x, y, spotScale);
+export function drawCastPed(ctx, x, y, spotScale, travel, reduced, hazard) {
+  return billboard(ctx, pedPoseKey(hazard, travel, reduced), x, y, spotScale);
 }
 
-/** Raised paw is the idle trick. The walk drawing stays while distance increases. */
 export function dogPoseKey(travel, reduced) {
-  return !reduced && !(travel > 0.05) ? "dogPaw" : "dogWalk";
+  if (reduced || !(travel > 0.05)) return "dogPaw";
+  return strideSlot(travel, DOG_STRIDE, 2) === 0 ? "dogPaw" : "dogWalk";
 }
 
 export function drawCastDog(ctx, x, y, spotScale, travel, reduced) {
