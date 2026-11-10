@@ -435,6 +435,19 @@ function nextLessonOpen(state) {
 export function drawResultScreen(ctx, state, sink) {
   const sim = state.session.sim;
   const graded = state.session.result;
+  if (state.replayReady) {
+    drawButton(ctx, sink, {
+      id: "moment",
+      x: 1248,
+      y: 108,
+      w: 320,
+      h: 84,
+      text: "МОМЕНТ",
+      kind: "teal",
+      pointer: state.pointer,
+      size: 26,
+    });
+  }
   const success = graded.success === true && !sim.infinite;
   ctx.fillStyle = P.PAPER;
   ctx.fillRect(0, 0, 1600, 900);

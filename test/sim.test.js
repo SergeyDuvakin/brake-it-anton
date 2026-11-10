@@ -11,6 +11,7 @@ import { drainFrame } from "../js/clock.js";
 import { backingScale, contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { FUTURE_CARS, FUTURE_ENABLED, STUDENTS } from "../js/future.js";
+import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
 import { PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
 import {
@@ -815,6 +816,27 @@ test("the phone buffer never exceeds two device pixels, and one when motion is r
   assert.ok(phone <= 2);
   assert.equal(backingScale(693, 390, 3, true), 1);
   assert.ok(backingScale(1280, 720, 1, false) <= 1);
+});
+
+test("a replay keeps the last eight seconds and plays them back in order", () => {
+  const reel = createReplay();
+  for (let i = 0; i < 600; i += 1) reel.push({ s: i, x: 1, v: 10, brake: i % 2 });
+  assert.equal(reel.ready(), true);
+  assert.equal(reel.start(), true);
+  const first = reel.step();
+  assert.equal(first.s, 120);
+  let last = first;
+  let count = 1;
+  for (;;) {
+    const sample = reel.step();
+    if (!sample) break;
+    assert.ok(sample.s >= last.s);
+    last = sample;
+    count += 1;
+  }
+  assert.equal(count, 480);
+  assert.equal(last.s, 599);
+  assert.equal(reel.playing(), false);
 });
 
 test("future students and trips stay hidden until art is approved", () => {

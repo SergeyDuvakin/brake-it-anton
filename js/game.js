@@ -5,6 +5,7 @@
 
 import { createAudio } from "./audio.js";
 import { pulse } from "./haptics.js";
+import { createReplay } from "./replay.js";
 import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
 import { whenCabinReady, cabinReady } from "./cabin.js";
@@ -38,6 +39,7 @@ const showDebug = params.has("debug");
 let timeScale = params.has("e2e") ? 6 : 1;
 
 const audio = createAudio();
+const moment = createReplay();
 let save = loadSave();
 let screen = "title";
 let session = null;
@@ -207,6 +209,11 @@ function activate(id) {
     audio.ui();
     return;
   }
+  if (id === "moment" && session && moment.start()) {
+    session.phase = "replay";
+    audio.ui();
+    return;
+  }
   if (id === "next" && session) {
     const order = ["lesson1", "lesson2", "lesson3", "lesson4"];
     const idx = order.indexOf(session.mission.id);
@@ -222,6 +229,20 @@ function activate(id) {
 
 function tick(dt) {
   if (screen !== "play" || !session) return;
+  if (session.phase === "replay") {
+    const sample = moment.step();
+    if (!sample) {
+      session.phase = "result";
+      return;
+    }
+    session.sim.s = sample.s;
+    session.sim.prevS = sample.s;
+    session.sim.x = sample.x;
+    session.sim.prevX = sample.x;
+    session.sim.v = sample.v;
+    session.sim.brakeInput = sample.brake;
+    return;
+  }
   if (session.phase !== "drive" && session.phase !== "countdown") audio.stopRadio();
   if (autopilot && debug && session.phase === "drive") {
     const policy = POLICIES[autopilot];
@@ -253,6 +274,9 @@ function tick(dt) {
   lastBubbleT = sim.bubbleT || 0;
   if (sim.cargo + 1 < lastCargo) audio.cargo(sim.cargoType);
   lastCargo = sim.cargo ?? lastCargo;
+  if (session.phase === "drive") {
+    moment.push({ s: sim.s, x: sim.x, v: sim.v, brake: sim.brakeInput });
+  }
   audio.brakeAmount(sim.brakeInput, sim.v);
   if (sim.stats.collisions > lastHits) {
     lastHits = sim.stats.collisions;
@@ -296,6 +320,7 @@ function frame(now) {
     selected,
     pose: null,
     alpha: presentedAlpha,
+    replayReady: moment.ready(),
     pointer: uiPointer,
   });
   hotspots = drawn.spots;
