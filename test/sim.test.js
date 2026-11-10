@@ -816,6 +816,16 @@ test("the phone buffer never exceeds two device pixels, and one when motion is r
   assert.ok(backingScale(1280, 720, 1, false) <= 1);
 });
 
+test("unapproved character drafts are not referenced by the game", () => {
+  for (const file of readdirSync("js")) {
+    if (!file.endsWith(".js")) continue;
+    const text = readFileSync(join("js", file), "utf8");
+    assert.equal(text.includes("drafts-not-approved"), false, file);
+  }
+  const yml = readFileSync(".github/workflows/deploy-pages.yml", "utf8");
+  assert.equal(yml.includes("drafts-not-approved"), false);
+});
+
 test("shipped cabin frames stay under two and a half megabytes", () => {
   let bytes = 0;
   const walk = (dir) => {
