@@ -11,7 +11,9 @@ import {
   drawPauseScreen,
   drawResultScreen,
   pedalHitBox,
+  setLargeUi,
   uiImages,
+  uiScale,
 } from "./ui.js";
 import { VIEW, project } from "./road.js";
 import { anchorKind, farDs, groundDs, paintFarToNear } from "./anchors.js";
@@ -212,6 +214,7 @@ function roundRect(ctx, x, y, w, h, r) {
 
 function paintCenter(ctx, text, x, y, w, h, size, color = P.INK, display = false, record = false) {
   const shown = String(text);
+  size = Math.round(size * uiScale());
   let px = size;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -242,6 +245,7 @@ function hash(n) {
 }
 
 export function render(ctx, state) {
+  setLargeUi(!!state.save?.settings?.largeUi);
   spots = [];
   labels = [];
   const sink = { spots, labels };

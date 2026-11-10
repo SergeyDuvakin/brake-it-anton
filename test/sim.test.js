@@ -60,7 +60,7 @@ import {
   sessionStep,
 } from "../js/session.js";
 import { cabinPoseId } from "../js/cabin.js";
-import { applyVictory, freshSave, noteInfiniteDistance, parseSave } from "../js/storage.js";
+import { applyVictory, freshSave, noteInfiniteDistance, parseSave, toggleSetting } from "../js/storage.js";
 
 const dt = CFG.dt;
 
@@ -701,6 +701,25 @@ test("victory unlocks the next lesson only, and a bad save does not unlock the g
   assert.equal(ok.save.best.lesson1, 3);
   assert.equal(ok.save.best.nope, undefined);
   assert.equal(ok.save.settings.sound, false);
+  assert.equal(ok.save.settings.music, false);
+  assert.equal(ok.save.settings.shake, true);
+  assert.equal(ok.save.settings.reducedMotion, false);
+  const noisy = parseSave('{"v":1,"unlocked":1,"infinite":false,"settings":"broken"}');
+  assert.equal(noisy.ok, true);
+  assert.equal(noisy.save.unlocked, 1);
+  assert.equal(noisy.save.settings.sound, true);
+  assert.equal(noisy.save.settings.largeUi, false);
+  const tuned = parseSave('{"v":1,"unlocked":1,"infinite":false,"settings":{"sound":true,"music":false,"voice":false,"vibration":false,"shake":true,"reducedMotion":true,"largeUi":true}}');
+  assert.equal(tuned.save.settings.music, false);
+  assert.equal(tuned.save.settings.voice, false);
+  assert.equal(tuned.save.settings.vibration, false);
+  assert.equal(tuned.save.settings.shake, true);
+  assert.equal(tuned.save.settings.reducedMotion, true);
+  assert.equal(tuned.save.settings.largeUi, true);
+  const flipped = toggleSetting(tuned.save, "shake");
+  assert.equal(flipped.settings.shake, false);
+  assert.equal(flipped.settings.reducedMotion, true);
+  assert.equal(toggleSetting(flipped, "motion").settings.reducedMotion, false);
   const farther = noteInfiniteDistance(ok.save, 420);
   const again = noteInfiniteDistance(farther, 12);
   assert.equal(again.bestMeters.infinite, 420);

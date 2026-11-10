@@ -25,7 +25,7 @@ import {
   resumeSession,
   sessionStep,
 } from "./session.js";
-import { applyVictory, freshSave, noteInfiniteDistance, parseSave } from "./storage.js";
+import { applyVictory, freshSave, noteInfiniteDistance, parseSave, toggleSetting } from "./storage.js";
 import { drainFrame } from "./clock.js";
 import { contentBox, stablePlacement } from "./viewport.js";
 
@@ -67,7 +67,13 @@ function loadSave() {
   try {
     const parsed = parseSave(localStorage.getItem(SAVE_KEY));
     if (!parsed.ok) {
-      parsed.save.notice = "Сохранение не читается. Начали заново.";
+      parsed.save.notice = "Сохранение не читается. Начали заново с первого урока.";
+      try {
+        const repaired = { ...parsed.save, notice: null };
+        localStorage.setItem(SAVE_KEY, JSON.stringify(repaired));
+      } catch {
+        /* the fresh profile still plays, even if it cannot be written */
+      }
       return parsed.save;
     }
     if (parsed.empty && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -110,7 +116,13 @@ function startMission(id) {
   wasDown = false;
   acc = 0;
   audio.unlock();
-  if (save.settings.sound) audio.startRadio();
+  if (save.settings.music) audio.startRadio();
+}
+
+function applyAudio() {
+  audio.setEffects(save.settings.sound);
+  audio.setMusic(save.settings.music);
+  audio.setVoice(save.settings.voice);
 }
 
 function settle() {
@@ -123,17 +135,13 @@ function settle() {
 }
 
 function toggle(which) {
-  if (which === "sound") {
-    save.settings.sound = !save.settings.sound;
-    audio.setEnabled(save.settings.sound);
-    if (save.settings.sound && screen === "play" && session?.phase === "drive") audio.startRadio();
-    else audio.stopRadio();
-  } else {
-    save.settings.shake = !save.settings.shake;
-    save.settings.reducedMotion = !save.settings.shake;
-  }
+  save = toggleSetting(save, which);
+  applyAudio();
+  const driving = screen === "play" && session?.phase === "drive";
+  if (save.settings.music && driving) audio.startRadio();
+  else audio.stopRadio();
   persist();
-  audio.ui();
+  if (save.settings.sound) audio.ui();
 }
 
 function activate(id) {
@@ -147,7 +155,9 @@ function activate(id) {
     audio.ui();
     return;
   }
-  if (id === "sound" || id === "shake") return toggle(id);
+  if (id === "sound" || id === "music" || id === "voice" || id === "vibrate" || id === "motion" || id === "shake" || id === "large") {
+    return toggle(id);
+  }
   if (id.startsWith("mission-")) {
     const missionId = id.slice("mission-".length);
     if (!canPlay(missionId)) return;
@@ -164,7 +174,7 @@ function activate(id) {
   }
   if (id === "resume") {
     resumeSession(session);
-    if (save.settings.sound) audio.startRadio();
+    if (save.settings.music) audio.startRadio();
     audio.ui();
     return;
   }
@@ -187,7 +197,7 @@ function activate(id) {
     wasDown = false;
     acc = 0;
     last = performance.now();
-    if (save.settings.sound) audio.startRadio();
+    if (save.settings.music) audio.startRadio();
     audio.ui();
     return;
   }
@@ -561,7 +571,7 @@ async function boot() {
   } catch (error) {
     console.warn("Font load failed, falling back to system faces.", error);
   }
-  audio.setEnabled(save.settings.sound);
+  applyAudio();
   try {
     await whenCarsReady();
   } catch {

@@ -7,14 +7,20 @@
 export function createAudio() {
   let ctx = null;
   let master = null;
-  let enabled = true;
+  let effects = true;
+  let musicOn = true;
+  let voiceOn = true;
   let noise = null;
   let brake = null;
   let radioOn = false;
   let stepTimer = 0;
 
+  function audible() {
+    return effects || musicOn || voiceOn;
+  }
+
   function ac() {
-    if (!enabled) return null;
+    if (!audible()) return null;
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
     if (!ctx) {
@@ -54,6 +60,7 @@ export function createAudio() {
   }
 
   function tone(freq, duration, type, peak) {
+    if (!effects) return;
     const made = envGain(duration, peak);
     if (!made) return;
     const osc = made.audio.createOscillator();
@@ -92,7 +99,7 @@ export function createAudio() {
   // A tiny original motif, not a recording. Two oscillators, minor and dumb.
   function startRadio() {
     const audio = ac();
-    if (!audio || !enabled) return;
+    if (!audio || !musicOn) return;
     if (radioOn) return;
     radioOn = true;
     const notes = [196, 233, 262, 233, 196, 175, 196, 262];
@@ -134,18 +141,35 @@ export function createAudio() {
       return !!ac();
     },
     setEnabled(value) {
-      enabled = !!value;
-      if (!enabled) {
+      effects = !!value;
+      musicOn = !!value;
+      if (!value) {
         stopRadio();
         if (brake) brake.gain.gain.value = 0;
         if (master) master.gain.value = 0;
       } else if (master) master.gain.value = 0.75;
     },
+    setEffects(value) {
+      effects = !!value;
+      if (!effects && brake) brake.gain.gain.value = 0;
+      if (master && audible()) master.gain.value = 0.75;
+    },
+    setMusic(value) {
+      musicOn = !!value;
+      if (!musicOn) stopRadio();
+      if (master && audible()) master.gain.value = 0.75;
+    },
+    setVoice(value) {
+      voiceOn = !!value;
+    },
+    voiceEnabled() {
+      return voiceOn;
+    },
     pedal(down) {
       tone(down ? 140 : 220, 0.07, "square", 0.03);
     },
     brakeAmount(amount, speed) {
-      if (!enabled) return;
+      if (!effects) return;
       ensureBrake();
       if (!brake) return;
       const vol = amount > 0.35 && speed > 3 ? Math.min(0.05, amount * speed * 0.0016) : 0;
@@ -174,7 +198,7 @@ export function createAudio() {
     startRadio,
     stopRadio,
     duck(important) {
-      if (!master || !enabled) return;
+      if (!master || !audible()) return;
       master.gain.value = important ? 0.35 : 0.75;
     },
   };

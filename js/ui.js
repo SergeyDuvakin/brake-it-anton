@@ -65,6 +65,16 @@ function fitPedalDest() {
 
 PEDAL.dest = fitPedalDest();
 
+let largeUi = false;
+
+export function setLargeUi(on) {
+  largeUi = !!on;
+}
+
+export function uiScale() {
+  return largeUi ? 1.22 : 1;
+}
+
 const INK = "#1C161E";
 const CREAM_TEXT = "#FFF6E4";
 const NEEDLE = "#2A2826";
@@ -121,7 +131,7 @@ function roundRect(ctx, x, y, w, h, r) {
 
 function paint(ctx, labels, text, x, y, w, h, size, color, display) {
   const shown = String(text);
-  let px = size;
+  let px = Math.round(size * uiScale());
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   while (px > 13) {
@@ -247,30 +257,30 @@ function lessonOpen(state, mission) {
   return mission.lesson <= state.save.unlocked;
 }
 
-function sideButtons(ctx, sink, state, y) {
-  const sound = state.save.settings.sound ? "Звук: вкл" : "Звук: выкл";
-  const shake = state.save.settings.shake ? "Тряска: вкл" : "Тряска: выкл";
-  drawButton(ctx, sink, {
-    id: "sound",
-    x: 36,
-    y,
-    w: 300,
-    h: 84,
-    text: sound,
-    kind: "cream",
-    pointer: state.pointer,
-    size: 26,
-  });
-  drawButton(ctx, sink, {
-    id: "shake",
-    x: 36,
-    y: y + 100,
-    w: 300,
-    h: 84,
-    text: shake,
-    kind: "cream",
-    pointer: state.pointer,
-    size: 26,
+function sideButtons(ctx, sink, state) {
+  const s = state.save.settings;
+  const on = (flag) => (flag ? "вкл" : "выкл");
+  const rows = [
+    ["sound", `Эффекты: ${on(s.sound)}`],
+    ["music", `Музыка: ${on(s.music)}`],
+    ["voice", `Голос: ${on(s.voice)}`],
+    ["vibrate", `Вибрация: ${on(s.vibration)}`],
+    ["motion", `Движение: ${s.reducedMotion ? "тише" : "обычно"}`],
+    ["shake", `Тряска: ${on(s.shake)}`],
+    ["large", `Текст: ${s.largeUi ? "крупный" : "обычный"}`],
+  ];
+  rows.forEach(([id, text], index) => {
+    drawButton(ctx, sink, {
+      id,
+      x: 1248,
+      y: 96 + index * 80,
+      w: 320,
+      h: 72,
+      text,
+      kind: "cream",
+      pointer: state.pointer,
+      size: 22,
+    });
   });
 }
 
@@ -322,7 +332,7 @@ export function drawGarageScreen(ctx, state, sink) {
     pointer: state.pointer,
     size: 32,
   });
-  sideButtons(ctx, sink, state, 620);
+  sideButtons(ctx, sink, state);
   if (state.save.infinite) {
     drawButton(ctx, sink, {
       id: "mission-infinite",
@@ -379,7 +389,7 @@ export function drawPauseScreen(ctx, state, sink) {
       size: 32,
     });
   }
-  sideButtons(ctx, sink, state, 620);
+  sideButtons(ctx, sink, state);
 }
 
 function starsLine(graded) {
