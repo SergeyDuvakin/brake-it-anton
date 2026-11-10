@@ -4,6 +4,7 @@
  */
 
 import { createAudio } from "./audio.js";
+import { pulse } from "./haptics.js";
 import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
 import { whenCabinReady, cabinReady } from "./cabin.js";
@@ -53,6 +54,10 @@ let lastHonks = 0;
 let lastClears = 0;
 let lastNear = 0;
 let wasDown = false;
+let hardPulsed = false;
+let lastBubble = "";
+let lastBubbleT = 0;
+let lastCargo = 100;
 let last = performance.now();
 let acc = 0;
 let presentedAlpha = 1;
@@ -131,6 +136,7 @@ function settle() {
   audio.stopRadio();
   if (session.mission.infinite) save = noteInfiniteDistance(save, session.sim.s);
   else if (session.result?.success) save = applyVictory(save, session.mission.id, session.result.stars);
+  audio.sting();
   persist();
 }
 
@@ -228,12 +234,25 @@ function tick(dt) {
   if (!session) return;
   const sim = session.sim;
   const down = session.phase === "drive" && (session.brakeHeld || session.keysDown.has("Space"));
-  if (down && !wasDown) audio.pedal(true);
+  if (down && !wasDown) {
+    audio.pedal(true);
+    pulse("tap", save.settings.vibration);
+  }
+  if (!down) hardPulsed = false;
+  else if (!hardPulsed && sim.brakeInput > 0.8 && sim.v > 8) {
+    hardPulsed = true;
+    pulse("hard", save.settings.vibration);
+  }
   if (!down && wasDown) {
     audio.pedal(false);
     hint = false;
   }
   wasDown = down;
+  if (sim.bubble && (sim.bubble !== lastBubble || sim.bubbleT > lastBubbleT + 0.2)) audio.voice(sim.bubble);
+  lastBubble = sim.bubble || "";
+  lastBubbleT = sim.bubbleT || 0;
+  if (sim.cargo + 1 < lastCargo) audio.cargo(sim.cargoType);
+  lastCargo = sim.cargo ?? lastCargo;
   audio.brakeAmount(sim.brakeInput, sim.v);
   if (sim.stats.collisions > lastHits) {
     lastHits = sim.stats.collisions;

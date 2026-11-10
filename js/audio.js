@@ -108,16 +108,23 @@ export function createAudio() {
       const gain = audio.createGain();
       osc.type = "triangle";
       osc.frequency.value = freq;
+      const under = audio.createOscillator();
+      under.type = "sine";
+      under.frequency.value = freq / 2;
       gain.gain.setValueAtTime(0.0001, when);
       gain.gain.exponentialRampToValueAtTime(0.018, when + 0.03);
       gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
       osc.connect(gain);
+      under.connect(gain);
       gain.connect(master);
       osc.start(when);
+      under.start(when);
       osc.stop(when + 0.3);
+      under.stop(when + 0.3);
       osc.onended = () => {
         try {
           osc.disconnect();
+          under.disconnect();
           gain.disconnect();
         } catch {
           /* already gone */
@@ -194,6 +201,41 @@ export function createAudio() {
     },
     ui() {
       tone(520, 0.05, "square", 0.025);
+    },
+    voice(text) {
+      if (!voiceOn) return;
+      const audio = ac();
+      if (!audio) return;
+      const line = String(text || "");
+      const count = 2 + (line.length % 3);
+      const root = 246 + ((line.charCodeAt(0) || 70) % 6) * 16;
+      for (let i = 0; i < count; i += 1) {
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        const when = audio.currentTime + i * 0.09;
+        osc.type = "triangle";
+        osc.frequency.value = root * (i % 2 ? 1.25 : 1);
+        gain.gain.setValueAtTime(0.0001, when);
+        gain.gain.exponentialRampToValueAtTime(0.05, when + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.08);
+        osc.connect(gain);
+        gain.connect(master);
+        osc.start(when);
+        osc.stop(when + 0.1);
+      }
+    },
+    cargo(type) {
+      if (type === "fish") {
+        tone(880, 0.12, "sine", 0.03);
+        tone(660, 0.16, "triangle", 0.02);
+      } else {
+        tone(520, 0.08, "triangle", 0.03);
+        tone(390, 0.1, "sine", 0.02);
+      }
+    },
+    sting() {
+      tone(523, 0.12, "triangle", 0.04);
+      tone(659, 0.16, "triangle", 0.03);
     },
     startRadio,
     stopRadio,

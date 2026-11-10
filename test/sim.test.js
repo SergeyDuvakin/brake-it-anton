@@ -47,6 +47,7 @@ import {
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
 import { pedPoseKey, dogPoseKey } from "../js/cast.js";
+import { vibrationPattern } from "../js/haptics.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
 import { actorTravel, bodyCenterLimit, contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import {
@@ -797,6 +798,17 @@ test("cabin stills follow the ride, and the phone pose stays a still name", () =
   sim.success = false;
   assert.equal(cabinPoseId(sim, "result"), "ashamed");
   assert.equal(cabinPoseId(sim, "drive", "preen"), "preen");
+});
+
+test("vibration is a short pulse, never a held buzz", () => {
+  for (const kind of ["tap", "hard"]) {
+    const pattern = vibrationPattern(kind);
+    assert.ok(pattern.length >= 1 && pattern.length <= 3);
+    const on = pattern.filter((_, index) => index % 2 === 0).reduce((sum, ms) => sum + ms, 0);
+    assert.ok(on <= 80, on);
+    assert.ok(Math.max(...pattern) < 60);
+  }
+  assert.notDeepEqual(vibrationPattern("tap"), vibrationPattern("hard"));
 });
 
 test("collisions move the car through three damage stages", () => {
