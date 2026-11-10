@@ -13,7 +13,7 @@ import { bumperFootGap, render, whenCarsReady } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, futureMissions, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
-import { createSim, nextHazard, renderAlpha, renderPose } from "./sim.js";
+import { applyHazardSnap, createSim, hazardSnap, nextHazard, renderAlpha, renderPose, snapRenderPose } from "./sim.js";
 import {
   createSession,
   keyDown,
@@ -40,6 +40,7 @@ let timeScale = params.has("e2e") ? 6 : 1;
 
 const audio = createAudio();
 const moment = createReplay();
+let replayHold = null;
 let save = loadSave();
 let screen = "title";
 let session = null;
@@ -110,8 +111,32 @@ function canPlay(id) {
   return !!lesson && lesson.lesson <= save.unlocked;
 }
 
+function beginRide() {
+  moment.reset();
+  replayHold = null;
+}
+
+function showReplaySample(sim, sample) {
+  sim.s = sample.s;
+  sim.prevS = sample.s;
+  sim.x = sample.x;
+  sim.prevX = sample.x;
+  sim.v = sample.v;
+  sim.brakeInput = sample.brake;
+  applyHazardSnap(sim.hazards, sample.hazards);
+  snapRenderPose(sim);
+}
+
+function finishReplay() {
+  moment.cancel();
+  if (session && replayHold) showReplaySample(session.sim, replayHold);
+  replayHold = null;
+  if (session && session.phase === "replay") session.phase = "result";
+}
+
 function startMission(id) {
   if (!canPlay(id)) return;
+  beginRide();
   const seed = id === "infinite" ? (Date.now() % 90000) + 1 : getMission(id).seed;
   const mission = getMission(id, seed);
   session = createSession(mission, { seed });
@@ -190,6 +215,7 @@ function activate(id) {
   if (id === "retry" && session) {
     const mission = session.mission;
     const pointerId = session.pointerId;
+    beginRide();
     restartSession(session);
     if (pointerId !== null && pointerId !== undefined) {
       try {
@@ -211,6 +237,13 @@ function activate(id) {
     return;
   }
   if (id === "moment" && session && moment.start()) {
+    replayHold = {
+      s: session.sim.s,
+      x: session.sim.x,
+      v: session.sim.v,
+      brake: session.sim.brakeInput,
+      hazards: hazardSnap(session.sim.hazards),
+    };
     session.phase = "replay";
     audio.ui();
     return;
@@ -233,15 +266,10 @@ function tick(dt) {
   if (session.phase === "replay") {
     const sample = moment.step();
     if (!sample) {
-      session.phase = "result";
+      finishReplay();
       return;
     }
-    session.sim.s = sample.s;
-    session.sim.prevS = sample.s;
-    session.sim.x = sample.x;
-    session.sim.prevX = sample.x;
-    session.sim.v = sample.v;
-    session.sim.brakeInput = sample.brake;
+    showReplaySample(session.sim, sample);
     return;
   }
   if (session.phase !== "drive" && session.phase !== "countdown") audio.stopRadio();
@@ -275,8 +303,14 @@ function tick(dt) {
   lastBubbleT = sim.bubbleT || 0;
   if (sim.cargo + 1 < lastCargo) audio.cargo(sim.cargoType);
   lastCargo = sim.cargo ?? lastCargo;
-  if (session.phase === "drive") {
-    moment.push({ s: sim.s, x: sim.x, v: sim.v, brake: sim.brakeInput });
+    if (session.phase === "drive") {
+    moment.push({
+      s: sim.s,
+      x: sim.x,
+      v: sim.v,
+      brake: sim.brakeInput,
+      hazards: hazardSnap(sim.hazards),
+    });
   }
   audio.brakeAmount(sim.brakeInput, sim.v);
   if (sim.stats.collisions > lastHits) {
@@ -363,6 +397,10 @@ canvas.addEventListener("pointermove", (event) => {
 
 canvas.addEventListener("pointerdown", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
+  if (session?.phase === "replay") {
+    finishReplay();
+    return;
+  }
   audio.unlock();
   const id = hit(eventPoint(event));
   uiPointer.over = id;
@@ -391,6 +429,11 @@ canvas.addEventListener("lostpointercapture", (event) => finishPress(event, fals
 
 window.addEventListener("keydown", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
+  if (session?.phase === "replay" && (event.code === "Escape" || event.code === "Space" || event.code === "Enter")) {
+    event.preventDefault();
+    finishReplay();
+    return;
+  }
   audio.unlock();
   if (event.code === "Space") event.preventDefault();
   if (event.repeat && event.code !== "Space") return;
@@ -603,6 +646,7 @@ window.__anton = {
   },
   debugStart(id) {
     if (!debug) return;
+    beginRide();
     const mission = getMission(id, id === "infinite" ? 7 : undefined);
     if (!mission) return;
     session = createSession(mission, { seed: mission.seed || 7 });

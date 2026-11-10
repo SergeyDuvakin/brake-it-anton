@@ -11,7 +11,7 @@ function gameURL(search = "") {
   return url.toString();
 }
 
-async function clickId(page, id) {
+async function clickId(page, id, how = "mouse") {
   const point = await page.evaluate((target) => {
     const spot = window.__anton.hotspots().find((item) => item.id === target);
     if (!spot) return null;
@@ -23,7 +23,9 @@ async function clickId(page, id) {
     };
   }, id);
   expect(point, `hotspot ${id}`).toBeTruthy();
-  await page.mouse.click(point.x, point.y);
+  // Firefox with hasTouch drops mouse clicks on the canvas. A touch context taps.
+  if (how === "touch") await page.touchscreen.tap(point.x, point.y);
+  else await page.mouse.click(point.x, point.y);
 }
 
 function watchErrors(page) {
@@ -367,7 +369,8 @@ test("losing pointer capture releases the pedal", async ({ page }) => {
   await page.waitForFunction(() => window.__anton.getState().held);
   await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
-    canvas.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }));
+    const id = window.__anton.getState().brakePointer;
+    canvas.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: id, bubbles: true }));
   });
   await page.waitForFunction(() => window.__anton.getState().held === false);
   await page.mouse.up();
@@ -391,7 +394,8 @@ test("pointercancel releases the pedal and a second finger cannot hold it", asyn
   expect(await page.evaluate(() => window.__anton.getState().held)).toBe(true);
   await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
-    canvas.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }));
+    const id = window.__anton.getState().brakePointer;
+    canvas.dispatchEvent(new PointerEvent("pointercancel", { pointerId: id, bubbles: true }));
   });
   await page.waitForFunction(() => window.__anton.getState().held === false);
   await page.mouse.up();
@@ -596,7 +600,7 @@ async function driveWithPedal(page, decide, shots = {}) {
       await frozenShot(page, shots.preen);
       shots.preen = null;
     }
-    await page.waitForTimeout(30);
+    await page.waitForTimeout(16);
   }
   throw new Error("pedal drive timed out");
 }
@@ -665,7 +669,7 @@ test("touch retry on 844×390 is immediate and the pedal is a real target", asyn
   await page.goto(gameURL("e2e=1"));
   await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
   await page.evaluate(() => window.__anton.setTimeScale(8));
-  await clickId(page, "start");
+  await clickId(page, "start", "touch");
   await page.waitForFunction(() => window.__anton.getState().phase === "result", null, { timeout: 20000 });
   await page.evaluate(() => window.__anton.setTimeScale(1));
   const point = await page.evaluate(() => {
@@ -1276,7 +1280,8 @@ test("one tap and the brake are different fingers", async ({ page }) => {
   expect(await page.evaluate(() => window.__anton.getState().held)).toBe(true);
   await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
-    canvas.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: 1, bubbles: true }));
+    const id = window.__anton.getState().brakePointer;
+    canvas.dispatchEvent(new PointerEvent("lostpointercapture", { pointerId: id, bubbles: true }));
   });
   await page.waitForFunction(() => window.__anton.getState().held === false);
   expect(errors).toEqual([]);
@@ -1306,8 +1311,9 @@ test("pointermove from the captured pedal onto Anton does not wake", async ({ pa
   await page.waitForFunction(() => window.__anton.getState().held);
   await page.evaluate(({ x, y }) => {
     const canvas = document.querySelector("canvas");
+    const id = window.__anton.getState().brakePointer;
     canvas.dispatchEvent(new PointerEvent("pointermove", {
-      pointerId: 1, clientX: x, clientY: y, bubbles: true,
+      pointerId: id, clientX: x, clientY: y, bubbles: true,
     }));
   }, anton);
   const moved = await page.evaluate(() => window.__anton.getState());
@@ -2103,6 +2109,27 @@ test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", asy
   expect(lost.success).toBe(false);
   expect(lost.fail).toBe("cargo");
   await page.screenshot({ path: shot("result-fail") });
+  expect(errors).toEqual([]);
+});
+
+test("moment replay shows the ride and Escape returns to the result", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.debugStart);
+  await page.evaluate(() => {
+    window.__anton.setAutopilot("careful");
+    window.__anton.debugStart("exam");
+  });
+  await page.waitForFunction(() => window.__anton.getState().phase === "result", null, { timeout: 45000 });
+  await clickId(page, "moment");
+  await page.waitForFunction(() => window.__anton.getState().phase === "replay");
+  const during = await page.evaluate(() => window.__anton.getState());
+  expect(during.phase).toBe("replay");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__anton.getState().phase === "result");
+  const back = await page.evaluate(() => window.__anton.getState());
+  expect(back.success).toBe(true);
+  expect(back.phase).toBe("result");
   expect(errors).toEqual([]);
 });
 

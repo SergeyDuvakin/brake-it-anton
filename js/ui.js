@@ -15,7 +15,7 @@
 
 import { PALETTE as P } from "./config.js";
 import { cabinPoseId, drawCabinMedal } from "./cabin.js";
-import { PEDAL_ZONE } from "./layout.js";
+import { MOOD_TILE, PAUSE_BUTTON, PEDAL_ZONE, ROUTE_CHIP } from "./layout.js";
 import { moodGlyph, repairInvoice } from "./physics.js";
 
 export { PEDAL_ZONE };
@@ -256,7 +256,7 @@ function lessonOpen(state, mission) {
   return mission.lesson <= state.save.unlocked;
 }
 
-function sideButtons(ctx, sink, state, startY = 96) {
+function sideButtons(ctx, sink, state, startY = 96, bottom = 884) {
   const s = state.save.settings;
   const on = (flag) => (flag ? "вкл" : "выкл");
   const rows = [
@@ -268,17 +268,26 @@ function sideButtons(ctx, sink, state, startY = 96) {
     ["shake", `Тряска: ${on(s.shake)}`],
     ["large", `Текст: ${s.largeUi ? "крупный" : "обычный"}`],
   ];
+  const count = rows.length;
+  const avail = Math.max(count * 48, bottom - startY);
+  let h = 72;
+  let gap = 6;
+  if (count * h + (count - 1) * gap > avail) gap = 4;
+  if (count * h + (count - 1) * gap > avail) {
+    h = Math.floor((avail - (count - 1) * gap) / count);
+  }
+  const stride = h + gap;
   rows.forEach(([id, text], index) => {
     drawButton(ctx, sink, {
       id,
       x: 1248,
-      y: startY + index * 78,
+      y: startY + index * stride,
       w: 320,
-      h: 72,
+      h,
       text,
       kind: "cream",
       pointer: state.pointer,
-      size: 22,
+      size: Math.min(22, Math.floor(h * 0.34)),
     });
   });
 }
@@ -803,10 +812,12 @@ export function drawDriveChrome(ctx, state, sink, brake) {
   const needle = drawGauge(ctx, sink.labels, sim.patience);
   const glyph = GLYPH[moodGlyph(sim.patience, sim.outburstT > 0)] || "circle";
   const tile = IMG[glyph];
-  if (ready(tile)) ctx.drawImage(tile, 452, 18, 72, 70);
-  if (sim.outburstT > 0 && ready(IMG.warning)) ctx.drawImage(IMG.warning, 452, 96, 64, 60);
+  if (ready(tile)) ctx.drawImage(tile, MOOD_TILE.x, MOOD_TILE.y, MOOD_TILE.w, MOOD_TILE.h);
+  if (sim.outburstT > 0 && ready(IMG.warning)) {
+    ctx.drawImage(IMG.warning, MOOD_TILE.x + MOOD_TILE.w + 8, MOOD_TILE.y, 64, 60);
+  }
 
-  const chip = { x: 536, y: 18, w: 360, h: 78 };
+  const chip = ROUTE_CHIP;
   nineSlice(ctx, IMG.cream, chip.x, chip.y, chip.w, chip.h, 34, FILL.cream);
   const lesson = mission.chip || (mission.infinite ? "∞" : `УРОК ${String(mission.lesson).padStart(2, "0")}`);
   paint(ctx, sink.labels, lesson, chip.x + 8, chip.y + 6, chip.w - 16, 34, 20, INK, true);
@@ -820,7 +831,7 @@ export function drawDriveChrome(ctx, state, sink, brake) {
     ctx.fillRect(chip.x + 18, chip.y + chip.h + 8, Math.max(0, (chip.w - 36) * p), 8);
   }
 
-  const pause = { x: 924, y: 22, w: 96, h: 90 };
+  const pause = PAUSE_BUTTON;
   const pauseState = controlState("pause", state.pointer, {});
   ctx.save();
   ctx.translate(0, pauseState === "pressed" ? 4 : pauseState === "hover" ? -2 : 0);

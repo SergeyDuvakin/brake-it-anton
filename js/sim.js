@@ -456,6 +456,31 @@ export function snapRenderPose(sim) {
   snapshotPose(sim);
 }
 
+/** Fields the picture needs so a replay can put a body back where it was. */
+export function hazardSnap(hazards) {
+  return (hazards || []).map((h) => ({
+    id: h.id,
+    resolved: h.resolved,
+    committed: h.committed,
+    crossT: h.crossT,
+    hopped: !!h.hopped,
+    yielded: !!h.yielded,
+  }));
+}
+
+export function applyHazardSnap(hazards, snap) {
+  if (!snap) return;
+  for (const item of snap) {
+    const h = (hazards || []).find((hazard) => hazard.id === item.id);
+    if (!h) continue;
+    h.resolved = item.resolved;
+    h.committed = item.committed;
+    h.crossT = item.crossT;
+    h.hopped = item.hopped;
+    h.yielded = item.yielded;
+  }
+}
+
 export function renderAlpha(accumulator, step = 1 / 60) {
   if (!(step > 0) || !Number.isFinite(accumulator)) return 1;
   const alpha = accumulator / step;

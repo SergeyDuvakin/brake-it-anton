@@ -18,8 +18,20 @@ export function createReplay() {
         x: sample.x,
         v: sample.v,
         brake: sample.brake,
+        hazards: sample.hazards ? sample.hazards.map((item) => ({ ...item })) : null,
       });
       if (samples.length > WINDOW) samples.shift();
+    },
+    reset() {
+      samples.length = 0;
+      playing = false;
+      cursor = 0;
+    },
+    cancel() {
+      const was = playing;
+      playing = false;
+      cursor = 0;
+      return was;
     },
     ready() {
       return samples.length > 30;

@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, extname } from "node:path";
 
 import { anchorKind, farDs, groundDs, paintFarToNear, screenFootprint } from "../js/anchors.js";
 import { CFG } from "../js/config.js";
@@ -14,7 +16,7 @@ import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
 import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
-import { DRIVER_PLATE, platesSeparated } from "../js/layout.js";
+import { CALLOUT, DRIVER_PLATE, MOOD_TILE, PAUSE_BUTTON, platesSeparated, routeChipBounds } from "../js/layout.js";
 import {
   CAR_BODY_H,
   CAR_BODY_W,
@@ -35,6 +37,7 @@ import {
   placedScene,
   render,
   sceneryAnchor,
+  showsInkDamage,
 } from "../js/draw.js";
 import { VIEW, project } from "../js/road.js";
 import { routeLocal, routeYaw, sectionCount, straightRun } from "../js/route.js";
@@ -51,9 +54,10 @@ import {
 } from "../js/physics.js";
 import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
 import { pedPoseKey, dogPoseKey } from "../js/cast.js";
-import { vibrationPattern } from "../js/haptics.js";
+import { pulse, vibrationPattern } from "../js/haptics.js";
+import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
-import { actorTravel, bodyCenterLimit, contactDuringStep, createSim, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import {
   createSession,
   keyDown,
@@ -838,6 +842,31 @@ test("a replay keeps the last eight seconds and plays them back in order", () =>
   assert.equal(count, 480);
   assert.equal(last.s, 599);
   assert.equal(reel.playing(), false);
+
+  const ride = createSim(getMission("lesson1"), 11);
+  stepSim(ride, 1 / 60, { held: false });
+  ride.hazards[0].crossT = 1.25;
+  ride.hazards[0].hopped = false;
+  const snap = hazardSnap(ride.hazards);
+  reel.reset();
+  assert.equal(reel.ready(), false);
+  reel.push({ s: ride.s, x: ride.x, v: ride.v, brake: 0, hazards: snap });
+  reel.push({ s: ride.s + 1, x: ride.x, v: ride.v, brake: 1, hazards: snap });
+  ride.hazards[0].crossT = 9;
+  ride.hazards[0].hopped = true;
+  ride.hazards[0].resolved = "hit";
+  assert.equal(reel.start(), true);
+  const sample = reel.step();
+  applyHazardSnap(ride.hazards, sample.hazards);
+  assert.equal(ride.hazards[0].crossT, 1.25);
+  assert.equal(ride.hazards[0].hopped, false);
+  assert.equal(ride.hazards[0].resolved, null);
+  assert.equal(reel.cancel(), true);
+  assert.equal(reel.playing(), false);
+  const shell = readFileSync("js/game.js", "utf8");
+  assert.equal(shell.includes("beginRide()"), true);
+  assert.equal(shell.includes("function beginRide()"), true);
+  assert.ok(shell.includes("moment.reset()"));
 });
 
 test("approved trips are in the garage and Anton's lessons stay first", () => {
@@ -2658,4 +2687,242 @@ test("letterbox keeps 16:9 and maps touches back into 1600×900", () => {
   const far = logicalPoint(odd.left + odd.width, odd.top + odd.height, odd);
   assert.ok(Math.abs(origin.x) < 1e-6 && Math.abs(origin.y) < 1e-6);
   assert.ok(Math.abs(far.x - 1600) < 1e-6 && Math.abs(far.y - 900) < 1e-6);
+});
+
+function coversRoad(rect, ds, xm) {
+  const spot = project(ds, xm);
+  if (spot.y < VIEW.panel.y || spot.y > VIEW.panel.y + VIEW.panel.h) return false;
+  if (spot.x < VIEW.panel.x || spot.x > VIEW.panel.x + VIEW.panel.w) return false;
+  return spot.x >= rect.x && spot.x <= rect.x + rect.w && spot.y >= rect.y && spot.y <= rect.y + rect.h;
+}
+
+test("the lesson chip and the wake line stay off the lane and the sidewalk", () => {
+  assert.ok(CALLOUT.x >= DRIVER_PLATE.x && CALLOUT.x + CALLOUT.w <= DRIVER_PLATE.x + DRIVER_PLATE.w);
+  assert.ok(CALLOUT.y >= DRIVER_PLATE.y && CALLOUT.y + CALLOUT.h <= DRIVER_PLATE.y + DRIVER_PLATE.h);
+  assert.ok(MOOD_TILE.x >= DRIVER_PLATE.x && MOOD_TILE.y >= DRIVER_PLATE.y + 70 + 360);
+  assert.ok(MOOD_TILE.y + MOOD_TILE.h <= CALLOUT.y);
+  const chip = routeChipBounds();
+  for (const ds of [16, 24, 32, 40, 48, 56]) {
+    for (const xm of [-5.2, -1.8, 1.8, 5.2]) {
+      assert.equal(coversRoad(chip, ds, xm), false, `chip ds ${ds} xm ${xm}`);
+      if (xm > 0) {
+        assert.equal(coversRoad(GAUGE.box, ds, xm), false, `gauge ds ${ds} xm ${xm}`);
+        assert.equal(coversRoad(PAUSE_BUTTON, ds, xm), false, `pause ds ${ds} xm ${xm}`);
+      }
+    }
+  }
+  const warn = { x: MOOD_TILE.x + MOOD_TILE.w + 8, y: MOOD_TILE.y, w: 64, h: 60 };
+  assert.ok(warn.x + warn.w <= DRIVER_PLATE.x + DRIVER_PLATE.w);
+  assert.ok(warn.y + warn.h <= CALLOUT.y);
+});
+
+test("garage controls stay on the canvas when every trip and the last lesson are listed", () => {
+  const save = freshSave();
+  save.unlocked = 4;
+  save.infinite = true;
+  save.notice = "Сохранение не читается. Начали заново с первого урока.";
+  const garage = render(mockCtx().ctx, {
+    screen: "garage",
+    session: null,
+    save,
+    now: 0,
+    hint: false,
+    debug: false,
+    notice: save.notice,
+    preview: null,
+    missions: LESSONS,
+    futureTrips: futureMissions(),
+    selected: "mother",
+    pose: null,
+    alpha: 1,
+    pointer: { over: null, pressed: null },
+  });
+  const names = garage.labels.map((item) => item.text);
+  assert.ok(names.includes("Съездить за тёщей"));
+  assert.ok(names.includes("Экзамен"));
+  assert.ok(names.includes("Все вышли гулять"));
+  assert.ok(names.includes("Геннадий уснул"));
+  assert.ok(names.includes("ПОСЛЕДНИЙ"));
+  assert.ok(names.includes("Сохранение не читается."));
+  for (const spot of garage.spots) {
+    assert.ok(spot.x >= 16 && spot.y >= 16, spot.id);
+    assert.ok(spot.x + spot.w <= 1584, spot.id);
+    assert.ok(spot.y + spot.h <= 884, `${spot.id} ${spot.y + spot.h}`);
+  }
+  for (const group of [garage.spots, garage.labels]) {
+    for (let i = 0; i < group.length; i += 1) {
+      for (let j = i + 1; j < group.length; j += 1) {
+        assert.equal(boxesOverlap(group[i], group[j]), false, `${group[i].id || group[i].text}/${group[j].id || group[j].text}`);
+      }
+    }
+  }
+});
+
+test("careful play clears every trip, and a seed soak does not go non-finite", () => {
+  for (const mission of [...LESSONS, ...futureMissions()]) {
+    assert.ok(mission.hazards.some((hazard) => hazard.trust), mission.id);
+    let show = -Infinity;
+    for (const hazard of mission.hazards) {
+      const openAt = hazard.s - hazard.telegraph;
+      assert.ok(openAt >= show, `${mission.id} ${hazard.id}`);
+      show = hazard.s + hazard.clearAfter;
+    }
+    const sim = runSim(mission, policyCareful, { maxTime: 180 });
+    assert.equal(sim.success, true, `${mission.id} ${sim.failReason}`);
+    assert.equal(sim.stats.collisions, 0, mission.id);
+    assert.equal(sim.stats.trustClears >= 1, true, mission.id);
+    for (const value of [sim.s, sim.v, sim.x, sim.patience, sim.body, sim.cargo]) {
+      assert.equal(Number.isFinite(value), true, mission.id);
+    }
+  }
+  for (let seed = 1; seed <= 24; seed += 1) {
+    const mission = buildInfinite(seed);
+    const again = buildInfinite(seed);
+    assert.deepEqual(mission.hazards.map((hazard) => [hazard.s, hazard.type, hazard.trust]), again.hazards.map((hazard) => [hazard.s, hazard.type, hazard.trust]));
+    let previous = "";
+    for (const hazard of mission.hazards) {
+      assert.notEqual(hazard.type, previous);
+      previous = hazard.type;
+    }
+    const sim = runSim(mission, policyCareful, { maxTime: 20 });
+    for (const value of [sim.s, sim.v, sim.x, sim.patience, sim.body]) {
+      assert.equal(Number.isFinite(value), true, `seed ${seed}`);
+    }
+    assert.ok(sim.s > 80, `seed ${seed} ${sim.s}`);
+  }
+});
+
+test("mint and blue still show damage marks, and a missing audio device stays quiet", () => {
+  assert.equal(showsInkDamage({ car: "yellow", body: 100, stats: { collisions: 0 } }), false);
+  assert.equal(showsInkDamage({ car: "yellow", body: 80, stats: { collisions: 1 } }), true);
+  assert.equal(showsInkDamage({ car: "yellow", body: 50, stats: { collisions: 1 } }), false);
+  assert.equal(showsInkDamage({ car: "yellow", body: 10, stats: { collisions: 2 } }), true);
+  assert.equal(showsInkDamage({ car: "mint", body: 50, stats: { collisions: 1 } }), true);
+  assert.equal(showsInkDamage({ car: "blue", body: 10, stats: { collisions: 2 } }), true);
+  assert.equal(damageStage(50, 1), 2);
+
+  const prevWindow = globalThis.window;
+  const nav = globalThis.navigator;
+  const prevVibrate = nav ? nav.vibrate : undefined;
+  try {
+    globalThis.window = {};
+    if (nav) {
+      nav.vibrate = () => {
+        throw new Error("no vibrator");
+      };
+    }
+    const audio = createAudio();
+    assert.equal(audio.supported(), false);
+    assert.doesNotThrow(() => {
+      audio.unlock();
+      audio.setEffects(false);
+      audio.setMusic(false);
+      audio.setVoice(false);
+      audio.pedal(true);
+      audio.brakeAmount(1, 14);
+      audio.crash();
+      audio.honk();
+      audio.voice("ОЙ");
+      audio.startRadio();
+      audio.stopRadio();
+      audio.duck(true);
+      audio.sting();
+    });
+    assert.equal(pulse("hard", true), false);
+    assert.equal(pulse("tap", false), false);
+  } finally {
+    if (prevWindow === undefined) delete globalThis.window;
+    else globalThis.window = prevWindow;
+    if (nav) nav.vibrate = prevVibrate;
+  }
+  assert.match(readFileSync("tools/serve.js", "utf8"), /"\.jpg": "image\/jpeg"/);
+});
+
+test("a pages-style /brake-it-anton/ server has every picture the game names", async () => {
+  const yml = readFileSync(".github/workflows/deploy-pages.yml", "utf8");
+  const match = yml.match(/Assemble site files\n\s+run: \|\n([\s\S]*?)\n\s+- name: Configure Pages/);
+  assert.ok(match, "assemble script");
+  const script = match[1].replace(/^ {10}/gm, "");
+  execFileSync("bash", ["-s"], { input: script, cwd: process.cwd(), stdio: "pipe" });
+  const dist = join(process.cwd(), ".pages-dist");
+  const names = new Set();
+  for (const file of readdirSync("js")) {
+    if (!file.endsWith(".js")) continue;
+    const text = readFileSync(join("js", file), "utf8");
+    for (const found of text.matchAll(/["']([A-Za-z0-9_./-]+\.(?:png|jpg|jpeg|ttf|json|webmanifest))["']/g)) {
+      names.add(found[1]);
+    }
+  }
+  const wanted = [];
+  function walk(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else wanted.push(full.slice(dist.length + 1));
+    }
+  }
+  walk(dist);
+  for (const name of names) {
+    assert.ok(wanted.some((file) => file === name || file.endsWith(`/${name}`)), name);
+  }
+  const manifest = JSON.parse(readFileSync(join(dist, "assets/cabin/manifest.json"), "utf8"));
+  const urls = new Set(["", "index.html", "js/game.js", "js/layout.js", "style.css", "manifest.webmanifest"]);
+  for (const file of wanted) {
+    if (/\.(png|jpg|jpeg|ttf|json|webmanifest)$/.test(file)) urls.add(file);
+  }
+  for (const pose of manifest.poses || []) urls.add(`assets/cabin/poses/${pose}.jpg`);
+  for (const [clip, count] of Object.entries(manifest.clips || {})) {
+    for (let i = 0; i < count; i += 1) urls.add(`assets/cabin/sleep/${clip}/${String(i).padStart(2, "0")}.jpg`);
+  }
+  const server = createServer((req, res) => {
+    const url = new URL(req.url || "/", "http://127.0.0.1");
+    const prefix = "/brake-it-anton";
+    if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) {
+      res.writeHead(404);
+      res.end("missing prefix");
+      return;
+    }
+    let rel = decodeURIComponent(url.pathname.slice(prefix.length));
+    if (rel === "" || rel === "/") rel = "/index.html";
+    const file = join(dist, rel);
+    if (!file.startsWith(dist)) {
+      res.writeHead(403);
+      res.end("forbidden");
+      return;
+    }
+    try {
+      const data = readFileSync(file);
+      const type = {
+        ".html": "text/html",
+        ".js": "text/javascript",
+        ".css": "text/css",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".json": "application/json",
+        ".ttf": "font/ttf",
+        ".webmanifest": "application/manifest+json",
+      }[extname(file)] || "application/octet-stream";
+      res.writeHead(200, { "content-type": type });
+      res.end(data);
+    } catch {
+      res.writeHead(404);
+      res.end("not found");
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    for (const rel of urls) {
+      const response = await globalThis.fetch(`http://127.0.0.1:${port}/brake-it-anton/${rel}`);
+      assert.equal(response.status, 200, rel);
+      if (rel.endsWith(".jpg")) assert.equal(response.headers.get("content-type"), "image/jpeg", rel);
+      if (rel.endsWith(".png")) assert.equal(response.headers.get("content-type"), "image/png", rel);
+      await response.arrayBuffer();
+    }
+    const outside = await globalThis.fetch(`http://127.0.0.1:${port}/assets/cars/mint-car.png`);
+    assert.equal(outside.status, 404);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

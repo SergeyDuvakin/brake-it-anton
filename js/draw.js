@@ -6,7 +6,7 @@
 import { CFG, PALETTE as P } from "./config.js";
 import { damageStage } from "./physics.js";
 import { drawPassenger, paintCabin } from "./cabin.js";
-import { DRIVER_PLATE } from "./layout.js";
+import { CALLOUT, DRIVER_PLATE, NOTICE_BOX } from "./layout.js";
 import {
   drawDriveChrome,
   drawGarageScreen,
@@ -147,7 +147,20 @@ function imageReady(img) {
 }
 
 export function whenCarsReady() {
-  const imgs = [YELLOW_STRAIGHT, YELLOW_BRAKE, YELLOW_CRASH, CORAL_STRAIGHT, ...worldImages(), ...uiImages()].filter(Boolean);
+  const imgs = [
+    YELLOW_STRAIGHT,
+    YELLOW_BRAKE,
+    YELLOW_CRASH,
+    YELLOW_LEFT,
+    YELLOW_RIGHT,
+    YELLOW_SMALL_LEFT,
+    YELLOW_SMALL_RIGHT,
+    MINT_CAR,
+    BLUE_CAR,
+    CORAL_STRAIGHT,
+    ...worldImages(),
+    ...uiImages(),
+  ].filter(Boolean);
   if (!imgs.length) return Promise.resolve(false);
   return Promise.all(imgs.map((img) => (img.decode ? img.decode() : Promise.resolve()))).then(() => true);
 }
@@ -288,13 +301,19 @@ export function render(ctx, state) {
   if (state.screen === "garage") drawGarageScreen(ctx, state, sink);
   else if (state.screen === "title") drawTitle(ctx, state);
   else readout = drawPlay(ctx, state, sink);
-  if (state.notice) {
-    roundRect(ctx, 360, 18, 880, 44, 12);
+  if (state.notice && state.screen !== "play") {
+    const box = NOTICE_BOX;
+    roundRect(ctx, box.x, box.y, box.w, box.h, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, state.notice, 360, 18, 880, 44, 18, P.INK, false, true);
+    const parts = String(state.notice).split(". ").filter(Boolean);
+    const lines = parts.length > 1 ? parts.map((part, index) => (index < parts.length - 1 ? `${part}.` : part)) : [String(state.notice)];
+    const rowH = box.h / lines.length;
+    lines.forEach((line, index) => {
+      paintCenter(ctx, line, box.x + 8, box.y + index * rowH, box.w - 16, rowH, 18, P.INK, false, true);
+    });
   }
   return { spots, labels, readout };
 }
@@ -343,19 +362,19 @@ function drawPlay(ctx, state, sink) {
   }
   const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
   if (driving && needsTap) {
-    roundRect(ctx, 560, 128, 340, 40, 12);
+    roundRect(ctx, CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F", 560, 128, 340, 40, 18, P.INK, false, true);
+    paintCenter(ctx, sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
   } else if (state.hint && driving) {
-    roundRect(ctx, 560, 128, 340, 40, 12);
+    roundRect(ctx, CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 560, 128, 340, 40, 18, P.INK, false, true);
+    paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
   }
   if (session.phase === "pause") drawPauseScreen(ctx, state, sink);
   if (session.phase === "result") drawResultScreen(ctx, state, sink);
@@ -1047,22 +1066,39 @@ function playerPlanImage(sim) {
   return YELLOW_STRAIGHT;
 }
 
+/**
+ * Yellow uses the approved collision drawing for the medium and heavy stages.
+ * Mint and blue have one approved picture each, so the ink marks stand in
+ * for every damaged stage. The picture files are not edited.
+ */
+export function showsInkDamage(sim) {
+  const stage = damageStage(sim?.body, sim?.stats?.collisions);
+  if (stage <= 0) return false;
+  if (sim?.car === "mint" || sim?.car === "blue") return true;
+  return stage === 1 || stage === 3;
+}
+
 /** Light and heavy still need owner drawings. These marks are not painted into the car file. */
 function drawDamagePlaceholder(ctx, sim, xm) {
   const stage = damageStage(sim.body, sim.stats?.collisions);
-  if (stage !== 1 && stage !== 3) return;
+  if (!showsInkDamage(sim)) return;
   const nose = viewProject(CFG.carHalfFront * 0.72, xm);
   ctx.save();
   ctx.translate(nose.x, nose.y);
   ctx.lineCap = "round";
   ctx.strokeStyle = P.INK;
   ctx.lineWidth = 3;
-  if (stage === 1) {
+  if (stage === 1 || stage === 2) {
     ctx.beginPath();
     ctx.moveTo(-10, -4);
     ctx.lineTo(4, 6);
     ctx.moveTo(-4, -8);
     ctx.lineTo(8, -1);
+    if (stage === 2) {
+      ctx.moveTo(-14, 2);
+      ctx.lineTo(0, -8);
+      ctx.lineTo(10, 3);
+    }
     ctx.stroke();
   } else {
     ctx.fillStyle = "rgba(28,22,30,0.72)";

@@ -4,6 +4,10 @@
  * call stays silent and the game keeps running.
  */
 
+function hostWindow() {
+  return globalThis.window || globalThis;
+}
+
 export function createAudio() {
   let ctx = null;
   let master = null;
@@ -21,7 +25,8 @@ export function createAudio() {
 
   function ac() {
     if (!audible()) return null;
-    const AC = window.AudioContext || window.webkitAudioContext;
+    const root = hostWindow();
+    const AC = root.AudioContext || root.webkitAudioContext;
     if (!AC) return null;
     if (!ctx) {
       try {
@@ -92,7 +97,8 @@ export function createAudio() {
 
   function stopRadio() {
     radioOn = false;
-    if (stepTimer) window.clearTimeout(stepTimer);
+    const cancel = hostWindow().clearTimeout || globalThis.clearTimeout;
+    if (stepTimer && cancel) cancel(stepTimer);
     stepTimer = 0;
   }
 
@@ -135,14 +141,16 @@ export function createAudio() {
       if (!radioOn || !ctx) return;
       const start = audio.currentTime + 0.05;
       notes.forEach((freq, i) => playAt(start + i * 0.34, freq));
-      stepTimer = window.setTimeout(loop, notes.length * 340);
+      const later = hostWindow().setTimeout || globalThis.setTimeout;
+      if (later) stepTimer = later(loop, notes.length * 340);
     };
     loop();
   }
 
   return {
     supported() {
-      return !!(window.AudioContext || window.webkitAudioContext);
+      const root = hostWindow();
+      return !!(root.AudioContext || root.webkitAudioContext);
     },
     unlock() {
       return !!ac();
