@@ -72,6 +72,20 @@ export function cargoSustain(type) {
   return 0;
 }
 
+/**
+ * 0 intact, 1 light, 2 medium, 3 heavy.
+ * Medium and heavy use the approved collision drawing.
+ * Light and the extra heavy mark are placeholders until there is owner art.
+ */
+export function damageStage(body, collisions = 0) {
+  const hull = Number.isFinite(body) ? body : 100;
+  const hits = collisions || 0;
+  if (hits <= 0 && hull > 90) return 0;
+  if (hull > 60 && hits < 3) return 1;
+  if (hull > 25) return 2;
+  return 3;
+}
+
 export function moodWord(patience, outburst) {
   if (outburst || patience >= 100) return "Ну всё!";
   if (patience >= 70) return "Закипает";

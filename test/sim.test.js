@@ -36,6 +36,7 @@ import { VIEW, project } from "../js/road.js";
 import { routeLocal, routeYaw, sectionCount, straightRun } from "../js/route.js";
 import {
   brakeAccel,
+  damageStage,
   expressionId,
   grade,
   irritationRate,
@@ -796,6 +797,14 @@ test("cabin stills follow the ride, and the phone pose stays a still name", () =
   sim.success = false;
   assert.equal(cabinPoseId(sim, "result"), "ashamed");
   assert.equal(cabinPoseId(sim, "drive", "preen"), "preen");
+});
+
+test("collisions move the car through three damage stages", () => {
+  assert.equal(damageStage(100, 0), 0);
+  assert.equal(damageStage(82, 1), 1);
+  assert.equal(damageStage(48, 2), 2);
+  assert.equal(damageStage(12, 4), 3);
+  assert.equal(damageStage(70, 3), 2);
 });
 
 test("six sections bend after a straight opening, and the camera looks ahead", () => {

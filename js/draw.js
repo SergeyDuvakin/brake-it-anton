@@ -4,6 +4,7 @@
  */
 
 import { CFG, PALETTE as P } from "./config.js";
+import { damageStage } from "./physics.js";
 import { paintCabin } from "./cabin.js";
 import {
   drawDriveChrome,
@@ -1029,7 +1030,8 @@ function drawNpc(ctx, placed, h, sc, dist, boil) {
 }
 
 function playerPlanImage(sim) {
-  if ((sim.crashT || 0) > 0.05 && imageReady(YELLOW_CRASH)) return YELLOW_CRASH;
+  const stage = damageStage(sim.body, sim.stats?.collisions);
+  if ((stage >= 2 || (sim.crashT || 0) > 0.05) && imageReady(YELLOW_CRASH)) return YELLOW_CRASH;
   if ((sim.brakeInput || 0) > 0.35 && imageReady(YELLOW_BRAKE)) return YELLOW_BRAKE;
   const yaw = routeYaw(viewCam);
   if (yaw < -0.2 && imageReady(YELLOW_LEFT)) return YELLOW_LEFT;
@@ -1037,6 +1039,36 @@ function playerPlanImage(sim) {
   if (yaw < -0.08 && imageReady(YELLOW_SMALL_LEFT)) return YELLOW_SMALL_LEFT;
   if (yaw > 0.08 && imageReady(YELLOW_SMALL_RIGHT)) return YELLOW_SMALL_RIGHT;
   return YELLOW_STRAIGHT;
+}
+
+/** Light and heavy still need owner drawings. These marks are not painted into the car file. */
+function drawDamagePlaceholder(ctx, sim, xm) {
+  const stage = damageStage(sim.body, sim.stats?.collisions);
+  if (stage !== 1 && stage !== 3) return;
+  const nose = viewProject(CFG.carHalfFront * 0.72, xm);
+  ctx.save();
+  ctx.translate(nose.x, nose.y);
+  ctx.lineCap = "round";
+  ctx.strokeStyle = P.INK;
+  ctx.lineWidth = 3;
+  if (stage === 1) {
+    ctx.beginPath();
+    ctx.moveTo(-10, -4);
+    ctx.lineTo(4, 6);
+    ctx.moveTo(-4, -8);
+    ctx.lineTo(8, -1);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "rgba(28,22,30,0.72)";
+    ctx.beginPath();
+    ctx.moveTo(-16, 2);
+    ctx.lineTo(-2, -14);
+    ctx.lineTo(12, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawCar(ctx, sim, boil, pose, legacy = false) {
@@ -1060,6 +1092,7 @@ function drawCar(ctx, sim, boil, pose, legacy = false) {
         ctx.restore();
       }
     }
+    drawDamagePlaceholder(ctx, sim, xm);
     return;
   }
   const bumper = viewProject(CFG.carHalfFront, xm);

@@ -522,6 +522,11 @@ window.__anton = {
     if (!debug || !session) return;
     session.sim.brakeInput = Math.max(0, Math.min(1, Number(value) || 0));
   },
+  debugHurt(body, hits) {
+    if (!debug || !session) return;
+    session.sim.body = Math.max(0, Math.min(100, Number(body) || 0));
+    session.sim.stats.collisions = Math.max(0, Number(hits) || 0);
+  },
   debugSeek(metres) {
     if (!debug || !session) return;
     const s = Math.max(0, Number(metres) || 0);
