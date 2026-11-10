@@ -10,7 +10,8 @@ import { CFG } from "../js/config.js";
 import { drainFrame } from "../js/clock.js";
 import { backingScale, contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
-import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
+import { FUTURE_CARS, FUTURE_ENABLED, STUDENTS } from "../js/future.js";
+import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
 import { PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
 import {
   CAR_BODY_H,
@@ -814,6 +815,19 @@ test("the phone buffer never exceeds two device pixels, and one when motion is r
   assert.ok(phone <= 2);
   assert.equal(backingScale(693, 390, 3, true), 1);
   assert.ok(backingScale(1280, 720, 1, false) <= 1);
+});
+
+test("future students and trips stay hidden until art is approved", () => {
+  assert.equal(FUTURE_ENABLED, false);
+  assert.deepEqual(futureMissions(), []);
+  assert.equal(LESSONS.some((mission) => mission.id === "mother" || mission.id === "exam"), false);
+  assert.equal(STUDENTS.gennady.ignoresMarkings, true);
+  assert.equal(STUDENTS.gennady.kioskStop, true);
+  assert.equal(STUDENTS.asya.cameraPhone, true);
+  assert.ok(STUDENTS.profi.cruiseMul > STUDENTS.anton.cruiseMul);
+  assert.ok(STUDENTS.profi.patienceMul > 1);
+  assert.notEqual(FUTURE_CARS.mint.brakeMul, FUTURE_CARS.blue.brakeMul);
+  assert.ok(Math.abs(FUTURE_CARS.yellow.brakeMul - 1) < 1e-9);
 });
 
 test("unapproved character drafts are not referenced by the game", () => {

@@ -8,6 +8,7 @@
  * are not on screen as a single unavoidable stack.
  */
 
+import { playableFutureTrips } from "./future.js";
 import { mulberry32 } from "./rng.js";
 
 function H(partial) {
@@ -192,6 +193,11 @@ export function buildInfinite(seed = 1) {
     roll: 11,
     hazards,
   };
+}
+
+/** Hidden until FUTURE_ENABLED. The garage reads LESSONS only. */
+export function futureMissions() {
+  return playableFutureTrips();
 }
 
 export function getMission(id, seed = 1) {
