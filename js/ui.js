@@ -432,22 +432,24 @@ function nextLessonOpen(state) {
   return state.save.unlocked >= idx + 2;
 }
 
+function momentButton(ctx, sink, state) {
+  if (!state.replayReady) return;
+  drawButton(ctx, sink, {
+    id: "moment",
+    x: 1248,
+    y: 108,
+    w: 320,
+    h: 84,
+    text: "МОМЕНТ",
+    kind: "teal",
+    pointer: state.pointer,
+    size: 26,
+  });
+}
+
 export function drawResultScreen(ctx, state, sink) {
   const sim = state.session.sim;
   const graded = state.session.result;
-  if (state.replayReady) {
-    drawButton(ctx, sink, {
-      id: "moment",
-      x: 1248,
-      y: 108,
-      w: 320,
-      h: 84,
-      text: "МОМЕНТ",
-      kind: "teal",
-      pointer: state.pointer,
-      size: 26,
-    });
-  }
   const success = graded.success === true && !sim.infinite;
   ctx.fillStyle = P.PAPER;
   ctx.fillRect(0, 0, 1600, 900);
@@ -512,6 +514,7 @@ export function drawResultScreen(ctx, state, sink) {
       pointer: state.pointer,
       size: 32,
     });
+    momentButton(ctx, sink, state);
     return;
   }
   const again = place(card, 174, 713, 517, 135);
@@ -538,6 +541,7 @@ export function drawResultScreen(ctx, state, sink) {
     pointer: state.pointer,
     size: 32,
   });
+  momentButton(ctx, sink, state);
 }
 
 /** Math degrees: 0 points right, 90 points up, 180 points left. Patience 0 is the green end. */
