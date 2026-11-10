@@ -1,0 +1,33 @@
+{
+ "fps": 8,
+ "poses": [
+  "drive",
+  "phone",
+  "drowsy",
+  "asleep",
+  "wake",
+  "stow",
+  "earnest",
+  "preen",
+  "annoyed",
+  "angry",
+  "furious",
+  "ashamed",
+  "proud",
+  "belted",
+  "focused"
+ ],
+ "clips": {
+  "drive-to-drowsy": 12,
+  "drowsy-to-asleep": 12,
+  "asleep-to-wake": 12,
+  "wake-to-drive": 12
+ },
+ "durations": {
+  "drive-to-drowsy": 2.0,
+  "drowsy-to-asleep": 3.1667,
+  "asleep-to-wake": 2.5,
+  "wake-to-drive": 1.6667
+ },
+ "note": "Stills are approved panels composited on the stationary V3 backdrop. Sleep clips are 12 keyframes from the regenerated V3 sequence, crossfaded in the game. Phone is a still."
+}

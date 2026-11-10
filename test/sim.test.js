@@ -59,6 +59,7 @@ import {
   resumeSession,
   sessionStep,
 } from "../js/session.js";
+import { cabinPoseId } from "../js/cabin.js";
 import { applyVictory, freshSave, noteInfiniteDistance, parseSave } from "../js/storage.js";
 
 const dt = CFG.dt;
@@ -745,6 +746,35 @@ test("stars use 80/60/35 and the face is not angry while calm", () => {
   calm.patience = 10;
   calm.beltT = 0.2;
   assert.equal(expressionId(calm), "belted");
+});
+
+test("cabin stills follow the ride, and the phone pose stays a still name", () => {
+  const sim = createSim(getMission("lesson1"), 11);
+  assert.equal(cabinPoseId(sim, "countdown"), "belted");
+  sim.t = 0.2;
+  assert.equal(cabinPoseId(sim, "drive"), "belted");
+  sim.t = 3;
+  assert.equal(cabinPoseId(sim, "drive"), "drive");
+  sim.patience = 55;
+  assert.equal(cabinPoseId(sim, "drive"), "annoyed");
+  sim.patience = 80;
+  assert.equal(cabinPoseId(sim, "drive"), "angry");
+  sim.outburstT = 1;
+  assert.equal(cabinPoseId(sim, "drive"), "furious");
+  sim.outburstT = 0;
+  sim.patience = 10;
+  sim.attention = "phone";
+  assert.equal(cabinPoseId(sim, "drive"), "phone");
+  sim.attention = "drowsy";
+  assert.equal(cabinPoseId(sim, "drive"), "drowsy");
+  sim.attention = "asleep";
+  assert.equal(cabinPoseId(sim, "drive"), "asleep");
+  sim.attention = "road";
+  sim.success = true;
+  assert.equal(cabinPoseId(sim, "result"), "proud");
+  sim.success = false;
+  assert.equal(cabinPoseId(sim, "result"), "ashamed");
+  assert.equal(cabinPoseId(sim, "drive", "preen"), "preen");
 });
 
 test("the straight road stays forward and does not fold between frames", () => {

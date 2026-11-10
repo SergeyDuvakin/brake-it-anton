@@ -33,7 +33,7 @@ jobs:
         run: |
           set -eu
           rm -rf .pages-dist
-          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/assets/cars .pages-dist/assets/world .pages-dist/assets/ui .pages-dist/icons
+          mkdir -p .pages-dist/js .pages-dist/assets/fonts .pages-dist/assets/cars .pages-dist/assets/world .pages-dist/assets/ui .pages-dist/assets/cabin .pages-dist/icons
           cp index.html .pages-dist/index.html
           cp style.css .pages-dist/style.css
           cp manifest.webmanifest .pages-dist/manifest.webmanifest
@@ -42,6 +42,7 @@ jobs:
           cp icons/icon-192.png .pages-dist/icons/icon-192.png
           cp icons/icon-512.png .pages-dist/icons/icon-512.png
           cp js/anchors.js .pages-dist/js/anchors.js
+          cp js/cabin.js .pages-dist/js/cabin.js
           cp js/audio.js .pages-dist/js/audio.js
           cp js/cast.js .pages-dist/js/cast.js
           cp js/clock.js .pages-dist/js/clock.js
@@ -69,6 +70,7 @@ jobs:
           cp assets/cars/yellow-car-collision.png .pages-dist/assets/cars/yellow-car-collision.png
           cp assets/cars/coral-wagon-straight.png .pages-dist/assets/cars/coral-wagon-straight.png
           cp assets/world/*.png .pages-dist/assets/world/
+          cp -a assets/cabin/. .pages-dist/assets/cabin/
           test -f .pages-dist/index.html
           test -f .pages-dist/style.css
           test -f .pages-dist/js/game.js
@@ -82,6 +84,9 @@ jobs:
           test -f .pages-dist/js/ui.js
           test -f .pages-dist/assets/ui/gauge-face-empty.png
           test -f .pages-dist/assets/ui/pedal-lever.png
+          test -f .pages-dist/js/cabin.js
+          test -f .pages-dist/assets/cabin/manifest.json
+          test -f .pages-dist/assets/cabin/poses/drive.jpg
           test -f .pages-dist/assets/ui/pedal-mount.png
           test -f .pages-dist/assets/ui/card-frame.png
           test -f .pages-dist/assets/world/49_aquarium-calm.png

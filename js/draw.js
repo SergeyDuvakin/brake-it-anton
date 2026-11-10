@@ -4,7 +4,7 @@
  */
 
 import { CFG, PALETTE as P } from "./config.js";
-import { expressionId } from "./physics.js";
+import { paintCabin } from "./cabin.js";
 import {
   drawDriveChrome,
   drawGarageScreen,
@@ -241,14 +241,6 @@ function hash(n) {
   return (x >>> 0) / 4294967296;
 }
 
-function panel(ctx, x, y, w, h, fill) {
-  roundRect(ctx, x, y, w, h, 18);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ink(ctx, 8);
-  ctx.stroke();
-}
-
 export function render(ctx, state) {
   spots = [];
   labels = [];
@@ -274,20 +266,9 @@ export function render(ctx, state) {
 function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
   drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
-  panel(ctx, 1056, 24, 520, 852, P.CABIN);
-  ctx.fillStyle = P.GLASS;
-  ctx.fillRect(1056, 24, 520, 168);
-  ink(ctx, 6);
-  ctx.beginPath();
-  ctx.moveTo(1056, 192);
-  ctx.lineTo(1576, 192);
-  ctx.stroke();
+  paintCabin(ctx, state.preview, { ...state, pose: "preen", session: { phase: "drive", sim: state.preview } });
   paintCenter(ctx, "Brake It, Anton", 1076, 40, 480, 78, 34, P.INK, true, true);
   paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 1076, 122, 480, 40, 20, P.INK, false, true);
-  ctx.save();
-  ctx.translate(0, 28);
-  drawAnton(ctx, "preen", boil, 0, state.preview);
-  ctx.restore();
   button(ctx, "start", 1092, 640, 448, 112, "В урок", "primary");
   button(ctx, "garage", 1092, 768, 448, 76, "Гараж", "paper");
 }
@@ -299,8 +280,6 @@ function drawPlay(ctx, state, sink) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
   const motion = !state.save.settings.reducedMotion;
   const mag = state.save.settings.shake && motion ? Math.min(sim.shake, 5) : 0;
-  const held = session.phase === "drive" && (session.brakeHeld || session.keysDown.has("Space"));
-  const visual = held ? Math.max(sim.brakeInput, 0.2) : 0;
   const driving = session.phase === "drive";
   const brake = driving ? sim.brakeInput : 0;
 
@@ -308,7 +287,7 @@ function drawPlay(ctx, state, sink) {
   if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
   drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
-  drawCabin(ctx, sim, state, boil, visual);
+  drawCabin(ctx, sim, state);
   const showHud = driving || session.phase === "countdown";
   const chrome = showHud ? drawDriveChrome(ctx, state, sink, brake) : null;
   if (driving) {
@@ -1149,26 +1128,12 @@ function drawCargoIcon(ctx, x, y, type, sc, sim) {
   ctx.restore();
 }
 
-function drawCabin(ctx, sim, state, boil, visual) {
-  panel(ctx, 1056, 24, 520, 852, P.CABIN);
+function drawCabin(ctx, sim, state) {
+  paintCabin(ctx, sim, state);
   ctx.save();
   ctx.beginPath();
   ctx.rect(1056, 24, 520, 852);
   ctx.clip();
-  ctx.fillStyle = P.GLASS;
-  ctx.fillRect(1056, 24, 520, 150);
-  ink(ctx, 6);
-  ctx.beginPath();
-  ctx.moveTo(1056, 174);
-  ctx.lineTo(1576, 174);
-  ctx.stroke();
-  ctx.fillStyle = "#E08A3C";
-  roundRect(ctx, 1140, 470, 360, 150, 24);
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  const exp = state.pose || expressionId(sim);
-  drawAnton(ctx, exp, boil, visual, sim);
   if (sim.bubble && sim.bubbleT > 0) {
     roundRect(ctx, 1088, 186, 250, 48, 12);
     ctx.fillStyle = P.PAPER;
@@ -1179,443 +1144,3 @@ function drawCabin(ctx, sim, state, boil, visual) {
   }
   ctx.restore();
 }
-
-function drawLimb(ctx, x0, y0, cx, cy, x1, y1) {
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 16;
-  ctx.beginPath();
-  ctx.moveTo(x0, y0);
-  ctx.quadraticCurveTo(cx, cy, x1, y1);
-  ctx.stroke();
-  ctx.strokeStyle = P.SKIN;
-  ctx.lineWidth = 8;
-  ctx.stroke();
-}
-
-/** A point `dist` pixels from `from` toward `to`. */
-function toward(from, to, dist) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const len = Math.hypot(dx, dy) || 1;
-  return { x: from.x + (dx / len) * dist, y: from.y + (dy / len) * dist };
-}
-
-const STEER_Y = 200;
-const STEER_RX = 76;
-const STEER_RY = 34;
-
-function gripPoint(side, angle) {
-  const base = side < 0 ? Math.PI - 0.5 : 0.5;
-  const a = base + angle;
-  return {
-    x: Math.cos(a) * (STEER_RX - 6),
-    y: STEER_Y + Math.sin(a) * (STEER_RY - 3),
-    a,
-  };
-}
-
-function drawSteeringWheel(ctx, angle) {
-  ctx.save();
-  ctx.translate(0, STEER_Y);
-  ctx.rotate(angle);
-  ctx.strokeStyle = P.INK;
-  ctx.lineCap = "round";
-  ctx.lineWidth = 8;
-  ctx.beginPath();
-  ctx.moveTo(-44, 7);
-  ctx.lineTo(-12, 1);
-  ctx.moveTo(44, 7);
-  ctx.lineTo(12, 1);
-  ctx.moveTo(0, 22);
-  ctx.lineTo(0, 10);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(0, 0, STEER_RX, STEER_RY, 0, 0, Math.PI * 2);
-  ctx.lineWidth = 16;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(0, 0, STEER_RX - 20, STEER_RY - 11, 0, 0, Math.PI * 2);
-  ctx.strokeStyle = P.PAPER;
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(0, 2, 11, 0, Math.PI * 2);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-  ctx.strokeStyle = P.PAPER;
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawGripHand(ctx, point, side) {
-  const dir = side < 0 ? -1 : 1;
-  ctx.save();
-  ctx.translate(point.x, point.y);
-  ctx.fillStyle = P.SKIN;
-  for (const [x, y, rad] of [[dir * 9, -10, 5.5], [dir * 15, -1, 5.5], [dir * 11, 8, 5]]) {
-    ctx.beginPath();
-    ctx.arc(x, y, rad, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
-  }
-  ctx.beginPath();
-  ctx.arc(0, 0, 13, 0, Math.PI * 2);
-  ctx.fill();
-  ink(ctx, 3);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.ellipse(-dir * 8, 8, 6, 4.5, dir * 0.5, 0, Math.PI * 2);
-  ctx.fill();
-  ink(ctx, 3);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawAnton(ctx, exp, boil, lean, sim) {
-  const shift = poseShift(exp);
-  ctx.save();
-  ctx.translate(1316, 268 + shift.y + lean * 10);
-  ctx.rotate(shift.rot);
-
-  roundRect(ctx, -100, 70, 200, 150, 24);
-  ctx.fillStyle = P.TEAL;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = shift.belt;
-  ctx.beginPath();
-  ctx.moveTo(-78, 88);
-  ctx.lineTo(30, 150 + (exp === "belted" ? 10 : 0));
-  ctx.stroke();
-
-  const wheel = Math.max(-0.35, Math.min(0.35, ((sim.targetX || 1.8) - (sim.x || 1.8)) * 0.45));
-  const leftGrip = gripPoint(-1, wheel);
-  const rightGrip = gripPoint(1, wheel);
-  const leftShoulder = { x: -102, y: 128 };
-  const rightShoulder = { x: 102, y: 128 };
-  const stowU = exp === "stow" ? Math.max(0, Math.min(1, (sim.stowT || 0) / 0.72)) : 0;
-  const onWheel = !shift.phoneHand && !shift.limp;
-  if (onWheel && !shift.hairHand) {
-    const leftWrist = toward(leftGrip, leftShoulder, 14);
-    const rightWrist = toward(rightGrip, rightShoulder, 14);
-    drawLimb(ctx, leftShoulder.x, leftShoulder.y, -124, 168, leftWrist.x, leftWrist.y);
-    drawLimb(ctx, rightShoulder.x, rightShoulder.y, 124, 168, rightWrist.x, rightWrist.y);
-  } else if (onWheel && shift.hairHand) {
-    const rightWrist = toward(rightGrip, rightShoulder, 14);
-    drawLimb(ctx, rightShoulder.x, rightShoulder.y, 124, 168, rightWrist.x, rightWrist.y);
-  }
-  drawSteeringWheel(ctx, wheel);
-  if (onWheel && !shift.hairHand) {
-    drawGripHand(ctx, leftGrip, -1);
-    drawGripHand(ctx, rightGrip, 1);
-  } else if (onWheel && shift.hairHand) {
-    drawGripHand(ctx, rightGrip, 1);
-  }
-
-  if (shift.hairHand) {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 8;
-    ctx.beginPath();
-    ctx.moveTo(-70, 120);
-    ctx.quadraticCurveTo(-90, 20, -20, -70);
-    ctx.stroke();
-    ctx.fillStyle = P.SKIN;
-    ctx.beginPath();
-    ctx.arc(-18, -78, 14, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 3);
-    ctx.stroke();
-  }
-
-  if (shift.limp) {
-    const leftHang = { x: -96, y: 258 };
-    const rightHang = { x: 100, y: 262 };
-    const leftWrist = toward(leftHang, { x: -48, y: 108 }, 14);
-    const rightWrist = toward(rightHang, { x: 48, y: 112 }, 14);
-    drawLimb(ctx, -48, 108, -108, 196, leftWrist.x, leftWrist.y);
-    drawLimb(ctx, 48, 112, 112, 200, rightWrist.x, rightWrist.y);
-    drawGripHand(ctx, leftHang, -1);
-    drawGripHand(ctx, rightHang, 1);
-  }
-  if (shift.phoneHand) {
-    const u = stowU;
-    const left = {
-      x: -96 + (leftGrip.x + 96) * u,
-      y: 252 + (leftGrip.y - 252) * u,
-    };
-    const phone = {
-      x: 50 + u * 34,
-      y: (shift.headDrop || 0) + 48 + u * u * 90,
-    };
-    const right = {
-      x: phone.x + (rightGrip.x - phone.x) * u,
-      y: phone.y + (rightGrip.y - phone.y) * u,
-    };
-    const leftWrist = toward(left, { x: -62, y: 118 }, 14);
-    const rightWrist = toward(right, { x: 48, y: 116 }, 14);
-    drawLimb(ctx, -62, 118, -108, 180, leftWrist.x, leftWrist.y);
-    drawLimb(ctx, 48, 116, 96, 70 + u * 30, rightWrist.x, rightWrist.y);
-    drawGripHand(ctx, left, -1);
-    if (u > 0.72) drawGripHand(ctx, rightGrip, 1);
-  }
-
-  ctx.save();
-  ctx.translate(0, shift.headDrop || 0);
-  ctx.beginPath();
-  ctx.ellipse(shift.head, 0, 112, 100, 0, 0, Math.PI * 2);
-  ctx.fillStyle = P.SKIN;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-  ctx.fillStyle = P.SKIN;
-  // Each ear is its own path. Two ellipses in one path draw a straight
-  // line from the end of the first to the start of the second.
-  for (const [x, y, rx, ry] of [[-104, 18, 16, 22], [104, 26, 14, 18]]) {
-    ctx.beginPath();
-    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ink(ctx, 4);
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  [-36, -12, 14, 40].forEach((hx, i) => {
-    const lift = exp === "furious" || exp === "preen" ? 14 : exp === "proud" ? 8 : 0;
-    ctx.moveTo(hx + shift.head, -86);
-    ctx.quadraticCurveTo(hx + (i - 1.5) * 8, -132 - lift - (boil && i % 2 ? 6 : 0), hx + 10, -100);
-  });
-  ctx.stroke();
-
-  const look = lookFor(exp);
-  const wide = exp === "stow" || exp === "earnest" || exp === "wake";
-  const heavy = exp === "drowsy";
-  const shut = exp === "asleep";
-  eye(ctx, -32 + shift.head, -10, heavy ? 26 : wide ? 32 : exp === "belted" ? 30 : 26, heavy ? 8 : wide ? 28 : exp === "belted" ? 26 : 22, wide ? 9 : 8, look.left, shut);
-  eye(ctx, 30 + shift.head, 8, heavy ? 16 : wide ? 20 : 16, heavy ? 5 : wide ? 18 : 14, wide ? 6 : 5, look.right, shut);
-  brows(ctx, exp, shift.head);
-  mouth(ctx, exp, shift.head);
-
-  if (exp === "furious") {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(-78, -70);
-    ctx.quadraticCurveTo(-110, -110, -60, -120);
-    ctx.moveTo(80, -64);
-    ctx.quadraticCurveTo(112, -104, 64, -116);
-    ctx.stroke();
-  }
-  if (shift.notes) {
-    ctx.strokeStyle = P.INK;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(92, -40, 8, 0, Math.PI * 1.4);
-    ctx.moveTo(100, -40);
-    ctx.lineTo(100, -62);
-    ctx.stroke();
-  }
-  ctx.restore();
-  if (shift.phoneHand) {
-    const u = stowU;
-    const phone = {
-      x: 50 + u * 34,
-      y: (shift.headDrop || 0) + 48 + u * u * 90,
-    };
-    const right = {
-      x: phone.x + (rightGrip.x - phone.x) * u,
-      y: phone.y + (rightGrip.y - phone.y) * u,
-    };
-    if (u <= 0.72) drawGripHand(ctx, right, 1);
-    drawHandset(ctx, 50 + u * 34, (shift.headDrop || 0) + 18 + u * u * 128, -0.4 + u * 2.2);
-  }
-  ctx.restore();
-}
-
-function drawHandset(ctx, x, y, rot) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(rot);
-  roundRect(ctx, -28, -46, 56, 92, 8);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-  ink(ctx, 5);
-  ctx.stroke();
-  roundRect(ctx, -20, -34, 40, 64, 4);
-  ctx.fillStyle = P.GLASS;
-  ctx.fill();
-  ctx.restore();
-}
-
-function poseShift(exp) {
-  if (exp === "phone") return { y: 16, rot: 0.12, hairHand: false, phoneHand: true, belt: 5, head: 2, notes: false, headDrop: 30 };
-  if (exp === "drowsy") return { y: 20, rot: 0.18, hairHand: false, slack: true, belt: 5, head: 8, notes: false, headDrop: 16 };
-  if (exp === "asleep") return { y: 34, rot: 0.3, hairHand: false, limp: true, belt: 4, head: 12, notes: false, headDrop: 32 };
-  if (exp === "wake") return { y: -14, rot: -0.16, hairHand: false, grip: true, belt: 7, head: -6, notes: false, headDrop: 0 };
-  if (exp === "stow") return { y: 0, rot: -0.04, hairHand: false, phoneHand: true, belt: 6, head: -2, notes: false, headDrop: 6 };
-  if (exp === "earnest") return { y: -18, rot: -0.07, hairHand: false, grip: true, belt: 6, head: 0, notes: false, headDrop: 0 };
-  if (exp === "preen") return { y: -10, rot: -0.06, hairHand: true, belt: 5, head: 6, notes: true };
-  if (exp === "focused") return { y: 12, rot: 0.05, hairHand: false, belt: 5, head: 0, notes: false };
-  if (exp === "belted") return { y: 26, rot: 0.1, hairHand: false, belt: 10, head: -4, notes: false };
-  if (exp === "angry" || exp === "furious") return { y: 2, rot: 0, hairHand: false, belt: 6, head: 0, notes: false };
-  if (exp === "ashamed") return { y: 8, rot: 0.12, hairHand: false, belt: 5, head: -8, notes: false };
-  if (exp === "proud") return { y: -12, rot: -0.04, hairHand: false, belt: 5, head: 4, notes: false };
-  if (exp === "annoyed") return { y: 0, rot: 0.04, hairHand: false, belt: 5, head: 2, notes: false };
-  return { y: 0, rot: -0.02, hairHand: false, belt: 5, head: 0, notes: false };
-}
-
-function lookFor(exp) {
-  if (exp === "phone") return { left: { x: 0, y: 9 }, right: { x: 0, y: 6 } };
-  if (exp === "drowsy") return { left: { x: 0, y: 4 }, right: { x: 0, y: 3 } };
-  if (exp === "asleep") return { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } };
-  if (exp === "wake") return { left: { x: 0, y: -5 }, right: { x: 0, y: -3 } };
-  if (exp === "stow") return { left: { x: -1, y: -4 }, right: { x: 0, y: -3 } };
-  if (exp === "earnest") return { left: { x: 1, y: 3 }, right: { x: 0, y: 2 } };
-  if (exp === "focused") return { left: { x: 1, y: 7 }, right: { x: 1, y: 4 } };
-  if (exp === "preen") return { left: { x: -2, y: -6 }, right: { x: 0, y: -4 } };
-  if (exp === "belted") return { left: { x: 0, y: -8 }, right: { x: 1, y: -5 } };
-  if (exp === "ashamed") return { left: { x: -7, y: 4 }, right: { x: -4, y: 2 } };
-  if (exp === "angry" || exp === "furious") return { left: { x: 4, y: 2 }, right: { x: 2, y: 1 } };
-  if (exp === "proud") return { left: { x: 2, y: -3 }, right: { x: 0, y: -1 } };
-  return { left: { x: 3, y: 1 }, right: { x: 0, y: 2 } };
-}
-
-function eye(ctx, x, y, rx, ry, pupil, look, shut) {
-  ctx.beginPath();
-  ctx.ellipse(x, y, rx, shut ? 4 : ry, 0, 0, Math.PI * 2);
-  ctx.fillStyle = P.WHITE;
-  ctx.fill();
-  ink(ctx, 4);
-  ctx.stroke();
-  if (shut) return;
-  ctx.beginPath();
-  ctx.arc(x + look.x, y + look.y, pupil, 0, Math.PI * 2);
-  ctx.fillStyle = P.INK;
-  ctx.fill();
-}
-
-function brows(ctx, exp, hx) {
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 6;
-  ctx.beginPath();
-  const x = hx || 0;
-  if (exp === "angry" || exp === "furious") {
-    ctx.moveTo(-60 + x, -42);
-    ctx.lineTo(-8 + x, -28);
-    ctx.moveTo(12 + x, -20);
-    ctx.lineTo(52 + x, -38);
-  } else if (exp === "preen") {
-    ctx.moveTo(-58 + x, -48);
-    ctx.quadraticCurveTo(-30 + x, -60, -8 + x, -46);
-    ctx.moveTo(14 + x, -24);
-    ctx.quadraticCurveTo(32 + x, -34, 50 + x, -20);
-  } else if (exp === "drowsy" || exp === "asleep") {
-    ctx.moveTo(-58 + x, -28);
-    ctx.lineTo(-8 + x, -34);
-    ctx.moveTo(14 + x, -10);
-    ctx.lineTo(50 + x, -16);
-  } else if (exp === "wake") {
-    ctx.moveTo(-62 + x, -58);
-    ctx.lineTo(-8 + x, -36);
-    ctx.moveTo(12 + x, -30);
-    ctx.lineTo(54 + x, -48);
-  } else if (exp === "phone") {
-    ctx.moveTo(-58 + x, -30);
-    ctx.lineTo(-8 + x, -36);
-    ctx.moveTo(14 + x, -12);
-    ctx.lineTo(50 + x, -16);
-  } else if (exp === "stow") {
-    ctx.moveTo(-60 + x, -56);
-    ctx.lineTo(-8 + x, -40);
-    ctx.moveTo(12 + x, -34);
-    ctx.lineTo(52 + x, -46);
-  } else if (exp === "earnest") {
-    ctx.moveTo(-58 + x, -34);
-    ctx.lineTo(-8 + x, -48);
-    ctx.moveTo(14 + x, -22);
-    ctx.lineTo(52 + x, -34);
-  } else if (exp === "focused") {
-    ctx.moveTo(-58 + x, -36);
-    ctx.lineTo(-8 + x, -44);
-    ctx.moveTo(14 + x, -16);
-    ctx.lineTo(50 + x, -24);
-  } else if (exp === "belted") {
-    ctx.moveTo(-58 + x, -54);
-    ctx.lineTo(-8 + x, -42);
-    ctx.moveTo(12 + x, -30);
-    ctx.lineTo(50 + x, -40);
-  } else if (exp === "annoyed") {
-    ctx.moveTo(-58 + x, -34);
-    ctx.lineTo(-10 + x, -46);
-    ctx.moveTo(12 + x, -16);
-    ctx.lineTo(50 + x, -28);
-  } else {
-    ctx.moveTo(-58 + x, -40);
-    ctx.quadraticCurveTo(-32 + x, -54, -8 + x, -40);
-    ctx.moveTo(14 + x, -18);
-    ctx.quadraticCurveTo(32 + x, -28, 52 + x, -16);
-  }
-  ctx.stroke();
-}
-
-function mouth(ctx, exp, hx) {
-  const x = hx || 0;
-  ctx.strokeStyle = P.INK;
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  if (exp === "angry" || exp === "furious") {
-    ctx.moveTo(-22 + x, 46);
-    ctx.lineTo(28 + x, 46);
-    ctx.lineTo(18 + x, 66);
-    ctx.lineTo(-14 + x, 66);
-    ctx.closePath();
-    ctx.fillStyle = "#7A3030";
-    ctx.fill();
-    ctx.stroke();
-    return;
-  }
-  if (exp === "drowsy") {
-    ctx.moveTo(-16 + x, 56);
-    ctx.quadraticCurveTo(4 + x, 62, 22 + x, 56);
-  } else if (exp === "asleep") {
-    ctx.ellipse(4 + x, 60, 8, 10, 0, 0, Math.PI * 2);
-  } else if (exp === "wake") {
-    ctx.arc(2 + x, 50, 14, 0, Math.PI * 2);
-  } else if (exp === "phone") {
-    ctx.ellipse(4 + x, 58, 10, 7, 0, 0, Math.PI * 2);
-  } else if (exp === "stow") {
-    ctx.arc(2 + x, 54, 12, 0, Math.PI * 2);
-  } else if (exp === "earnest") {
-    ctx.moveTo(-22 + x, 50);
-    ctx.quadraticCurveTo(4 + x, 66, 26 + x, 48);
-  } else if (exp === "annoyed") {
-    ctx.moveTo(-18 + x, 50);
-    ctx.quadraticCurveTo(x, 42, 24 + x, 56);
-  } else if (exp === "focused") {
-    ctx.moveTo(-16 + x, 52);
-    ctx.lineTo(20 + x, 52);
-  } else if (exp === "belted") {
-    ctx.arc(x, 56, 12, 0, Math.PI * 2);
-  } else if (exp === "preen") {
-    ctx.moveTo(-10 + x, 48);
-    ctx.quadraticCurveTo(8 + x, 40, 18 + x, 50);
-  } else if (exp === "proud") {
-    ctx.moveTo(-28 + x, 44);
-    ctx.quadraticCurveTo(4 + x, 78, 32 + x, 40);
-  } else if (exp === "ashamed") {
-    ctx.moveTo(-14 + x, 58);
-    ctx.quadraticCurveTo(4 + x, 48, 20 + x, 56);
-  } else {
-    ctx.moveTo(-24 + x, 48);
-    ctx.quadraticCurveTo(2 + x, 70, 28 + x, 46);
-  }
-  ctx.stroke();
-}
-

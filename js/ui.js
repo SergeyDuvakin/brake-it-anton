@@ -14,6 +14,7 @@
  */
 
 import { PALETTE as P } from "./config.js";
+import { cabinPoseId, drawCabinMedal } from "./cabin.js";
 import { moodGlyph, repairInvoice } from "./physics.js";
 
 const CARD_SRC = { x: 86, y: 86, w: 694, h: 973 };
@@ -405,8 +406,11 @@ export function drawResultScreen(ctx, state, sink) {
   paint(ctx, sink.labels, heading, title.x, title.y, title.w, title.h, success ? 48 : 40, INK, true);
 
   const medal = place(card, 286, 278, 294, 250);
-  const face = success ? IMG.success : IMG.failure;
-  if (ready(face)) ctx.drawImage(face, medal.x, medal.y + 10, medal.w, medal.h);
+  const pose = cabinPoseId(sim, "result");
+  if (!drawCabinMedal(ctx, pose, medal)) {
+    const face = success ? IMG.success : IMG.failure;
+    if (ready(face)) ctx.drawImage(face, medal.x, medal.y + 10, medal.w, medal.h);
+  }
 
   if (sim.infinite) {
     const bill = repairInvoice(sim.stats, sim.t);

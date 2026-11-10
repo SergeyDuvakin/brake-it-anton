@@ -6,6 +6,7 @@
 import { createAudio } from "./audio.js";
 import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
+import { whenCabinReady, cabinReady } from "./cabin.js";
 import { bumperFootGap, render, whenCarsReady } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, getMission } from "./missions.js";
@@ -412,6 +413,7 @@ syncOrient();
 fitCanvas();
 
 window.__anton = {
+  cabinReady,
   getState() {
     return {
       screen,
@@ -435,6 +437,7 @@ window.__anton = {
       hazard: hazardState(),
       stopGap: gapState(),
       pose: session ? expressionId(session.sim) : expressionId(preview),
+      cabinReady: cabinReady(),
       attention: session?.sim.attention ?? null,
       pokes: session?.sim.stats.attentionPokes ?? 0,
       brakePointer: session?.pointerId ?? null,
@@ -563,6 +566,11 @@ async function boot() {
     await whenCarsReady();
   } catch {
     /* A missing picture falls back to flat shapes. The ride still starts. */
+  }
+  try {
+    await whenCabinReady();
+  } catch {
+    /* The cabin stays a flat panel until the approved stills load. */
   }
   requestAnimationFrame(frame);
 }
