@@ -78,6 +78,8 @@ jobs:
           cp assets/cars/yellow-car-small-left.png .pages-dist/assets/cars/yellow-car-small-left.png
           cp assets/cars/yellow-car-small-right.png .pages-dist/assets/cars/yellow-car-small-right.png
           cp assets/cars/coral-wagon-straight.png .pages-dist/assets/cars/coral-wagon-straight.png
+          cp assets/cars/mint-car.png .pages-dist/assets/cars/mint-car.png
+          cp assets/cars/blue-car.png .pages-dist/assets/cars/blue-car.png
           cp assets/world/*.png .pages-dist/assets/world/
           cp -a assets/cabin/. .pages-dist/assets/cabin/
           test -f .pages-dist/index.html

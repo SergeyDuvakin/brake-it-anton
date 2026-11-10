@@ -256,7 +256,7 @@ function lessonOpen(state, mission) {
   return mission.lesson <= state.save.unlocked;
 }
 
-function sideButtons(ctx, sink, state) {
+function sideButtons(ctx, sink, state, startY = 96) {
   const s = state.save.settings;
   const on = (flag) => (flag ? "вкл" : "выкл");
   const rows = [
@@ -272,7 +272,7 @@ function sideButtons(ctx, sink, state) {
     drawButton(ctx, sink, {
       id,
       x: 1248,
-      y: 96 + index * 80,
+      y: startY + index * 78,
       w: 320,
       h: 72,
       text,
@@ -361,12 +361,28 @@ export function drawGarageScreen(ctx, state, sink) {
     pointer: state.pointer,
     size: 32,
   });
-  sideButtons(ctx, sink, state);
+  const trips = state.futureTrips || [];
+  trips.forEach((trip, index) => {
+    const selected = state.selected === trip.id;
+    drawButton(ctx, sink, {
+      id: `mission-${trip.id}`,
+      x: 1248,
+      y: 28 + index * 78,
+      w: 320,
+      h: 72,
+      text: trip.title,
+      kind: selected ? "orange" : "cream",
+      selected,
+      pointer: state.pointer,
+      size: 20,
+    });
+  });
+  sideButtons(ctx, sink, state, 28 + trips.length * 78 + 16);
   if (state.save.infinite) {
     drawButton(ctx, sink, {
       id: "mission-infinite",
-      x: 1264,
-      y: 720,
+      x: 36,
+      y: 760,
       w: 300,
       h: 88,
       text: "ПОСЛЕДНИЙ",
@@ -792,8 +808,8 @@ export function drawDriveChrome(ctx, state, sink, brake) {
 
   const chip = { x: 536, y: 18, w: 360, h: 78 };
   nineSlice(ctx, IMG.cream, chip.x, chip.y, chip.w, chip.h, 34, FILL.cream);
-  const lesson = mission.infinite ? "∞" : String(mission.lesson).padStart(2, "0");
-  paint(ctx, sink.labels, `УРОК ${lesson}`, chip.x + 8, chip.y + 6, chip.w - 16, 34, 20, INK, true);
+  const lesson = mission.chip || (mission.infinite ? "∞" : `УРОК ${String(mission.lesson).padStart(2, "0")}`);
+  paint(ctx, sink.labels, lesson, chip.x + 8, chip.y + 6, chip.w - 16, 34, 20, INK, true);
   const goal = mission.infinite ? `${Math.floor(sim.s)} м` : mission.objective;
   paint(ctx, sink.labels, goal, chip.x + 8, chip.y + 44, chip.w - 16, 32, 18, INK, false);
   if (!mission.infinite) {

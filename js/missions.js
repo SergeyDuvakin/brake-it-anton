@@ -8,7 +8,7 @@
  * are not on screen as a single unavoidable stack.
  */
 
-import { playableFutureTrips } from "./future.js";
+import { FUTURE_CARS, STUDENTS } from "./future.js";
 import { mulberry32 } from "./rng.js";
 
 function H(partial) {
@@ -195,12 +195,108 @@ export function buildInfinite(seed = 1) {
   };
 }
 
-/** Hidden until FUTURE_ENABLED. The garage reads LESSONS only. */
+function trip(partial) {
+  const student = STUDENTS[partial.student];
+  const car = FUTURE_CARS[partial.car];
+  return {
+    open: true,
+    lesson: 0,
+    cargo: null,
+    slippery: [],
+    gags: [],
+    roll: 10,
+    seed: 80,
+    blurb: [],
+    hazards: [],
+    brakeMul: car.brakeMul,
+    patienceMul: student.patienceMul,
+    ignoresMarkings: student.ignoresMarkings,
+    cruise: Math.round(12.5 * student.cruiseMul * 10) / 10,
+    portrait: partial.student === "anton" ? null : partial.student,
+    chip: student.name.toUpperCase(),
+    ...partial,
+  };
+}
+
+/** Later trips. Anton's four lessons stay first and are still the default start. */
 export function futureMissions() {
-  return playableFutureTrips();
+  return [
+    trip({
+      id: "mother",
+      seed: 81,
+      title: "Съездить за тёщей",
+      objective: "Забрать тёщу",
+      student: "gennady",
+      passenger: "mother",
+      car: "blue",
+      district: "yard",
+      length: 420,
+      blurb: ["Геннадий объедет ларёк сам.", "Разметку он не считает."],
+      hazards: [
+        H({ id: "kiosk", type: "stopped", s: 64, trust: true, halfW: 0.95, halfL: 2.2 }),
+        H({ id: "ped", type: "pedestrian", s: 180, halfW: 0.42, halfL: 0.55 }),
+        H({ id: "bin", type: "bin", s: 300, halfW: 0.55, halfL: 0.7 }),
+      ],
+    }),
+    trip({
+      id: "exam",
+      seed: 82,
+      title: "Экзамен",
+      objective: "До экзамена",
+      student: "profi",
+      car: "mint",
+      district: "country",
+      length: 480,
+      blurb: ["Профи едет быстрее.", "Злится тоже быстрее."],
+      hazards: [
+        H({ id: "ped", type: "pedestrian", s: 52, halfW: 0.42, halfL: 0.55, telegraph: 74 }),
+        H({ id: "cut", type: "cutin", s: 170, halfW: 0.95, halfL: 2.15, telegraph: 70 }),
+        H({ id: "hole", type: "pothole", s: 290, trust: true, halfW: 0.72, halfL: 1.15 }),
+        H({ id: "dog", type: "dog", s: 390, trust: true, halfW: 0.55, halfL: 0.8 }),
+      ],
+    }),
+    trip({
+      id: "everyone",
+      seed: 83,
+      title: "Все вышли гулять",
+      objective: "Сквозь двор",
+      student: "asya",
+      car: "yellow",
+      district: "yard",
+      length: 520,
+      phoneAt: 96,
+      phoneFor: "dog",
+      blurb: ["Ася снимает двор.", "Не тормози на собаку."],
+      hazards: [
+        H({ id: "ped-a", type: "pedestrian", s: 48, halfW: 0.42, halfL: 0.55 }),
+        H({ id: "ped-b", type: "pedestrian", s: 150, halfW: 0.42, halfL: 0.55, x: -1.2 }),
+        H({ id: "dog", type: "dog", s: 250, trust: true, halfW: 0.55, halfL: 0.8 }),
+        H({ id: "ped-c", type: "pedestrian", s: 360, halfW: 0.42, halfL: 0.55 }),
+      ],
+    }),
+    trip({
+      id: "gennady-sleep",
+      seed: 84,
+      title: "Геннадий уснул",
+      objective: "Разбуди его",
+      student: "gennady",
+      car: "blue",
+      district: "market",
+      length: 460,
+      sleepDrowsyAt: 120,
+      sleepAt: 170,
+      sleepFor: "nap",
+      blurb: ["Он клюёт носом у ларьков.", "Ткни, когда засыпает."],
+      hazards: [
+        H({ id: "shop", type: "bin", s: 56, halfW: 0.55, halfL: 0.7 }),
+        H({ id: "ped", type: "pedestrian", s: 160, halfW: 0.42, halfL: 0.55 }),
+        H({ id: "nap", type: "pothole", s: 280, trust: true, halfW: 0.72, halfL: 1.15 }),
+      ],
+    }),
+  ];
 }
 
 export function getMission(id, seed = 1) {
   if (id === "infinite") return buildInfinite(seed);
-  return getLesson(id);
+  return getLesson(id) || futureMissions().find((mission) => mission.id === id) || null;
 }

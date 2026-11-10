@@ -11,7 +11,7 @@ import { SAVE_KEY } from "./config.js";
 import { whenCabinReady, cabinReady } from "./cabin.js";
 import { bumperFootGap, render, whenCarsReady } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
-import { LESSONS, getMission } from "./missions.js";
+import { LESSONS, futureMissions, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
 import { createSim, nextHazard, renderAlpha, renderPose } from "./sim.js";
 import {
@@ -106,6 +106,7 @@ function persist() {
 function canPlay(id) {
   if (id === "infinite") return save.infinite === true;
   const lesson = getMission(id);
+  if (lesson?.open) return true;
   return !!lesson && lesson.lesson <= save.unlocked;
 }
 
@@ -317,6 +318,7 @@ function frame(now) {
     notice,
     preview,
     missions: LESSONS,
+    futureTrips: futureMissions(),
     selected,
     pose: null,
     alpha: presentedAlpha,

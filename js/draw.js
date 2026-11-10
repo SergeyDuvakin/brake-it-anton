@@ -5,7 +5,7 @@
 
 import { CFG, PALETTE as P } from "./config.js";
 import { damageStage } from "./physics.js";
-import { paintCabin } from "./cabin.js";
+import { drawPassenger, paintCabin } from "./cabin.js";
 import { DRIVER_PLATE } from "./layout.js";
 import {
   drawDriveChrome,
@@ -98,6 +98,8 @@ export function carDrawOrigin(bumperX, bumperY, brakeInput, crashT = 0, scale = 
 export const PLAN_ART = {
   yellow: { artLen: 806, pivot: 500 },
   coral: { artLen: 855, pivot: 500 },
+  mint: { artLen: 829, pivot: 414 },
+  blue: { artLen: 833, pivot: 416 },
 };
 
 export function planMetresPerPixel(lengthM, artLen) {
@@ -125,6 +127,8 @@ const YELLOW_LEFT = loadCarImage("yellow-car-left.png");
 const YELLOW_RIGHT = loadCarImage("yellow-car-right.png");
 const YELLOW_SMALL_LEFT = loadCarImage("yellow-car-small-left.png");
 const YELLOW_SMALL_RIGHT = loadCarImage("yellow-car-small-right.png");
+const MINT_CAR = loadCarImage("mint-car.png");
+const BLUE_CAR = loadCarImage("blue-car.png");
 const CORAL_STRAIGHT = loadCarImage("coral-wagon-straight.png");
 
 let viewCam = 0;
@@ -494,7 +498,8 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
   for (let s = Math.floor((cam - 8) / 14) * 14; s < cam + VIEW.look; s += 14) {
     const n = Math.round(s / 14);
     for (const side of [-1, 1]) {
-      props.push({ ds: s - cam, xm: side * sceneryAnchor(), n, side, band: districtAt(s), kind: "prop" });
+      const band = sim.district === "market" ? "shops" : sim.district === "country" ? "country" : districtAt(s);
+      props.push({ ds: s - cam, xm: side * sceneryAnchor(), n, side, band, kind: "prop" });
     }
   }
   for (const h of sim.hazards) {
@@ -1024,6 +1029,12 @@ function drawNpc(ctx, placed, h, sc, dist, boil) {
   ctx.restore();
 }
 
+function playerCarArt(sim) {
+  if (sim.car === "mint" && imageReady(MINT_CAR)) return { img: MINT_CAR, art: PLAN_ART.mint };
+  if (sim.car === "blue" && imageReady(BLUE_CAR)) return { img: BLUE_CAR, art: PLAN_ART.blue };
+  return { img: playerPlanImage(sim), art: PLAN_ART.yellow };
+}
+
 function playerPlanImage(sim) {
   const stage = damageStage(sim.body, sim.stats?.collisions);
   if ((stage >= 2 || (sim.crashT || 0) > 0.05) && imageReady(YELLOW_CRASH)) return YELLOW_CRASH;
@@ -1070,12 +1081,13 @@ function drawCar(ctx, sim, boil, pose, legacy = false) {
   const xm = pose ? pose.x : sim.x;
   const lengthM = CFG.carHalfFront + CFG.carHalfBack;
   const centerDs = (CFG.carHalfFront - CFG.carHalfBack) / 2;
-  if (!legacy && drawPlanSprite(ctx, playerPlanImage(sim), {
+  const driven = playerCarArt(sim);
+  if (!legacy && drawPlanSprite(ctx, driven.img, {
     centerDs,
     xm,
     lengthM,
-    artLen: PLAN_ART.yellow.artLen,
-    pivot: PLAN_ART.yellow.pivot,
+    artLen: driven.art.artLen,
+    pivot: driven.art.pivot,
   })) {
     if (sim.cargoType) {
       const deck = viewProject(centerDs - 0.7, xm);
@@ -1226,6 +1238,7 @@ function drawDriverPlate(ctx) {
 function drawCabin(ctx, sim, state) {
   drawDriverPlate(ctx);
   paintCabin(ctx, sim, state);
+  if (state.session?.mission?.passenger) drawPassenger(ctx, state.session.mission.passenger);
   ctx.save();
   roundRect(ctx, DRIVER_PLATE.x, DRIVER_PLATE.y, DRIVER_PLATE.w, DRIVER_PLATE.h, DRIVER_PLATE.radius);
   ctx.lineWidth = 5;

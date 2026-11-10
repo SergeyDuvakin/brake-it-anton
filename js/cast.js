@@ -26,6 +26,15 @@ const SPECS = {
   houseLow: { file: "44_house-low.png", ax: 591, ay: 762, scale: 0.28 },
   houseTall: { file: "45_house-tall.png", ax: 449, ay: 1053, scale: 0.28 },
   houseWide: { file: "46_house-wide.png", ax: 587, ay: 783, scale: 0.28 },
+  market0: { file: "market-0.png", ax: 154, ay: 420, scale: 0.34 },
+  market1: { file: "market-1.png", ax: 160, ay: 305, scale: 0.34 },
+  market2: { file: "market-2.png", ax: 160, ay: 339, scale: 0.34 },
+  market3: { file: "market-3.png", ax: 154, ay: 424, scale: 0.34 },
+  country0: { file: "country-0.png", ax: 111, ay: 228, scale: 0.36 },
+  country1: { file: "country-1.png", ax: 128, ay: 378, scale: 0.36 },
+  country2: { file: "country-2.png", ax: 128, ay: 357, scale: 0.36 },
+  country3: { file: "country-3.png", ax: 128, ay: 412, scale: 0.36 },
+  country4: { file: "country-4.png", ax: 107, ay: 243, scale: 0.36 },
   treeBase: { file: "39_tree-base.png", ax: 440, ay: 1018, scale: 0.26 },
   treeWide: { file: "43_tree-wide.png", ax: 441, ay: 987, scale: 0.26 },
   cake: { file: "48_cake-whole.png", ax: 515, ay: 886, scale: 0.055 },
@@ -136,6 +145,8 @@ export function drawCastScenery(ctx, key, x, y, spotScale) {
 
 export function sceneryKey(item) {
   const cycle = Math.abs(item.n * 2 + (item.side > 0 ? 1 : 4)) % 7;
+  if (item.band === "shops") return `market${Math.abs(item.n) % 4}`;
+  if (item.band === "country") return `country${Math.abs(item.n) % 5}`;
   if (item.band === "market") return cycle % 2 === 0 ? "houseLaundry" : "houseTall";
   if (item.band === "edge") return cycle % 3 === 0 ? "treeWide" : "houseWide";
   if (cycle === 0 || cycle === 5) return item.n % 2 ? "treeWide" : "treeBase";

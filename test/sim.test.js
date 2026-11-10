@@ -10,7 +10,7 @@ import { CFG } from "../js/config.js";
 import { drainFrame } from "../js/clock.js";
 import { backingScale, contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
-import { FUTURE_CARS, FUTURE_ENABLED, STUDENTS } from "../js/future.js";
+import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
 import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
@@ -840,17 +840,28 @@ test("a replay keeps the last eight seconds and plays them back in order", () =>
   assert.equal(reel.playing(), false);
 });
 
-test("future students and trips stay hidden until art is approved", () => {
-  assert.equal(FUTURE_ENABLED, false);
-  assert.deepEqual(futureMissions(), []);
-  assert.equal(LESSONS.some((mission) => mission.id === "mother" || mission.id === "exam"), false);
-  assert.equal(STUDENTS.gennady.ignoresMarkings, true);
-  assert.equal(STUDENTS.gennady.kioskStop, true);
+test("approved trips are in the garage and Anton's lessons stay first", () => {
+  const extra = futureMissions();
+  assert.deepEqual(extra.map((mission) => mission.id), ["mother", "exam", "everyone", "gennady-sleep"]);
+  assert.equal(LESSONS[0].id, "lesson1");
+  assert.equal(LESSONS.some((mission) => mission.id === "mother"), false);
+  assert.equal(extra[0].portrait, "gennady");
+  assert.equal(extra[0].passenger, "mother");
+  assert.equal(extra[0].ignoresMarkings, true);
+  assert.equal(extra[1].portrait, "profi");
+  assert.equal(extra[1].car, "mint");
+  assert.equal(extra[1].district, "country");
+  assert.equal(extra[2].portrait, "asya");
+  assert.equal(extra[2].phoneAt, 96);
+  assert.equal(extra[3].district, "market");
+  assert.ok(extra[1].patienceMul > 1);
+  assert.ok(extra[1].brakeMul < 1);
+  assert.ok(extra[0].brakeMul > 1);
   assert.equal(STUDENTS.asya.cameraPhone, true);
-  assert.ok(STUDENTS.profi.cruiseMul > STUDENTS.anton.cruiseMul);
-  assert.ok(STUDENTS.profi.patienceMul > 1);
-  assert.notEqual(FUTURE_CARS.mint.brakeMul, FUTURE_CARS.blue.brakeMul);
+  assert.equal(STUDENTS.gennady.kioskStop, true);
   assert.ok(Math.abs(FUTURE_CARS.yellow.brakeMul - 1) < 1e-9);
+  assert.equal(getMission("lesson1").id, "lesson1");
+  assert.equal(getMission("exam").student, "profi");
 });
 
 test("unapproved character drafts are not referenced by the game", () => {
@@ -1109,6 +1120,8 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
     "yellow-car-small-left.png",
     "yellow-car-small-right.png",
     "coral-wagon-straight.png",
+    "mint-car.png",
+    "blue-car.png",
   ]) {
     assert.ok(yml.includes(`assets/cars/${car}`), car);
   }

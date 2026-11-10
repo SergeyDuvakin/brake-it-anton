@@ -46,6 +46,14 @@ function assetURL(path) {
   return new URL(`../assets/cabin/${path}`, import.meta.url).href;
 }
 
+const PORTRAITS = {
+  gennady: "students/gennady.jpg",
+  asya: "students/asya.jpg",
+  profi: "students/profi.jpg",
+  mother: "students/mother.jpg",
+};
+const portraitImages = {};
+
 function loadImage(path) {
   const ImageCtor = globalThis.Image;
   if (typeof ImageCtor !== "function") return null;
@@ -54,6 +62,8 @@ function loadImage(path) {
   img.src = assetURL(path);
   return img;
 }
+
+for (const [key, file] of Object.entries(PORTRAITS)) portraitImages[key] = loadImage(file);
 
 function waitImage(img) {
   if (!img) return Promise.resolve();
@@ -196,6 +206,12 @@ export function paintCabin(ctx, sim, state) {
   ctx.clip();
   ctx.fillStyle = "#F3D48A";
   ctx.fillRect(inner.x, inner.y, inner.w, inner.h);
+  const portrait = state.session?.mission?.portrait;
+  if (portrait && ready(portraitImages[portrait])) {
+    blit(ctx, portraitImages[portrait], 1);
+    ctx.restore();
+    return portrait;
+  }
   const clipReady = vis.clip && clipFrameReady(vis.clip, vis.frame);
   if (clipReady) {
     const frames = clipImages[vis.clip];
@@ -212,6 +228,27 @@ export function paintCabin(ctx, sim, state) {
 }
 
 /** Result card portrait. Upper cabin, so the face and the drawn hands stay in frame. */
+/** Passenger still. Hands are the approved drawing, overlapping and all. */
+export function drawPassenger(ctx, who) {
+  const img = portraitImages[who];
+  if (!ready(img)) return false;
+  const plate = DRIVER_PLATE;
+  const w = 168;
+  const h = 196;
+  const x = plate.x + plate.w - w - 16;
+  const y = plate.y + 16;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.drawImage(img, 200, 240, 480, 560, x, y, w, h);
+  ctx.restore();
+  ctx.strokeStyle = "#1C161E";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(x, y, w, h);
+  return true;
+}
+
 export function drawCabinMedal(ctx, pose, rect) {
   const img = poseImages[pose];
   if (!ready(img)) return false;

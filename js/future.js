@@ -1,10 +1,7 @@
 /**
- * Next cast, cars and trips. The flag stays off until the owner approves art.
- * Nothing here appears in the garage while FUTURE_ENABLED is false.
- * Brake feel differs by a multiplier, not by a "+5%" upgrade shop.
+ * Approved cast. Brake feel is a different car, not a "+5%" upgrade.
+ * Anton's four lessons stay the first path in the garage.
  */
-
-export const FUTURE_ENABLED = false;
 
 export const STUDENTS = {
   anton: {
@@ -50,20 +47,3 @@ export const FUTURE_CARS = {
   mint: { id: "mint", name: "Мятная", brakeMul: 0.86 },
   blue: { id: "blue", name: "Синяя", brakeMul: 1.12 },
 };
-
-export const FUTURE_DISTRICTS = [
-  { id: "yard", name: "Старый двор" },
-  { id: "market", name: "Торговая улица" },
-  { id: "country", name: "Загородная дорога" },
-];
-
-export const FUTURE_TRIPS = [
-  { id: "mother", title: "Съездить за тёщей", student: "gennady", car: "blue", district: "yard", needsArt: true },
-  { id: "exam", title: "Экзамен", student: "profi", car: "mint", district: "country", needsArt: true },
-  { id: "everyone", title: "Все вышли гулять", student: "anton", car: "yellow", district: "yard", needsArt: true },
-  { id: "gennady-sleep", title: "Геннадий уснул", student: "gennady", car: "blue", district: "market", needsArt: true },
-];
-
-export function playableFutureTrips() {
-  return FUTURE_ENABLED ? FUTURE_TRIPS : [];
-}

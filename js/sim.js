@@ -49,6 +49,13 @@ export function createSim(mission, seed = 1) {
     infinite: !!mission.infinite,
     length: mission.length,
     cruise: mission.cruise ?? 16,
+    brakeMul: mission.brakeMul ?? 1,
+    patienceMul: mission.patienceMul ?? 1,
+    ignoresMarkings: mission.ignoresMarkings === true,
+    district: mission.district || null,
+    passenger: mission.passenger || null,
+    car: mission.car || "yellow",
+    portrait: mission.portrait || null,
     cargoType: mission.cargo || null,
     slippery: (mission.slippery || []).map((z) => ({ s0: z.s0, s1: z.s1 })),
     hazards,
@@ -257,6 +264,9 @@ function desiredX(sim) {
   } else if (h && h.dist < 78) x = CFG.defaultX;
   else if (sim.patience >= 70) x = CFG.defaultX + Math.sin(sim.t * 1.3 + sim.seed) * 0.42;
   else if (sim.patience >= 40) x = CFG.defaultX + Math.sin(sim.t * 1.15) * 0.16;
+  if (sim.ignoresMarkings && !(h && (h.committed === "avoid" || h.committed === "lunge"))) {
+    x += Math.sin(sim.s * 0.08) * 1.1;
+  }
   const limit = bodyCenterLimit();
   return clamp(x, -limit, limit);
 }
@@ -785,7 +795,7 @@ export function stepSim(sim, dt, input = {}) {
   const prevS = sim.s;
   if (!input.lockSpeed) {
     const cap = sim.infinite ? CFG.infiniteSpeedCap : CFG.storySpeedCap;
-    const accel = netAccel(sim.v, throttle, physBrake, CFG.drag, slip);
+    const accel = netAccel(sim.v, throttle, physBrake * (sim.brakeMul || 1), CFG.drag, slip);
     sim.v = clamp(sim.v + accel * dt, 0, cap);
   }
   sim.stats.minV = Math.min(sim.stats.minV, sim.v);
@@ -830,13 +840,14 @@ export function stepSim(sim, dt, input = {}) {
     sim.brakeInput > 0.5 &&
     sim.holdTime > 0.5 &&
     !fair;
-  const rateMood = irritationRate({
+  let rateMood = irritationRate({
     decel: playerDecel,
     brakeInput: held ? sim.brakeInput : 0,
     holdTime: sim.holdTime,
     justified: fair,
     stopped: stoppedHard,
   });
+  rateMood *= sim.patienceMul || 1;
   sim.patience = clamp(sim.patience + rateMood * dt, 0, 100);
   if (held && playerDecel > CFG.harshSpikeDecel && !sim.spiked) {
     sim.spiked = true;
