@@ -2,12 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import { anchorKind, farDs, groundDs, paintFarToNear, screenFootprint } from "../js/anchors.js";
 import { CFG } from "../js/config.js";
 import { drainFrame } from "../js/clock.js";
-import { contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
+import { backingScale, contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { LESSONS, buildInfinite, getMission } from "../js/missions.js";
 import { PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
@@ -798,6 +799,27 @@ test("cabin stills follow the ride, and the phone pose stays a still name", () =
   sim.success = false;
   assert.equal(cabinPoseId(sim, "result"), "ashamed");
   assert.equal(cabinPoseId(sim, "drive", "preen"), "preen");
+});
+
+test("the phone buffer never exceeds two device pixels, and one when motion is reduced", () => {
+  const phone = backingScale(693, 390, 3, false);
+  assert.ok(phone <= 2);
+  assert.equal(backingScale(693, 390, 3, true), 1);
+  assert.ok(backingScale(1280, 720, 1, false) <= 1);
+});
+
+test("shipped cabin frames stay under two and a half megabytes", () => {
+  let bytes = 0;
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      const info = statSync(path);
+      if (info.isDirectory()) walk(path);
+      else bytes += info.size;
+    }
+  };
+  walk("assets/cabin");
+  assert.ok(bytes < 2_500_000, bytes);
 });
 
 test("vibration is a short pulse, never a held buzz", () => {

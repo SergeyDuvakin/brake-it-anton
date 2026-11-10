@@ -11,6 +11,7 @@ import {
   drawGarageScreen,
   drawPauseScreen,
   drawResultScreen,
+  drawTitleChrome,
   pedalHitBox,
   setLargeUi,
   uiImages,
@@ -264,16 +265,6 @@ function paintCenter(ctx, text, x, y, w, h, size, color = P.INK, display = false
   if (record) labels.push({ text: shown, x, y, w, h, cx: x + w / 2, cy: y + h / 2 });
 }
 
-function button(ctx, id, x, y, w, h, text, kind = "paper") {
-  spots.push({ id, x, y, w, h });
-  roundRect(ctx, x, y, w, h, 18);
-  ctx.fillStyle = kind === "primary" ? P.TEAL : kind === "ink" ? P.INK : kind === "red" ? P.RED : P.PAPER;
-  ctx.fill();
-  ink(ctx, 6);
-  ctx.stroke();
-  paintCenter(ctx, text, x, y, w, h, h > 90 ? 32 : 24, kind === "ink" || kind === "red" ? P.PAPER : P.INK, false, true);
-}
-
 function hash(n) {
   let x = Math.imul(n | 0, 0x9e3779b1);
   x ^= x >>> 16;
@@ -307,10 +298,7 @@ function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
   drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
   paintCabin(ctx, state.preview, { ...state, pose: "preen", session: { phase: "drive", sim: state.preview } });
-  paintCenter(ctx, "Brake It, Anton", 1076, 40, 480, 78, 34, P.INK, true, true);
-  paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", 1076, 122, 480, 40, 20, P.INK, false, true);
-  button(ctx, "start", 1092, 640, 448, 112, "В урок", "primary");
-  button(ctx, "garage", 1092, 768, 448, 76, "Гараж", "paper");
+  drawTitleChrome(ctx, { spots, labels }, state);
 }
 
 

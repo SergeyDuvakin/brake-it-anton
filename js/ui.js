@@ -284,6 +284,35 @@ function sideButtons(ctx, sink, state) {
   });
 }
 
+export function drawTitleChrome(ctx, sink, state) {
+  const plaque = { x: 1084, y: 36, w: 468, h: 132 };
+  nineSlice(ctx, IMG.cream, plaque.x, plaque.y, plaque.w, plaque.h, 36, FILL.cream);
+  paint(ctx, sink.labels, "Brake It, Anton", plaque.x + 16, plaque.y + 10, plaque.w - 32, 68, 32, INK, true);
+  paint(ctx, sink.labels, "Он газует. Ты жмёшь тормоз.", plaque.x + 16, plaque.y + 78, plaque.w - 32, 40, 18, INK, false);
+  drawButton(ctx, sink, {
+    id: "start",
+    x: 1092,
+    y: 640,
+    w: 448,
+    h: 112,
+    text: "В урок",
+    kind: "orange",
+    pointer: state.pointer,
+    size: 36,
+  });
+  drawButton(ctx, sink, {
+    id: "garage",
+    x: 1092,
+    y: 768,
+    w: 448,
+    h: 76,
+    text: "Гараж",
+    kind: "cream",
+    pointer: state.pointer,
+    size: 28,
+  });
+}
+
 export function drawGarageScreen(ctx, state, sink) {
   ctx.fillStyle = P.PAPER;
   ctx.fillRect(0, 0, 1600, 900);

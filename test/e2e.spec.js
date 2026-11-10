@@ -267,12 +267,20 @@ test("title scenery and wheels stay still while people may idle", async ({ page 
   const changed = await page.evaluate(async () => {
     const canvas = document.querySelector("canvas");
     const ctx = canvas.getContext("2d");
+    const sx = canvas.width / 1600;
+    const sy = canvas.height / 900;
     const regions = {
       buttons: { x: 1092, y: 640, w: 448, h: 204 },
       tree: { x: 140, y: 280, w: 240, h: 320 },
       wheel: { x: 640, y: 670, w: 140, h: 140 },
     };
-    const read = (rect) => Uint8ClampedArray.from(ctx.getImageData(rect.x, rect.y, rect.w, rect.h).data);
+    const read = (rect) => {
+      const x = Math.max(0, Math.round(rect.x * sx));
+      const y = Math.max(0, Math.round(rect.y * sy));
+      const w = Math.max(1, Math.min(canvas.width - x, Math.round(rect.w * sx)));
+      const h = Math.max(1, Math.min(canvas.height - y, Math.round(rect.h * sy)));
+      return Uint8ClampedArray.from(ctx.getImageData(x, y, w, h).data);
+    };
     const count = (a, b) => {
       let changed = 0;
       for (let i = 0; i < a.length; i += 4) {
@@ -2208,4 +2216,29 @@ test("house bases and tree trunks stay off the asphalt, near and far", async ({ 
     return hits.slice(0, 8);
   });
   expect(leaks, JSON.stringify(leaks)).toEqual([]);
+});
+
+test("phone-sized frame stays within the DPR cap and a loose frame budget", async ({ page }) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.debugStart);
+  await page.evaluate(() => window.__anton.debugStart("lesson1"));
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  const budget = await page.evaluate(async () => {
+    const samples = [];
+    for (let i = 0; i < 30; i += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      samples.push(window.__anton.frameBudget());
+    }
+    samples.sort((a, b) => a - b);
+    return {
+      median: samples[Math.floor(samples.length / 2)],
+      max: samples[samples.length - 1],
+      scale: window.__anton.bufferScale(),
+      buffer: [document.querySelector("canvas").width, document.querySelector("canvas").height],
+    };
+  });
+  fs.writeFileSync("/opt/cursor/artifacts/frame-budget.json", JSON.stringify(budget, null, 2));
+  expect(budget.scale).toBeLessThanOrEqual(2);
+  expect(budget.median).toBeLessThan(32);
 });

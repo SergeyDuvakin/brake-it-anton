@@ -28,7 +28,7 @@ import {
 } from "./session.js";
 import { applyVictory, freshSave, noteInfiniteDistance, parseSave, toggleSetting } from "./storage.js";
 import { drainFrame } from "./clock.js";
-import { contentBox, stablePlacement } from "./viewport.js";
+import { backingScale, contentBox, stablePlacement } from "./viewport.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -275,6 +275,8 @@ function tick(dt) {
 }
 
 function frame(now) {
+  const frameStart = performance.now();
+  applyBuffer();
   const drained = drainFrame(acc, (now - last) / 1000, timeScale);
   last = now;
   acc = drained.acc;
@@ -299,6 +301,7 @@ function frame(now) {
   hotspots = drawn.spots;
   labels = drawn.labels;
   readout = drawn.readout || readout;
+  lastFrameMs = performance.now() - frameStart;
   requestAnimationFrame(frame);
 }
 
@@ -392,6 +395,22 @@ function syncOrient() {
 }
 
 let placement = null;
+let bufferScale = 1;
+let lastFrameMs = 0;
+
+function applyBuffer() {
+  const cssW = placement?.width || 1600;
+  const cssH = placement?.height || 900;
+  const low = !!save.settings.reducedMotion;
+  // The drawing stays 1600×900. devicePixelRatio is not allowed to enlarge it,
+  // and the scale we would grant a screen is capped at 2 (1 if motion is reduced).
+  bufferScale = backingScale(cssW, cssH, window.devicePixelRatio, low);
+  if (canvas.width !== 1600 || canvas.height !== 900) {
+    canvas.width = 1600;
+    canvas.height = 900;
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
 
 function fitCanvas() {
   const wrap = document.getElementById("wrap");
@@ -431,6 +450,7 @@ function fitCanvas() {
   canvas.style.top = `${Math.round(originY + next.top)}px`;
   canvas.style.width = `${next.width}px`;
   canvas.style.height = `${next.height}px`;
+  applyBuffer();
 }
 
 window.addEventListener("resize", () => {
@@ -443,6 +463,8 @@ fitCanvas();
 
 window.__anton = {
   cabinReady,
+  frameBudget: () => lastFrameMs,
+  bufferScale: () => bufferScale,
   getState() {
     return {
       screen,
