@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
 
 import { anchorKind, farDs, groundDs, paintFarToNear, screenFootprint } from "../js/anchors.js";
@@ -16,7 +16,7 @@ import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
 import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
-import { CALLOUT, DRIVER_PLATE, MOOD_TILE, PAUSE_BUTTON, platesSeparated, routeChipBounds } from "../js/layout.js";
+import { CALLOUT, DRIVER_PLATE, MOOD_TILE, PAUSE_BUTTON, platesSeparated } from "../js/layout.js";
 import {
   CAR_BODY_H,
   CAR_BODY_W,
@@ -1166,15 +1166,30 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
     assert.ok(yml.includes(icon), icon);
   }
   assert.ok(!yml.includes("artifacts/"));
-  assert.ok(!yml.includes("cp icons/anton-wheel-1024.png"));
+  assert.ok(!yml.includes("cp icons/anton-wheel"));
   assert.ok(yml.includes("test ! -e .pages-dist/icons/anton-wheel-1024.png"));
-  const master = createHash("sha256").update(readFileSync("icons/anton-wheel-1024.png")).digest("hex");
-  assert.equal(master, "0d4fb6984918709768f78bc567088197970b7fd75c09de47f082377c2076f0a6");
+  assert.equal(existsSync("icons/anton-wheel-1024.png"), false);
   const html = readFileSync("index.html", "utf8");
-  assert.ok(html.includes('href="icons/favicon-32.png"'));
-  assert.ok(html.includes('href="icons/apple-touch-icon.png"'));
+  const manifest = readFileSync("manifest.webmanifest", "utf8");
+  assert.ok(html.includes('href="icons/favicon-32.png?v=2"'));
+  assert.ok(html.includes('href="icons/apple-touch-icon.png?v=2"'));
+  assert.ok(manifest.includes('"src": "icons/icon-192.png?v=2"'));
+  assert.ok(manifest.includes('"src": "icons/icon-512.png?v=2"'));
   assert.ok(html.includes('href="manifest.webmanifest"'));
   assert.ok(!html.includes("/icons/"));
+  const pngSize = (file) => {
+    const buf = readFileSync(file);
+    assert.equal(buf.toString("ascii", 1, 4), "PNG");
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  };
+  assert.deepEqual(pngSize("icons/favicon-32.png"), { w: 32, h: 32 });
+  assert.deepEqual(pngSize("icons/apple-touch-icon.png"), { w: 180, h: 180 });
+  assert.deepEqual(pngSize("icons/icon-192.png"), { w: 192, h: 192 });
+  assert.deepEqual(pngSize("icons/icon-512.png"), { w: 512, h: 512 });
+  assert.equal(
+    createHash("sha256").update(readFileSync("icons/icon-512.png")).digest("hex"),
+    "a6a9b20db350957469f2e492314da48799275b0602bc43a6280d99a1b88564d9",
+  );
 });
 
 function brakeOpen(sim) {
@@ -2608,6 +2623,8 @@ test("patience needle and pedal hinge follow the live input", () => {
   assert.equal(hot.readout.pedalDeg, 24);
   assert.ok(hot.readout.padY < calm.readout.padY);
   assert.ok(calm.labels.some((item) => item.text === "ТЕРПЕНИЕ"));
+  assert.equal(calm.labels.some((item) => item.text.startsWith("УРОК")), false);
+  assert.equal(calm.labels.some((item) => item.text === "До двора"), false);
   assert.ok(calm.spots.some((spot) => spot.id === "pedal"));
   assert.ok(calm.spots.some((spot) => spot.id === "anton"));
 
@@ -2696,21 +2713,42 @@ function coversRoad(rect, ds, xm) {
   return spot.x >= rect.x && spot.x <= rect.x + rect.w && spot.y >= rect.y && spot.y <= rect.y + rect.h;
 }
 
-test("the lesson chip and the wake line stay off the lane and the sidewalk", () => {
+test("the drive HUD has no lesson plaque, and the gauge stays off the lane", () => {
   assert.ok(CALLOUT.x >= DRIVER_PLATE.x && CALLOUT.x + CALLOUT.w <= DRIVER_PLATE.x + DRIVER_PLATE.w);
   assert.ok(CALLOUT.y >= DRIVER_PLATE.y && CALLOUT.y + CALLOUT.h <= DRIVER_PLATE.y + DRIVER_PLATE.h);
   assert.ok(MOOD_TILE.x >= DRIVER_PLATE.x && MOOD_TILE.y >= DRIVER_PLATE.y + 70 + 360);
   assert.ok(MOOD_TILE.y + MOOD_TILE.h <= CALLOUT.y);
-  const chip = routeChipBounds();
   for (const ds of [16, 24, 32, 40, 48, 56]) {
     for (const xm of [-5.2, -1.8, 1.8, 5.2]) {
-      assert.equal(coversRoad(chip, ds, xm), false, `chip ds ${ds} xm ${xm}`);
       if (xm > 0) {
         assert.equal(coversRoad(GAUGE.box, ds, xm), false, `gauge ds ${ds} xm ${xm}`);
         assert.equal(coversRoad(PAUSE_BUTTON, ds, xm), false, `pause ds ${ds} xm ${xm}`);
       }
     }
   }
+  const session = createSession(getMission("lesson1"), { seed: 11 });
+  session.phase = "drive";
+  session.countdownAcc = 3;
+  session.sim.s = 40;
+  const frame = render(mockCtx().ctx, {
+    screen: "play",
+    session,
+    save: freshSave(),
+    now: 0,
+    hint: false,
+    debug: false,
+    notice: null,
+    preview: null,
+    missions: LESSONS,
+    futureTrips: futureMissions(),
+    selected: "lesson1",
+    pose: null,
+    alpha: 1,
+    pointer: { over: null, pressed: null },
+  });
+  const texts = frame.labels.map((item) => item.text);
+  assert.ok(texts.includes("ТЕРПЕНИЕ"));
+  assert.equal(texts.some((text) => text.startsWith("УРОК") || text === "До двора" || text.endsWith(" м")), false);
   const warn = { x: MOOD_TILE.x + MOOD_TILE.w + 8, y: MOOD_TILE.y, w: 64, h: 60 };
   assert.ok(warn.x + warn.w <= DRIVER_PLATE.x + DRIVER_PLATE.w);
   assert.ok(warn.y + warn.h <= CALLOUT.y);
