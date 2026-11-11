@@ -117,11 +117,11 @@ jobs:
           grep -q 'href="style.css"' .pages-dist/index.html
           grep -q 'src="js/game.js"' .pages-dist/index.html
           grep -q 'href="manifest.webmanifest"' .pages-dist/index.html
-          grep -q 'href="icons/apple-touch-icon.png"' .pages-dist/index.html
-          grep -q 'href="icons/favicon-32.png"' .pages-dist/index.html
+          grep -q 'href="icons/apple-touch-icon.png?v=2"' .pages-dist/index.html
+          grep -q 'href="icons/favicon-32.png?v=2"' .pages-dist/index.html
           grep -q '"start_url": "/brake-it-anton/"' .pages-dist/manifest.webmanifest
-          grep -q '"src": "icons/icon-192.png"' .pages-dist/manifest.webmanifest
-          grep -q '"src": "icons/icon-512.png"' .pages-dist/manifest.webmanifest
+          grep -q '"src": "icons/icon-192.png?v=2"' .pages-dist/manifest.webmanifest
+          grep -q '"src": "icons/icon-512.png?v=2"' .pages-dist/manifest.webmanifest
           grep -q 'assets/fonts/' .pages-dist/style.css
           grep -q 'assets/fonts/' .pages-dist/js/game.js
 

@@ -15,7 +15,7 @@
 
 import { PALETTE as P } from "./config.js";
 import { cabinPoseId, drawCabinMedal } from "./cabin.js";
-import { MOOD_TILE, PAUSE_BUTTON, PEDAL_ZONE, ROUTE_CHIP } from "./layout.js";
+import { MOOD_TILE, PAUSE_BUTTON, PEDAL_ZONE } from "./layout.js";
 import { moodGlyph, repairInvoice } from "./physics.js";
 
 export { PEDAL_ZONE };
@@ -808,27 +808,12 @@ const GLYPH = { circle: "circle", square: "square", triangle: "triangle" };
 
 export function drawDriveChrome(ctx, state, sink, brake) {
   const sim = state.session.sim;
-  const mission = state.session.mission;
   const needle = drawGauge(ctx, sink.labels, sim.patience);
   const glyph = GLYPH[moodGlyph(sim.patience, sim.outburstT > 0)] || "circle";
   const tile = IMG[glyph];
   if (ready(tile)) ctx.drawImage(tile, MOOD_TILE.x, MOOD_TILE.y, MOOD_TILE.w, MOOD_TILE.h);
   if (sim.outburstT > 0 && ready(IMG.warning)) {
     ctx.drawImage(IMG.warning, MOOD_TILE.x + MOOD_TILE.w + 8, MOOD_TILE.y, 64, 60);
-  }
-
-  const chip = ROUTE_CHIP;
-  nineSlice(ctx, IMG.cream, chip.x, chip.y, chip.w, chip.h, 34, FILL.cream);
-  const lesson = mission.chip || (mission.infinite ? "∞" : `УРОК ${String(mission.lesson).padStart(2, "0")}`);
-  paint(ctx, sink.labels, lesson, chip.x + 8, chip.y + 6, chip.w - 16, 34, 20, INK, true);
-  const goal = mission.infinite ? `${Math.floor(sim.s)} м` : mission.objective;
-  paint(ctx, sink.labels, goal, chip.x + 8, chip.y + 44, chip.w - 16, 32, 18, INK, false);
-  if (!mission.infinite) {
-    const p = Math.max(0, Math.min(1, sim.s / mission.length));
-    ctx.fillStyle = "#E7DCC6";
-    ctx.fillRect(chip.x + 18, chip.y + chip.h + 8, chip.w - 36, 8);
-    ctx.fillStyle = P.PAT_GREEN;
-    ctx.fillRect(chip.x + 18, chip.y + chip.h + 8, Math.max(0, (chip.w - 36) * p), 8);
   }
 
   const pause = PAUSE_BUTTON;
