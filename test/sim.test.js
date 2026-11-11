@@ -1171,10 +1171,10 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
   assert.equal(existsSync("icons/anton-wheel-1024.png"), false);
   const html = readFileSync("index.html", "utf8");
   const manifest = readFileSync("manifest.webmanifest", "utf8");
-  assert.ok(html.includes('href="icons/favicon-32.png?v=2"'));
-  assert.ok(html.includes('href="icons/apple-touch-icon.png?v=2"'));
-  assert.ok(manifest.includes('"src": "icons/icon-192.png?v=2"'));
-  assert.ok(manifest.includes('"src": "icons/icon-512.png?v=2"'));
+  assert.ok(html.includes('href="icons/favicon-32.png?v=3"'));
+  assert.ok(html.includes('href="icons/apple-touch-icon.png?v=3"'));
+  assert.ok(manifest.includes('"src": "icons/icon-192.png?v=3"'));
+  assert.ok(manifest.includes('"src": "icons/icon-512.png?v=3"'));
   assert.ok(html.includes('href="manifest.webmanifest"'));
   assert.ok(!html.includes("/icons/"));
   const pngSize = (file) => {
@@ -1188,7 +1188,7 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
   assert.deepEqual(pngSize("icons/icon-512.png"), { w: 512, h: 512 });
   assert.equal(
     createHash("sha256").update(readFileSync("icons/icon-512.png")).digest("hex"),
-    "a6a9b20db350957469f2e492314da48799275b0602bc43a6280d99a1b88564d9",
+    "01c7890262562d1ae11e51a0cf6897b716d7fe900f37e7312d3c139433514c8a",
   );
 });
 
