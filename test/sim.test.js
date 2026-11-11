@@ -1171,10 +1171,10 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
   assert.equal(existsSync("icons/anton-wheel-1024.png"), false);
   const html = readFileSync("index.html", "utf8");
   const manifest = readFileSync("manifest.webmanifest", "utf8");
-  assert.ok(html.includes('href="icons/favicon-32.png?v=4"'));
-  assert.ok(html.includes('href="icons/apple-touch-icon.png?v=4"'));
-  assert.ok(manifest.includes('"src": "icons/icon-192.png?v=4"'));
-  assert.ok(manifest.includes('"src": "icons/icon-512.png?v=4"'));
+  assert.ok(html.includes('href="icons/favicon-32.png?v=5"'));
+  assert.ok(html.includes('href="icons/apple-touch-icon.png?v=5"'));
+  assert.ok(manifest.includes('"src": "icons/icon-192.png?v=5"'));
+  assert.ok(manifest.includes('"src": "icons/icon-512.png?v=5"'));
   assert.ok(html.includes('href="manifest.webmanifest"'));
   assert.ok(!html.includes("/icons/"));
   const pngSize = (file) => {
