@@ -29,7 +29,7 @@ import {
 } from "./session.js";
 import { applyVictory, freshSave, noteInfiniteDistance, parseSave, toggleSetting } from "./storage.js";
 import { drainFrame } from "./clock.js";
-import { backingScale, contentBox, stablePlacement } from "./viewport.js";
+import { backingScale, clampPlacement, contentBox, stablePlacement, tightestBox } from "./viewport.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -335,6 +335,12 @@ function tick(dt) {
 
 function frame(now) {
   const frameStart = performance.now();
+  const nextMetric = pixelMetric(readMetric());
+  if (metricChanged(nextMetric)) {
+    metric = nextMetric;
+    syncOrient();
+    fitCanvas();
+  }
   applyBuffer();
   const drained = drainFrame(acc, (now - last) / 1000, timeScale);
   last = now;
@@ -457,16 +463,56 @@ document.addEventListener("visibilitychange", () => {
   if (session) onVisibility(session, document.hidden);
 });
 
-function syncOrient() {
+// Whole pixels only, so a fractional toolbar twitch does not refit every frame.
+function pixelMetric(raw) {
+  return {
+    innerWidth: Math.round(raw.innerWidth),
+    innerHeight: Math.round(raw.innerHeight),
+    visualWidth: Math.round(raw.visualWidth),
+    visualHeight: Math.round(raw.visualHeight),
+    wrapWidth: Math.round(raw.wrapWidth),
+    wrapHeight: Math.round(raw.wrapHeight),
+  };
+}
+
+function readMetric() {
   const box = window.visualViewport;
-  const width = box?.width || window.innerWidth;
-  const height = box?.height || window.innerHeight;
+  const wrap = document.getElementById("wrap");
+  return {
+    innerWidth: window.innerWidth || 0,
+    innerHeight: window.innerHeight || 0,
+    visualWidth: box?.width || 0,
+    visualHeight: box?.height || 0,
+    wrapWidth: wrap?.clientWidth || 0,
+    wrapHeight: wrap?.clientHeight || 0,
+  };
+}
+
+function metricChanged(next) {
+  if (!metric) return true;
+  return (
+    next.innerWidth !== metric.innerWidth ||
+    next.innerHeight !== metric.innerHeight ||
+    next.visualWidth !== metric.visualWidth ||
+    next.visualHeight !== metric.visualHeight ||
+    next.wrapWidth !== metric.wrapWidth ||
+    next.wrapHeight !== metric.wrapHeight
+  );
+}
+
+function syncOrient() {
+  const box = tightestBox(readMetric());
+  const width = box.width || window.innerWidth || 0;
+  const height = box.height || window.innerHeight || 0;
   document.body.classList.toggle("is-portrait", height > width);
 }
 
 let placement = null;
+let painted = null;
+let metric = null;
 let bufferScale = 1;
 let lastFrameMs = 0;
+let refitTimers = [];
 
 function applyBuffer() {
   const cssW = placement?.width || 1600;
@@ -484,12 +530,12 @@ function applyBuffer() {
 
 function fitCanvas() {
   const wrap = document.getElementById("wrap");
-  const box = window.visualViewport;
-  let outerW = box?.width || window.innerWidth;
-  let outerH = box?.height || window.innerHeight;
+  const measured = readMetric();
   let originX = 0;
   let originY = 0;
-  if (wrap && wrap.clientWidth > 0 && wrap.clientHeight > 0) {
+  let wrapW = 0;
+  let wrapH = 0;
+  if (wrap && measured.wrapWidth > 0 && measured.wrapHeight > 0) {
     const style = getComputedStyle(wrap);
     const pad = {
       top: parseFloat(style.paddingTop) || 0,
@@ -497,37 +543,81 @@ function fitCanvas() {
       bottom: parseFloat(style.paddingBottom) || 0,
       left: parseFloat(style.paddingLeft) || 0,
     };
-    const inner = contentBox(wrap.clientWidth, wrap.clientHeight, pad);
-    outerW = inner.width;
-    outerH = inner.height;
+    const inner = contentBox(measured.wrapWidth, measured.wrapHeight, pad);
+    wrapW = inner.width;
+    wrapH = inner.height;
     const rect = wrap.getBoundingClientRect();
     originX = rect.left + pad.left;
     originY = rect.top + pad.top;
   }
-  const next = stablePlacement(placement, outerW, outerH);
+  const outer = tightestBox({
+    innerWidth: measured.innerWidth,
+    innerHeight: measured.innerHeight,
+    visualWidth: measured.visualWidth,
+    visualHeight: measured.visualHeight,
+    wrapWidth: wrapW,
+    wrapHeight: wrapH,
+  });
+  if (!(outer.width > 0) || !(outer.height > 0)) return;
+  const visible = tightestBox({
+    innerWidth: measured.innerWidth,
+    innerHeight: measured.innerHeight,
+    visualWidth: measured.visualWidth,
+    visualHeight: measured.visualHeight,
+  });
+  const next = stablePlacement(placement, outer.width, outer.height);
+  const css = clampPlacement(
+    {
+      left: originX + next.left,
+      top: originY + next.top,
+      width: next.width,
+      height: next.height,
+    },
+    visible.width || outer.width,
+    visible.height || outer.height,
+  );
+  placement = {
+    width: css.width,
+    height: css.height,
+    left: css.left - Math.round(originX),
+    top: css.top - Math.round(originY),
+  };
   if (
-    placement &&
-    next.width === placement.width &&
-    next.height === placement.height &&
-    next.left === placement.left &&
-    next.top === placement.top
+    painted &&
+    painted.left === css.left &&
+    painted.top === css.top &&
+    painted.width === css.width &&
+    painted.height === css.height
   ) {
     return;
   }
-  placement = next;
+  painted = css;
   canvas.style.position = "fixed";
-  canvas.style.left = `${Math.round(originX + next.left)}px`;
-  canvas.style.top = `${Math.round(originY + next.top)}px`;
-  canvas.style.width = `${next.width}px`;
-  canvas.style.height = `${next.height}px`;
+  canvas.style.left = `${css.left}px`;
+  canvas.style.top = `${css.top}px`;
+  canvas.style.width = `${css.width}px`;
+  canvas.style.height = `${css.height}px`;
   applyBuffer();
 }
 
-window.addEventListener("resize", () => {
+function refitSoon() {
   syncOrient();
   fitCanvas();
-});
-window.visualViewport?.addEventListener("resize", fitCanvas);
+}
+
+function scheduleRefit() {
+  for (const id of refitTimers) clearTimeout(id);
+  refitTimers = [];
+  requestAnimationFrame(refitSoon);
+  for (const ms of [100, 300, 600, 1000]) {
+    refitTimers.push(setTimeout(refitSoon, ms));
+  }
+}
+
+window.addEventListener("resize", refitSoon);
+window.addEventListener("orientationchange", scheduleRefit);
+window.screen?.orientation?.addEventListener("change", scheduleRefit);
+window.visualViewport?.addEventListener("resize", refitSoon);
 syncOrient();
 fitCanvas();
 

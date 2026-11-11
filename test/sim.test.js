@@ -10,7 +10,7 @@ import { join, extname } from "node:path";
 import { anchorKind, farDs, groundDs, paintFarToNear, screenFootprint } from "../js/anchors.js";
 import { CFG } from "../js/config.js";
 import { drainFrame } from "../js/clock.js";
-import { backingScale, contentBox, frameSize, stableFrame, stablePlacement } from "../js/viewport.js";
+import { backingScale, clampPlacement, contentBox, frameSize, stableFrame, stablePlacement, tightestBox } from "../js/viewport.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
@@ -1299,6 +1299,57 @@ test("the mobile frame stays on whole pixels when the toolbar jitters", () => {
   const a = legacyTop(932, 430, 430);
   const b = legacyTop(932, 430, 414);
   assert.ok(Math.abs(b - a) > 5);
+});
+
+test("a stale portrait box cannot leave the frame hanging below the landscape screen", () => {
+  const mixed = tightestBox({
+    innerWidth: 896,
+    innerHeight: 414,
+    visualWidth: 896,
+    visualHeight: 840,
+    wrapWidth: 780,
+    wrapHeight: 840,
+  });
+  assert.equal(mixed.width, 780);
+  assert.equal(mixed.height, 414);
+  const missing = tightestBox({
+    innerWidth: 896,
+    innerHeight: 0,
+    visualWidth: 0,
+    visualHeight: 414,
+    wrapWidth: 0,
+    wrapHeight: 0,
+  });
+  assert.equal(missing.width, 896);
+  assert.equal(missing.height, 414);
+
+  const stale = stablePlacement(null, 780, 840);
+  assert.ok(stale.top > 150, `stale top ${stale.top}`);
+  assert.ok(stale.top + stale.height > 414);
+
+  const fitted = stablePlacement(stale, mixed.width, mixed.height);
+  assert.ok(fitted.left >= 0);
+  assert.ok(fitted.top >= 0);
+  assert.ok(fitted.left + fitted.width <= mixed.width);
+  assert.ok(fitted.top + fitted.height <= mixed.height);
+  assert.ok(Math.abs(fitted.left - (mixed.width - fitted.width) / 2) <= 1);
+  assert.ok(Math.abs(fitted.top - (mixed.height - fitted.height) / 2) <= 1);
+  assert.ok(fitted.top < 5, `corrected top ${fitted.top}`);
+
+  const hung = { width: 780, height: 438, left: 40, top: 200 };
+  const clamped = clampPlacement(hung, 896, 414);
+  assert.ok(clamped.left >= 0);
+  assert.ok(clamped.top >= 0);
+  assert.ok(clamped.left + clamped.width <= 896);
+  assert.ok(clamped.top + clamped.height <= 414);
+  assert.ok(clamped.width <= 896);
+  assert.ok(clamped.height <= 414);
+  assert.ok(Math.abs(clamped.width / clamped.height - 16 / 9) < 0.02);
+
+  const stuck = stablePlacement({ width: 693, height: 390, left: 76, top: 200 }, 844, 390);
+  assert.ok(stuck.top + stuck.height <= 390);
+  assert.ok(stuck.left + stuck.width <= 844);
+  assert.ok(stuck.top < 5);
 });
 
 test("display rate changes how many 1/60 steps land in a frame, not the step itself", () => {
