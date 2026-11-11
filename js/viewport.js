@@ -46,6 +46,50 @@ export function frameOrigin(outerW, outerH, frame) {
   };
 }
 
+function smallestPositive(values) {
+  let best = 0;
+  for (const value of values) {
+    const n = Number(value);
+    if (n > 0 && (best === 0 || n < best)) best = n;
+  }
+  return best;
+}
+
+/**
+ * Overlap of every size that has already updated. A stale portrait height
+ * loses to a landscape height from innerHeight, the visual viewport, or the
+ * wrap. Zero means that source has not been measured.
+ */
+export function tightestBox(measures) {
+  return {
+    width: smallestPositive([measures.innerWidth, measures.visualWidth, measures.wrapWidth]),
+    height: smallestPositive([measures.innerHeight, measures.visualHeight, measures.wrapHeight]),
+  };
+}
+
+/**
+ * Move, and if needed shrink, a frame so it lies inside the visible box.
+ * The 1600×900 ratio is kept when the frame is larger than the box.
+ */
+export function clampPlacement(rect, viewW, viewH) {
+  const boxW = Math.max(1, Math.floor(viewW));
+  const boxH = Math.max(1, Math.floor(viewH));
+  let width = Math.round(rect.width);
+  let height = Math.round(rect.height);
+  if (width > boxW || height > boxH || width < 1 || height < 1) {
+    const fitted = frameSize(boxW, boxH);
+    width = fitted.width;
+    height = fitted.height;
+  }
+  let left = Math.round(rect.left);
+  let top = Math.round(rect.top);
+  if (left + width > boxW) left = boxW - width;
+  if (top + height > boxH) top = boxH - height;
+  if (left < 0) left = 0;
+  if (top < 0) top = 0;
+  return { width, height, left, top };
+}
+
 export function stableFrame(previous, viewW, viewH, slack = 2) {
   const next = frameSize(viewW, viewH);
   if (!previous) return next;
@@ -55,21 +99,34 @@ export function stableFrame(previous, viewW, viewH, slack = 2) {
   return next;
 }
 
+function rectFits(rect, outerW, outerH) {
+  return (
+    rect.left >= 0 &&
+    rect.top >= 0 &&
+    rect.width <= outerW + 0.01 &&
+    rect.height <= outerH + 0.01 &&
+    rect.left + rect.width <= outerW + 0.01 &&
+    rect.top + rect.height <= outerH + 0.01
+  );
+}
+
 export function stablePlacement(previous, outerW, outerH, slack = 2) {
-  const size = stableFrame(previous, outerW, outerH, slack);
-  const origin = frameOrigin(outerW, outerH, size);
-  if (!previous || previous.left === undefined || previous.top === undefined) {
-    return { width: size.width, height: size.height, left: origin.left, top: origin.top };
-  }
-  const inside =
-    previous.left >= 0 &&
-    previous.top >= 0 &&
-    previous.left + size.width <= outerW + 0.01 &&
-    previous.top + size.height <= outerH + 0.01;
+  const boxW = Math.max(1, Math.floor(outerW));
+  const boxH = Math.max(1, Math.floor(outerH));
+  const size = stableFrame(previous, boxW, boxH, slack);
+  const origin = frameOrigin(boxW, boxH, size);
+  const fresh = clampPlacement(
+    { width: size.width, height: size.height, left: origin.left, top: origin.top },
+    boxW,
+    boxH,
+  );
+  if (!previous || previous.left === undefined || previous.top === undefined) return fresh;
+  const sameSize = previous.width === size.width && previous.height === size.height;
   const still =
     Math.abs(origin.left - previous.left) <= 1 && Math.abs(origin.top - previous.top) <= 1;
-  if (inside && still) {
-    return { width: size.width, height: size.height, left: previous.left, top: previous.top };
+  // Keep the old origin only while that whole rectangle still sits in the box.
+  if (sameSize && still && rectFits(previous, boxW, boxH)) {
+    return clampPlacement(previous, boxW, boxH);
   }
-  return { width: size.width, height: size.height, left: origin.left, top: origin.top };
+  return fresh;
 }

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { chromium, expect, test, webkit } from "@playwright/test";
 import fs from "node:fs";
 
 const shotPrefix = process.env.SHOT_PREFIX ? `${process.env.SHOT_PREFIX}-` : "";
@@ -99,6 +99,42 @@ test("letterbox at 1280x720 and a mismatched landscape viewport", async ({ page 
   expect(odd.width).toBeLessThan(1100.5);
   expect(odd.height).toBeLessThan(820);
   await page.screenshot({ path: shot("letterbox") });
+});
+
+test("a portrait load resized to landscape keeps the canvas inside and centered", async () => {
+  async function check(browserType, name) {
+    const browser = await browserType.launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 414, height: 896 } });
+      await page.goto(gameURL());
+      await page.waitForFunction(() => window.__anton?.frameBox);
+      await page.setViewportSize({ width: 896, height: 414 });
+      await page.waitForFunction(() => {
+        const rect = document.querySelector("canvas")?.getBoundingClientRect();
+        if (!rect || rect.width < 100) return false;
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const centeredX = Math.abs(rect.left - (width - rect.width) / 2) < 3;
+        const centeredY = Math.abs(rect.top - (height - rect.height) / 2) < 3;
+        return rect.left >= -1 && rect.top >= -1 && rect.right <= width + 1 && rect.bottom <= height + 1 && centeredX && centeredY;
+      });
+      await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "Brake It, Anton"));
+      const box = await page.locator("canvas").boundingBox();
+      const view = page.viewportSize();
+      expect(box.x).toBeGreaterThanOrEqual(-1);
+      expect(box.y).toBeGreaterThanOrEqual(-1);
+      expect(box.x + box.width).toBeLessThanOrEqual(view.width + 1);
+      expect(box.y + box.height).toBeLessThanOrEqual(view.height + 1);
+      expect(Math.abs(box.x - (view.width - box.width) / 2)).toBeLessThan(3);
+      expect(Math.abs(box.y - (view.height - box.height) / 2)).toBeLessThan(3);
+      expect(box.width / box.height).toBeCloseTo(16 / 9, 1);
+      await page.screenshot({ path: `/opt/cursor/artifacts/landscape-${name}.png` });
+    } finally {
+      await browser.close();
+    }
+  }
+  await check(chromium, "chromium");
+  await check(webkit, "webkit");
 });
 
 test("portrait asks to rotate and does not show the playfield", async ({ page }) => {
