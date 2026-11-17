@@ -1910,7 +1910,10 @@ test("the plan footprint matches the chassis at both sides and several depths", 
       show(sim);
       return { sim, h, actor: placedScene(sim, 1).actors[0] };
     }
-    const dogMeet = actorSim("dog", -2.05, 0, 0.55, 0.8);
+    // The dog stands ahead of the nose. A body at the bumper used to paint
+    // over the roof; depth order now keeps the car on top of that overlap,
+    // so the sprite check uses a dog that is still in front.
+    const dogMeet = actorSim("dog", 1.4, 0, 0.55, 0.8);
     const dogSc = Math.max(0.62, Math.min(1.45, dogMeet.actor.spot.scale * 1.55));
     const dogStep = gaitOffset(dogMeet.actor.travel ?? actorTravel(dogMeet.h, dogMeet.sim), "dog", false);
     const hood = project(-0.2, dogMeet.sim.x - 0.45);

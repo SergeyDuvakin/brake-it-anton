@@ -446,6 +446,13 @@ export function drawPauseScreen(ctx, state, sink) {
   sideButtons(ctx, sink, state);
 }
 
+function lossLine(sim) {
+  if (sim.failReason === "body") return "Врезались";
+  if (sim.failReason === "cargo") return sim.cargoType === "fish" ? "Рыбка разлилась" : "Крем помялся";
+  if (sim.failReason === "timeout") return "Не успели";
+  return "Антон задумался...";
+}
+
 function starsLine(graded) {
   return `${"★".repeat(graded.stars)}${"☆".repeat(3 - graded.stars)}`;
 }
@@ -500,7 +507,7 @@ export function drawResultScreen(ctx, state, sink) {
       paint(ctx, sink.labels, line, row.x, row.y, row.w, row.h, 20, INK, false);
     });
   } else {
-    const line1 = success ? "Машина цела" : "Антон задумался...";
+    const line1 = success ? "Машина цела" : lossLine(sim);
     const line2 = success ? (graded.badge ? "Почти не понадобился" : "Антон доволен") : "Попробуем ещё раз?";
     const a = place(card, 140, 560, 580, 42);
     const b = place(card, 140, 606, 580, 42);

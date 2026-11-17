@@ -40,10 +40,11 @@ export function createSim(mission, seed = 1) {
     rewarded: false,
     commitAt: 0,
     crossT: -1,
-    crossDur: h.crossDur ?? (h.type === "pedestrian" ? 3.35 : h.type === "cutin" ? 2.65 : h.type === "roller" ? 2.35 : 0),
+    crossDur: h.crossDur ?? (h.type === "pedestrian" ? 3.21 : h.type === "cutin" ? 2.65 : 0),
     yielded: false,
     hopped: false,
   }));
+  for (const hazard of hazards) initEntity(hazard);
   return {
     missionId: mission.id,
     infinite: !!mission.infinite,
@@ -156,27 +157,48 @@ function sideOf(h, near = 5.15) {
   return h.x >= 0 ? near : -near;
 }
 
+function smooth(t) {
+  const u = clamp(t, 0, 1);
+  return u * u * (3 - 2 * u);
+}
+
+/** pedestrian | animal | car | static. Cars that already sit in a lane are parked. */
+export function familyOf(type) {
+  if (type === "pedestrian") return "pedestrian";
+  if (type === "dog") return "animal";
+  if (type === "cutin" || type === "stopped") return "car";
+  return "static";
+}
+
+function sideX(h, abs) {
+  return (h.x >= 0 ? 1 : -1) * abs;
+}
+
 /**
- * Lateral position in metres.
- * People and pulling-out cars cross on a clock once they have started,
- * so a stopped instructor can wait them out. Until then they stand off
- * the lane. A body placed on top of the car (tests, a late overlap)
- * is already in the lane.
- * Dogs still run in with distance: Anton is supposed to steer around
- * them, not wait for a crossing.
+ * Lateral position in metres. The sim step writes `pose`; collision,
+ * steering and the picture only read it. Objects built by a test with
+ * no pose still answer from the old crossing curve.
  */
 export function hazardWorldX(h, sim) {
-  const dist = h.s - sim.s;
-  if (h.type === "pedestrian") return actorX(h, sim, dist, 5.2, -Math.sign(h.x || 1) * 5.35);
-  if (h.type === "cutin") return actorX(h, sim, dist, 5.6, -Math.sign(h.x || 1) * 5.5);
+  const posed = h && h.pose && Number.isFinite(h.pose.x);
+  // A test can set crossT on a body that has not stepped yet. Until the
+  // machine leaves the curb, that clock still answers.
+  const sampling = h && h.crossT >= 0 && (!h.motion || h.motion === "curb");
+  if (posed && !sampling) return h.pose.x;
+  return derivedWorldX(h, sim);
+}
+
+function derivedWorldX(h, sim) {
+  const dist = h.s - (sim?.s || 0);
+  if (h.type === "pedestrian") return actorCurve(h, dist, 5.2, -Math.sign(h.x || 1) * 5.35);
+  if (h.type === "cutin") return actorCurve(h, dist, 5.6, -Math.sign(h.x || 1) * 5.5);
   if (h.type === "dog") {
     const side = sideOf(h, 4.9);
     if (dist > 18) return side + Math.sin(h.s) * 0.15;
     const t = clamp(1 - dist / 18, 0, 1);
-    const darted = side + (h.x - side) * t + Math.sin(t * Math.PI) * 0.85 * Math.sign(side || 1);
-    return darted;
+    return side + (h.x - side) * t + Math.sin(t * Math.PI) * 0.85 * Math.sign(side || 1);
   }
-  if (h.type === "roller") return actorX(h, sim, dist, 5.35, -Math.sign(h.x || 1) * 5.15);
+  if (h.type === "roller") return actorCurve(h, dist, 5.35, -Math.sign(h.x || 1) * 5.15);
   if (h.type === "bin") {
     const side = sideOf(h, 4.55);
     if (dist > 16) return side;
@@ -186,16 +208,12 @@ export function hazardWorldX(h, sim) {
   return h.x;
 }
 
-function smooth(t) {
-  return t * t * (3 - 2 * t);
-}
-
-/** Curb, walk to the lane, linger, leave. u is 0..1 of the crossing. */
-function actorX(h, sim, dist, sideAbs, farX) {
+/** Old curve, kept so a gait sample can ask "where would u be" without a pose. */
+function actorCurve(h, dist, sideAbs, farX) {
   const side = h.x >= 0 ? sideAbs : -sideAbs;
   const lane = h.x;
   if (h.hopped) return farX;
-  if (h.crossT < 0) {
+  if (!(h.crossT >= 0)) {
     if (dist < 2.4) return lane;
     return side;
   }
@@ -206,6 +224,200 @@ function actorX(h, sim, dist, sideAbs, farX) {
   if (u < 0.74) return lane;
   if (u < 1) return lane + (farX - lane) * smooth((u - 0.74) / 0.26);
   return farX;
+}
+
+const PED_ENTER = 0.4;
+const PED_LINGER = 1.94;
+const PED_LEAVE = 0.87;
+const PED_TOTAL = PED_ENTER + PED_LINGER + PED_LEAVE;
+const CUT_ENTER = 0.9;
+const DOG_DART = 0.85;
+const DOG_LEAVE = 0.9;
+
+function initEntity(h) {
+  h.family = familyOf(h.type);
+  if (h.family === "static" || h.type === "stopped") h.motion = "rest";
+  else h.motion = "curb";
+  h.motionT = 0;
+  const x = h.family === "static" || h.type === "stopped"
+    ? h.x
+    : h.family === "animal"
+      ? sideX(h, 4.9)
+      : h.type === "cutin"
+        ? sideX(h, 5.6)
+        : sideX(h, 5.2);
+  h.pose = { s: h.s, x };
+  h.prevPose = { s: h.s, x };
+}
+
+/**
+ * People walk across and finish. Animals dart and leave. A cut-in takes
+ * the lane and drives along it. Bins, lids and holes stay where they were
+ * authored until a shove moves the pose.
+ */
+function advanceEntity(h, sim, dt) {
+  if (!h.pose) initEntity(h);
+  if (h.resolved) return;
+  const dist = h.s - sim.s;
+  if (h.family === "pedestrian") advancePedestrian(h, sim, dt, dist);
+  else if (h.family === "animal") advanceAnimal(h, sim, dt, dist);
+  else if (h.type === "cutin") advanceCutin(h, sim, dt, dist);
+  else {
+    h.motion = h.motion === "shoved" ? "shoved" : "rest";
+    h.pose.s = h.s;
+    h.pose.x = h.x;
+  }
+}
+
+function advancePedestrian(h, sim, dt, dist) {
+  const curb = sideX(h, 5.2);
+  const lane = h.x;
+  const far = -Math.sign(h.x || 1) * 5.35;
+  if (h.motion === "curb" && h.crossT >= 0) {
+    h.motion = "enter";
+    h.motionT = clamp(h.crossT / (h.crossDur || PED_TOTAL), 0, 1) * PED_TOTAL;
+  }
+  const onTop = dist < h.halfL + CFG.carHalfFront && dist > -(h.halfL + CFG.carHalfBack);
+  if (h.motion === "curb" && onTop && !(h.crossT >= 0)) {
+    h.motion = "linger";
+    h.motionT = PED_ENTER + 0.05;
+    h.pose.x = lane;
+    h.pose.s = h.s;
+    h.crossT = ((h.motionT / PED_TOTAL) * (h.crossDur || PED_TOTAL));
+    return;
+  }
+  if (h.motion === "curb") {
+    h.pose.x = curb;
+    h.pose.s = h.s;
+    h.crossT = -1;
+    const prevDist = h.s - (sim.prevS ?? sim.s);
+    const seen = Math.min(prevDist, dist) < 11.5 && Math.max(prevDist, dist) > -1;
+    if (!seen) return;
+    h.motion = "enter";
+    h.motionT = 0;
+    h.crossT = 0;
+    if (sim.v < 3.4) h.yielded = true;
+  }
+  h.motionT += dt;
+  const t = h.motionT;
+  if (t < PED_ENTER) {
+    h.motion = "enter";
+    h.pose.x = curb + (lane - curb) * smooth(t / PED_ENTER);
+  } else if (t < PED_ENTER + PED_LINGER) {
+    h.motion = "linger";
+    h.pose.x = lane;
+  } else if (t < PED_TOTAL) {
+    h.motion = "leave";
+    h.pose.x = lane + (far - lane) * smooth((t - PED_ENTER - PED_LINGER) / PED_LEAVE);
+  } else {
+    h.motion = "off";
+    h.pose.x = far;
+  }
+  h.pose.s = h.s;
+  const dur = h.crossDur || PED_TOTAL;
+  h.crossT = h.motion === "off" ? dur : (t / PED_TOTAL) * dur;
+  if (sim.v < 3 && h.playerBraked) h.yielded = true;
+}
+
+function advanceAnimal(h, sim, dt, dist) {
+  const curb = sideX(h, 4.9);
+  const lane = h.x;
+  if (h.motion === "curb") {
+    h.pose.x = curb + Math.sin(h.s) * 0.15;
+    h.pose.s = h.s;
+    if (dist < 18 && dist > -2) {
+      h.motion = "dart";
+      h.motionT = 0;
+    }
+    return;
+  }
+  h.motionT += dt;
+  if (h.motion === "dart" && h.motionT < DOG_DART) {
+    const u = h.motionT / DOG_DART;
+    h.pose.x = curb + (lane - curb) * smooth(u) + Math.sin(u * Math.PI) * 0.85 * Math.sign(curb || 1);
+  } else if (h.motion === "dart") {
+    h.motion = "leave";
+    h.motionT = 0;
+    h.pose.x = lane;
+  }
+  if (h.motion === "leave") {
+    const u = clamp(h.motionT / DOG_LEAVE, 0, 1);
+    // Back to the curb they came from, so Anton's avoid lane stays empty.
+    h.pose.x = lane + (curb - lane) * smooth(u);
+    if (h.motionT >= DOG_LEAVE) h.motion = "off";
+  }
+  if (h.motion === "off") h.pose.x = curb;
+  h.pose.s = h.s;
+}
+
+function advanceCutin(h, sim, dt, dist) {
+  const curb = sideX(h, 5.6);
+  const lane = h.x;
+  const onTop = dist < h.halfL + CFG.carHalfFront && dist > -(h.halfL + CFG.carHalfBack);
+  if (h.motion === "curb" && onTop) {
+    h.motion = "lane";
+    h.motionT = CUT_ENTER;
+    h.pose.x = lane;
+    h.pose.s = h.s;
+    h.crossT = h.crossDur || 2.65;
+    return;
+  }
+  if (h.motion === "curb") {
+    h.pose.x = curb;
+    h.pose.s = h.s;
+    h.crossT = -1;
+    const prevDist = h.s - (sim.prevS ?? sim.s);
+    const seen = Math.min(prevDist, dist) < 13 && Math.max(prevDist, dist) > -1;
+    if (!seen) return;
+    h.motion = "enter";
+    h.motionT = 0;
+    h.crossT = 0;
+    if (sim.v < 4) h.yielded = true;
+  }
+  h.motionT += dt;
+  if (h.motionT < CUT_ENTER) {
+    h.motion = "enter";
+    h.pose.x = curb + (lane - curb) * smooth(h.motionT / CUT_ENTER);
+  } else {
+    h.motion = "lane";
+    h.pose.x = lane;
+  }
+  // Once the player has slowed, the other car drives off along the lane.
+  // At cruise it holds its spot, so the hit is unavoidable.
+  if (sim.v < 5) h.yielded = true;
+  if (h.yielded) h.pose.s += Math.max(18, CFG.infiniteSpeedCap + 2) * dt;
+  h.s = h.pose.s;
+  const dur = h.crossDur || 2.65;
+  const gap = h.pose.s - sim.s;
+  if (h.motion === "lane" && h.yielded && gap > 16) h.crossT = dur;
+  else if (h.motion === "lane") h.crossT = dur * 0.5;
+  else h.crossT = (h.motionT / CUT_ENTER) * dur * 0.4;
+  if (sim.v < 3.6 && h.playerBraked) h.yielded = true;
+}
+
+/** Knock the body out of the car. Statics move only here, not on their own. */
+function shovePose(sim, h) {
+  if (!h.pose) initEntity(h);
+  h.hopped = true;
+  if (h.type === "cutin" || h.type === "stopped") {
+    h.pose.x = h.x;
+    h.pose.s = Math.max(h.pose.s, sim.s + CFG.carHalfFront + h.halfL + 0.55);
+    h.s = h.pose.s;
+    h.motion = "lane";
+    return;
+  }
+  if (h.family === "pedestrian" || h.family === "animal") {
+    h.pose.x = -Math.sign(h.x || 1) * (h.family === "animal" ? 5.1 : 5.35);
+    h.pose.s = h.s;
+    h.motion = "off";
+    h.crossT = h.crossDur || PED_TOTAL;
+    return;
+  }
+  const sign = Math.sign((h.pose.x || 0) - sim.x) || 1;
+  h.pose.x = sim.x + sign * (CFG.carHalfW + (h.halfW || 0.5) + 0.5);
+  h.x = h.pose.x;
+  h.pose.s = h.s;
+  h.motion = "shoved";
 }
 
 function log(sim, entry) {
@@ -435,9 +647,14 @@ export function contactDuringStep(sim, h, prevS) {
   const hx1 = hazardWorldX(h, sim);
   const reach = lateralReach(h);
   const lateral = overlapTimes((sim.prevX ?? sim.x) - hx0, sim.x - hx1, -reach, reach);
-  const near = h.s - h.halfL;
-  const far = h.s + h.halfL;
-  const along = overlapTimes(prevS, sim.s, near - CFG.carHalfFront, far + CFG.carHalfBack);
+  const s0 = h.prevS ?? h.s;
+  const s1 = h.s;
+  const along = overlapTimes(
+    prevS - s0,
+    sim.s - s1,
+    -(h.halfL + CFG.carHalfFront),
+    h.halfL + CFG.carHalfBack,
+  );
   return windowsOverlap(lateral, along);
 }
 
@@ -445,7 +662,9 @@ function snapshotPose(sim) {
   sim.prevS = sim.s;
   sim.prevX = sim.x;
   for (const h of sim.hazards) {
+    h.prevS = h.s;
     h.prevX = hazardWorldX(h, sim);
+    if (h.pose) h.prevPose = { s: h.pose.s, x: h.pose.x };
     h.prevTravel = actorTravel(h, sim);
   }
 }
@@ -465,6 +684,12 @@ export function hazardSnap(hazards) {
     crossT: h.crossT,
     hopped: !!h.hopped,
     yielded: !!h.yielded,
+    s: h.s,
+    x: h.x,
+    motion: h.motion,
+    motionT: h.motionT,
+    family: h.family,
+    pose: h.pose ? { s: h.pose.s, x: h.pose.x } : null,
   }));
 }
 
@@ -478,6 +703,12 @@ export function applyHazardSnap(hazards, snap) {
     h.crossT = item.crossT;
     h.hopped = item.hopped;
     h.yielded = item.yielded;
+    if (Number.isFinite(item.s)) h.s = item.s;
+    if (Number.isFinite(item.x)) h.x = item.x;
+    if (item.motion) h.motion = item.motion;
+    if (Number.isFinite(item.motionT)) h.motionT = item.motionT;
+    if (item.family) h.family = item.family;
+    if (item.pose) h.pose = { s: item.pose.s, x: item.pose.x };
   }
 }
 
@@ -533,7 +764,7 @@ function pedestrianTravel(h) {
   const dur = h.crossDur || 3.35;
   const u = clamp(h.crossT / dur, 0, 1);
   const dummy = { s: h.s - 10 };
-  const at = (uu) => hazardWorldX({ ...h, crossT: uu * dur, hopped: false }, dummy);
+  const at = (uu) => derivedWorldX({ ...h, pose: undefined, crossT: uu * dur, hopped: false }, dummy);
   const side = at(0);
   const lane = at(0.2);
   const here = at(u);
@@ -548,7 +779,7 @@ function dogTravel(h, dist) {
   const end = clamp(1 - Math.max(dist, 0) / 18, 0, 1);
   const steps = 64;
   const n = Math.max(1, Math.round(steps * end));
-  const at = (t) => hazardWorldX(h, { s: h.s - 18 * (1 - t) });
+  const at = (t) => derivedWorldX({ ...h, pose: undefined }, { s: h.s - 18 * (1 - t) });
   let prev = at(0);
   let length = 0;
   for (let i = 1; i <= n; i += 1) {
@@ -639,32 +870,8 @@ function collide(sim, prevS) {
     if (!isSolidHazard(h)) continue;
     if (holdYield(sim, h)) continue;
 
-    const entered = contactDuringStep(sim, h, prevS);
-    if (!entered) continue;
-
-    const near = h.s - h.halfL;
-    const gap = near - frontOf(sim.s);
-    const geometric = isGeometric(h.type);
-    const limit = safeSpeed(h.type);
-
-    if (!geometric && sim.v <= limit) {
-      // Already buried in the body at a crawl: they hop aside. A fresh arrival stops short.
-      if (gap < -0.45 || h.type === "bin") {
-        h.hopped = true;
-        markClear(sim, h, sim.v <= 1.25 ? "scrape" : "slow");
-        if (h.type === "bin") say(sim, "БАК ЛЁГ");
-      } else {
-        if (!h.yielded) log(sim, { kind: "yield", id: h.id });
-        sim.stats.yields += h.yielded ? 0 : 1;
-        pinShort(sim, h);
-      }
-      continue;
-    }
-
-    resolveHit(sim, h);
-    const contact = near - CFG.carHalfFront * 0.15;
-    if (sim.s > contact) sim.s = contact;
-    sim.v = Math.min(sim.v, 1.6);
+    if (!contactDuringStep(sim, h, prevS)) continue;
+    resolveContact(sim, h);
   }
 
   for (const h of sim.hazards) {
@@ -695,24 +902,49 @@ function noteNear(sim, h) {
   log(sim, { kind: "near", id: h.id });
 }
 
+function boxesOverlapNow(sim, h) {
+  const hx = hazardWorldX(h, sim);
+  const hs = h.pose?.s ?? h.s;
+  const lateral = Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW - 0.02;
+  const along = sim.s + CFG.carHalfFront > hs - h.halfL && sim.s - CFG.carHalfBack < hs + h.halfL;
+  return lateral && along;
+}
+
+/**
+ * Detection already happened. Resolution is a table: stop short, comic shove,
+ * or a real hit. Every branch leaves the pose outside the car.
+ */
+function resolveContact(sim, h) {
+  const near = (h.pose?.s ?? h.s) - h.halfL;
+  const gap = near - frontOf(sim.s);
+  const geometric = isGeometric(h.type);
+  const limit = safeSpeed(h.type);
+  if (!geometric && sim.v <= limit && gap >= -0.45 && h.type !== "bin" && h.type !== "roller") {
+    if (!h.yielded) log(sim, { kind: "yield", id: h.id });
+    sim.stats.yields += h.yielded ? 0 : 1;
+    pinShort(sim, h);
+    return;
+  }
+  if (!geometric && sim.v <= limit) {
+    shovePose(sim, h);
+    markClear(sim, h, sim.v <= 1.25 ? "scrape" : "slow");
+    if (h.type === "bin") say(sim, "БАК ЛЁГ");
+    return;
+  }
+  shovePose(sim, h);
+  resolveHit(sim, h);
+  if (boxesOverlapNow(sim, h)) shovePose(sim, h);
+}
+
 function advanceActors(sim, dt) {
   for (const h of sim.hazards) {
-    if (h.resolved) continue;
-    if (h.type !== "pedestrian" && h.type !== "cutin" && h.type !== "roller") continue;
-    const dist = h.s - sim.s;
-    if (h.crossT < 0) {
-      const close = h.type === "cutin" ? 13 : h.type === "roller" ? 22 : 11.5;
-      const arrive = dist < close && dist > 3.2;
-      const waited = h.playerBraked && sim.v < 2.2 && dist < close + 3 && dist > 3.2;
-      if (arrive || waited) {
-        h.crossT = 0;
-        if (sim.v < safeSpeed(h.type) + 0.4) h.yielded = true;
-        const line = h.type === "cutin" ? "ОТКУДА ОН" : h.type === "roller" ? "ВОЛОСЫ" : "ОН В ТЕЛЕФОНЕ";
-        if (dist > 4) say(sim, line);
-      }
-    } else {
-      h.crossT += dt;
-      if (sim.v < safeSpeed(h.type) && h.playerBraked) h.yielded = true;
+    if (!isSolidHazard(h)) continue;
+    const before = h.motion;
+    advanceEntity(h, sim, dt);
+    if (before === "curb" && h.motion !== "curb" && h.motion !== "rest") {
+      const dist = (h.pose?.s ?? h.s) - sim.s;
+      const line = h.type === "cutin" ? "ОТКУДА ОН" : h.type === "roller" ? "ВОЛОСЫ" : h.type === "pedestrian" ? "ОН В ТЕЛЕФОНЕ" : null;
+      if (line && dist > 4) say(sim, line);
     }
   }
 }
