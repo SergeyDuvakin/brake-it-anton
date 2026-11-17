@@ -16,7 +16,7 @@ import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
-import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
+import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, nextLessonOpen, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint, resultKeyAction } from "../js/ui.js";
 import { CALLOUT, DRIVER_PLATE, MOOD_TILE, PAUSE_BUTTON, platesSeparated } from "../js/layout.js";
 import {
   CAR_BODY_H,
@@ -60,7 +60,7 @@ import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
 import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import { CABIN_POSES } from "../js/cabin.js";
-import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
+import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, platePixel, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
 import {
   createSession,
   keyDown,
@@ -573,6 +573,15 @@ test("sidewalk props stay on the slab, and the warning stays in the lane", () =>
     && plate.x + plate.w >= icon.x + icon.w && plate.y + plate.h >= icon.y + icon.h;
   assert.equal(covers(HUD_PLATES[0], gauge), true);
   assert.equal(covers(HUD_PLATES[1], pause), true);
+  for (const plate of HUD_PLATES) {
+    assert.equal(platePixel(plate, plate.x, plate.y), "cut");
+    assert.equal(platePixel(plate, plate.x + 1, plate.y), "cut");
+    assert.equal(platePixel(plate, plate.x + 2, plate.y), "ink");
+    assert.equal(platePixel(plate, plate.x + 1, plate.y + 1), "ink");
+    assert.equal(platePixel(plate, plate.x + 3, plate.y + 3), "paper");
+    assert.equal(platePixel(plate, plate.x + plate.w - 1, plate.y), "cut");
+    assert.equal(platePixel(plate, plate.x, plate.y + plate.h - 1), "cut");
+  }
   const blocked = bangPlacement(1.8, [{ x: lane.x - 2, y: lane.y - 2, w: lane.w + 4, h: lane.h + 4 }]);
   assert.ok(blocked.y > lane.y, JSON.stringify(blocked));
 });
@@ -2943,11 +2952,31 @@ test("patience needle and pedal hinge follow the live input", () => {
     }
   }
 
-  const won = ride("result", 12, 0, true, applyVictory(freshSave(), "lesson1", 3));
+  const wonSave = applyVictory(freshSave(), "lesson1", 3);
+  const won = ride("result", 12, 0, true, wonSave);
   assert.ok(won.labels.some((item) => item.text === "ДОЕХАЛИ!"));
   assert.ok(won.labels.some((item) => item.text === "Машина цела"));
   assert.ok(won.labels.some((item) => item.text === "ДАЛЬШЕ"));
-  assert.ok(won.spots.some((spot) => spot.id === "next"));
+  assert.ok(won.labels.some((item) => item.text === "ЕЩЁ РАЗ"));
+  assert.ok(won.labels.some((item) => item.text === "В ГАРАЖ"));
+  const wonNext = won.spots.find((spot) => spot.id === "next");
+  const wonRetry = won.spots.find((spot) => spot.id === "retry");
+  const wonGarage = won.spots.find((spot) => spot.id === "to-garage");
+  assert.ok(wonNext && wonRetry && wonGarage);
+  assert.ok(wonNext.h > wonRetry.h && wonRetry.h > wonGarage.h, JSON.stringify({ wonNext, wonRetry, wonGarage }));
+  const wonSession = createSession(getMission("lesson1"), { seed: 11 });
+  wonSession.phase = "result";
+  wonSession.result = { success: true };
+  wonSession.sim.infinite = false;
+  assert.equal(nextLessonOpen({ session: wonSession, save: wonSave }), true);
+  assert.equal(resultKeyAction(wonSession, wonSave, "Enter"), "next");
+  assert.equal(resultKeyAction(wonSession, wonSave, "Space"), "retry");
+  const locked = ride("result", 12, 0, true, freshSave());
+  assert.ok(locked.labels.some((item) => item.text === "ДАЛЬШЕ"));
+  assert.equal(locked.spots.some((spot) => spot.id === "next"), false);
+  assert.ok(locked.spots.some((spot) => spot.id === "retry"));
+  assert.ok(locked.spots.some((spot) => spot.id === "to-garage"));
+  assert.equal(resultKeyAction(wonSession, freshSave(), "Enter"), "retry");
   const lost = ride("result", 80, 0, false);
   assert.ok(lost.labels.some((item) => item.text === "НЕ ДОЕХАЛИ"));
   const crashed = createSession(getMission("lesson1"), { seed: 11 });
@@ -2996,10 +3025,20 @@ test("patience needle and pedal hinge follow the live input", () => {
     pointer: { over: null, pressed: null },
   });
   assert.ok(fishLoss.labels.some((item) => item.text === "Рыбка разлилась"));
-  assert.ok(lost.labels.some((item) => item.text === "ЗАНОВО"));
+  assert.ok(lost.labels.some((item) => item.text === "ЕЩЁ РАЗ"));
+  assert.ok(lost.labels.some((item) => item.text === "В ГАРАЖ"));
+  assert.equal(lost.labels.some((item) => item.text === "ДАЛЬШЕ"), false);
   assert.equal(lost.spots.some((spot) => spot.id === "next"), false);
-  assert.ok(lost.spots.some((spot) => spot.id === "retry"));
-  for (const frame of [won, lost]) {
+  const lostRetry = lost.spots.find((spot) => spot.id === "retry");
+  const lostGarage = lost.spots.find((spot) => spot.id === "to-garage");
+  assert.ok(lostRetry && lostGarage);
+  assert.ok(lostRetry.h > lostGarage.h && lostRetry.h > 100);
+  const lostSession = createSession(getMission("lesson1"), { seed: 11 });
+  lostSession.phase = "result";
+  lostSession.result = { success: false };
+  assert.equal(resultKeyAction(lostSession, freshSave(), "Enter"), "retry");
+  assert.equal(resultKeyAction(lostSession, freshSave(), "Space"), "retry");
+  for (const frame of [won, lost, locked]) {
     for (let i = 0; i < frame.labels.length; i += 1) {
       for (let j = i + 1; j < frame.labels.length; j += 1) {
         assert.equal(boxesOverlap(frame.labels[i], frame.labels[j]), false, `${frame.labels[i].text}/${frame.labels[j].text}`);

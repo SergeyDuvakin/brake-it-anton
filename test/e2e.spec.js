@@ -715,11 +715,21 @@ test("clicked retry, hotkey R and a stale space: the ride starts now", async ({ 
   const retryCss = await page.evaluate(() => {
     const spot = window.__anton.hotspots().find((item) => item.id === "retry");
     const rect = document.querySelector("canvas").getBoundingClientRect();
-    return spot.h * (rect.height / 900);
+    const labels = window.__anton.labels().map((item) => item.text);
+    return {
+      h: spot.h * (rect.height / 900),
+      again: labels.includes("ЕЩЁ РАЗ"),
+      garage: labels.includes("В ГАРАЖ"),
+      next: window.__anton.hotspots().some((item) => item.id === "next"),
+      toGarage: window.__anton.hotspots().some((item) => item.id === "to-garage"),
+    };
   });
-  expect(retryCss).toBeGreaterThanOrEqual(48);
+  expect(retryCss.h).toBeGreaterThanOrEqual(48);
+  expect(retryCss.again).toBe(true);
+  expect(retryCss.garage).toBe(true);
+  expect(retryCss.next).toBe(false);
+  expect(retryCss.toGarage).toBe(true);
   await page.keyboard.down("Space");
-  await clickId(page, "retry");
   const clicked = await page.evaluate(() => window.__anton.getState());
   expect(clicked.phase).toBe("drive");
   expect(clicked.countdown).toBe(0);
@@ -773,11 +783,13 @@ test("touch retry on 844×390 is immediate and the pedal is a real target", asyn
   const point = await page.evaluate(() => {
     const spot = window.__anton.hotspots().find((item) => item.id === "retry");
     const rect = document.querySelector("canvas").getBoundingClientRect();
+    const sx = rect.width / 1600;
+    const sy = rect.height / 900;
     return {
-      x: rect.left + (spot.x + spot.w / 2) * (rect.width / 1600),
-      y: rect.top + (spot.y + spot.h / 2) * (rect.height / 900),
-      cssH: spot.h * (rect.height / 900),
-      cssW: spot.w * (rect.width / 1600),
+      x: rect.left + (spot.x + 20) * sx,
+      y: rect.top + (spot.y + 20) * sy,
+      cssH: spot.h * sy,
+      cssW: spot.w * sx,
     };
   });
   expect(point.cssH).toBeGreaterThanOrEqual(48);
@@ -2200,7 +2212,15 @@ test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", asy
   const won = await page.evaluate(() => window.__anton.getState());
   expect(won.success).toBe(true);
   expect(won.stars).toBeGreaterThan(0);
+  const successActions = await page.evaluate(() => ({
+    labels: window.__anton.labels().map((item) => item.text),
+    spots: window.__anton.hotspots().map((item) => item.id),
+  }));
+  expect(successActions.labels).toEqual(expect.arrayContaining(["ДАЛЬШЕ", "ЕЩЁ РАЗ", "В ГАРАЖ"]));
+  expect(successActions.spots).toEqual(expect.arrayContaining(["next", "retry", "to-garage"]));
   await page.screenshot({ path: shot("result-success") });
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => window.__anton.getState().phase !== "result");
 
   await page.evaluate(() => {
     window.__anton.setAutopilot("panic");
@@ -2210,6 +2230,16 @@ test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", asy
   const lost = await page.evaluate(() => window.__anton.getState());
   expect(lost.success).toBe(false);
   expect(lost.fail).toBe("cargo");
+  const failActions = await page.evaluate(() => ({
+    labels: window.__anton.labels().map((item) => item.text),
+    spots: window.__anton.hotspots().map((item) => item.id),
+  }));
+  expect(failActions.labels).toContain("ЕЩЁ РАЗ");
+  expect(failActions.labels).toContain("В ГАРАЖ");
+  expect(failActions.labels).not.toContain("ДАЛЬШЕ");
+  expect(failActions.spots).toContain("retry");
+  expect(failActions.spots).toContain("to-garage");
+  expect(failActions.spots).not.toContain("next");
   await page.screenshot({ path: shot("result-fail") });
   expect(errors).toEqual([]);
 });
@@ -2384,6 +2414,18 @@ test("pixel world, cabin and pedal render, and blits stay unsmoothed", async ({ 
   });
   expect(painted.ready).toBe(true);
   expect(painted.smoothing).toBe(false);
+  const plates = await page.evaluate(() => {
+    const ctx = document.querySelector("canvas").getContext("2d");
+    const at = (nx, ny) => {
+      const px = ctx.getImageData(28 + nx * 4 + 2, 28 + ny * 4 + 2, 1, 1).data;
+      return `${px[0]},${px[1]},${px[2]}`;
+    };
+    return { cut: at(79, 0), ink: at(77, 0), pauseCut: at(219, 0), pauseInk: at(221, 0) };
+  });
+  expect(plates.ink).toBe("28,24,28");
+  expect(plates.pauseInk).toBe("28,24,28");
+  expect(plates.cut).not.toBe("28,24,28");
+  expect(plates.pauseCut).not.toBe("28,24,28");
   expect(painted.world).toBeGreaterThan(30);
   expect(painted.cabin).toBeGreaterThan(30);
   expect(painted.pedal).toBeGreaterThan(30);

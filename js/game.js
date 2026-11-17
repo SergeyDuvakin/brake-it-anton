@@ -11,6 +11,7 @@ import { SAVE_KEY } from "./config.js";
 import { whenCabinReady, cabinReady } from "./cabin.js";
 import { whenPixelReady } from "./pixel-assets.js";
 import { bumperFootGap, render, whenCarsReady } from "./draw.js";
+import { resultKeyAction } from "./ui.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, futureMissions, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
@@ -444,6 +445,11 @@ window.addEventListener("keydown", (event) => {
   }
   audio.unlock();
   if (event.code === "Space") event.preventDefault();
+  const resultAction = resultKeyAction(session, save, event.code);
+  if (resultAction && !event.repeat) {
+    activate(resultAction);
+    return;
+  }
   if (event.repeat && event.code !== "Space") return;
   if (!session) {
     if (event.code === "Enter" || event.code === "Space") activate(screen === "garage" ? "go" : "start");
