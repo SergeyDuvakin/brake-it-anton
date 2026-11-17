@@ -142,8 +142,57 @@ test("portrait asks to rotate and does not show the playfield", async ({ page })
   await page.goto(gameURL());
   await expect(page.locator("#rotate")).toBeVisible();
   await expect(page.locator("#rotate")).toContainText("Поверни телефон");
+  await expect(page.locator("#rotate")).toContainText("Пункте управления");
+  await expect(page.locator("#rotate")).toContainText("блокировку ориентации");
   await expect(page.locator("#wrap")).toBeHidden();
   await page.screenshot({ path: shot("portrait") });
+});
+
+test("orientation follows the portrait media query", async ({ page }) => {
+  await page.setViewportSize({ width: 414, height: 896 });
+  await page.goto(gameURL());
+  await expect(page.locator("body")).toHaveClass(/is-portrait/);
+  await expect(page.locator("#rotate")).toBeVisible();
+  await page.setViewportSize({ width: 896, height: 414 });
+  await expect(page.locator("body")).not.toHaveClass(/is-portrait/);
+  await expect(page.locator("#rotate")).toBeHidden();
+  await expect(page.locator("#wrap")).toBeVisible();
+});
+
+const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+
+test("an iPhone browser can dismiss the home-screen hint, and standalone never shows it", async ({ browser }) => {
+  const context = await browser.newContext({
+    viewport: { width: 896, height: 414 },
+    userAgent: IPHONE_UA,
+  });
+  const page = await context.newPage();
+  await page.goto(gameURL());
+  const hint = page.locator("#home-hint");
+  await expect(hint).toBeVisible();
+  await expect(hint).toContainText("На экран „Домой“");
+  const bar = await hint.boundingBox();
+  const view = page.viewportSize();
+  expect(bar.y).toBeLessThan(40);
+  expect(bar.y + bar.height).toBeLessThan(view.height * 0.45);
+  await page.locator("#home-hint-dismiss").click();
+  await expect(hint).toBeHidden();
+  expect(await page.evaluate(() => localStorage.getItem("brake-it-anton-home-hint"))).toBe("1");
+  await page.reload();
+  await expect(hint).toBeHidden();
+  await context.close();
+
+  const installed = await browser.newContext({
+    viewport: { width: 896, height: 414 },
+    userAgent: IPHONE_UA,
+  });
+  await installed.addInitScript(() => {
+    Object.defineProperty(navigator, "standalone", { configurable: true, get: () => true });
+  });
+  const home = await installed.newPage();
+  await home.goto(gameURL());
+  await expect(home.locator("#home-hint")).toBeHidden();
+  await installed.close();
 });
 
 function boxesOverlap(a, b) {

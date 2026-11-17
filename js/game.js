@@ -31,6 +31,7 @@ import {
 import { applyVictory, freshSave, noteInfiniteDistance, parseSave, toggleSetting } from "./storage.js";
 import { drainFrame } from "./clock.js";
 import { backingScale, clampPlacement, contentBox, stablePlacement, tightestBox } from "./viewport.js";
+import { HOME_HINT_KEY, isIosDevice, isPortraitOrientation, shouldShowHomeHint } from "./mobile.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -502,10 +503,35 @@ function metricChanged(next) {
 }
 
 function syncOrient() {
-  const box = tightestBox(readMetric());
-  const width = box.width || window.innerWidth || 0;
-  const height = box.height || window.innerHeight || 0;
-  document.body.classList.toggle("is-portrait", height > width);
+  const query = window.matchMedia?.("(orientation: portrait)");
+  const mediaMatches = query && typeof query.matches === "boolean" ? query.matches : undefined;
+  const portrait = isPortraitOrientation(mediaMatches, window.innerWidth, window.innerHeight);
+  document.body.classList.toggle("is-portrait", portrait);
+}
+
+function currentDisplayMode() {
+  if (window.matchMedia?.("(display-mode: standalone)")?.matches) return "standalone";
+  if (window.matchMedia?.("(display-mode: fullscreen)")?.matches) return "fullscreen";
+  if (window.matchMedia?.("(display-mode: browser)")?.matches) return "browser";
+  return "unknown";
+}
+
+function syncHomeHint() {
+  const hint = document.getElementById("home-hint");
+  if (!hint) return;
+  let dismissed = false;
+  try {
+    dismissed = localStorage.getItem(HOME_HINT_KEY) === "1";
+  } catch {
+    dismissed = false;
+  }
+  const show = shouldShowHomeHint({
+    ios: isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints),
+    standalone: navigator.standalone,
+    displayMode: currentDisplayMode(),
+    dismissed,
+  });
+  hint.hidden = !show;
 }
 
 let placement = null;
@@ -618,9 +644,20 @@ function scheduleRefit() {
 window.addEventListener("resize", refitSoon);
 window.addEventListener("orientationchange", scheduleRefit);
 window.screen?.orientation?.addEventListener("change", scheduleRefit);
+window.matchMedia?.("(orientation: portrait)")?.addEventListener?.("change", scheduleRefit);
 window.visualViewport?.addEventListener("resize", refitSoon);
 syncOrient();
 fitCanvas();
+syncHomeHint();
+document.getElementById("home-hint-dismiss")?.addEventListener("click", () => {
+  try {
+    localStorage.setItem(HOME_HINT_KEY, "1");
+  } catch {
+    /* Private mode can refuse the write. Hide the line for this visit anyway. */
+  }
+  const hint = document.getElementById("home-hint");
+  if (hint) hint.hidden = true;
+});
 
 window.__anton = {
   cabinReady,

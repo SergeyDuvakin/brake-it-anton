@@ -6,6 +6,13 @@
 }
 
 @font-face {
+  font-family: "Pixeloid Sans";
+  src: url("assets/pixel/fonts/PixeloidSans-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
   font-family: "Rubik Mono One";
   src: url("assets/fonts/RubikMonoOne-Regular.ttf") format("truetype");
   font-weight: 400;
@@ -57,27 +64,83 @@ canvas {
 #rotate {
   display: none;
   position: fixed;
+  z-index: 40;
   inset: 0;
-  padding: 32px;
   box-sizing: border-box;
+  padding:
+    calc(32px + env(safe-area-inset-top, 0px))
+    calc(24px + env(safe-area-inset-right, 0px))
+    calc(32px + env(safe-area-inset-bottom, 0px))
+    calc(24px + env(safe-area-inset-left, 0px));
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
   gap: 12px;
   background: #F6ECD6;
+  color: #1C181C;
+  font-family: "Pixeloid Sans", "Balsamiq Sans", sans-serif;
 }
 
 .rot-title {
   margin: 0;
-  font-family: "Rubik Mono One", sans-serif;
-  font-size: 28px;
+  font-family: "Pixeloid Sans", "Rubik Mono One", sans-serif;
+  font-size: 22px;
 }
 
 #rotate p {
   margin: 0;
-  max-width: 18em;
-  font-size: 22px;
+  max-width: 22em;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.rot-lock {
+  color: #2A2430;
+}
+
+#home-hint {
+  position: fixed;
+  z-index: 15;
+  top: 0;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 0;
+  padding:
+    calc(8px + env(safe-area-inset-top, 0px))
+    calc(12px + env(safe-area-inset-right, 0px))
+    8px
+    calc(12px + env(safe-area-inset-left, 0px));
+  background: #FFF6E4;
+  color: #1C181C;
+  border-bottom: 4px solid #1C181C;
+  font-family: "Pixeloid Sans", "Balsamiq Sans", sans-serif;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+}
+
+#home-hint[hidden] {
+  display: none;
+}
+
+#home-hint p {
+  margin: 0;
+  max-width: 36em;
+}
+
+#home-hint button {
+  flex: none;
+  font: inherit;
+  color: #1C181C;
+  background: #F6ECD6;
+  border: 3px solid #1C181C;
+  padding: 4px 10px;
 }
 
 .phone {

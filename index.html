@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#F6ECD6">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Anton">
   <title>Инструктор — Brake It, Anton</title>
   <link rel="icon" href="icons/favicon-32.png?v=5" type="image/png" sizes="32x32">
@@ -18,6 +19,11 @@
     <div class="phone" aria-hidden="true"></div>
     <p class="rot-title">Поверни телефон</p>
     <p>Инструктору нужна альбомная ориентация 16:9. Вертикальной версии нет.</p>
+    <p class="rot-lock">Если ничего не меняется, выключи блокировку ориентации в Пункте управления.</p>
+  </div>
+  <div id="home-hint" hidden>
+    <p>Поделиться → На экран „Домой“ — и игра откроется без вкладок</p>
+    <button type="button" id="home-hint-dismiss">Скрыть</button>
   </div>
   <div id="wrap">
     <canvas id="game" width="1600" height="900"></canvas>
