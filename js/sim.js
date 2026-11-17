@@ -153,9 +153,16 @@ export function nextHazard(sim) {
   return best;
 }
 
-function sideOf(h, near = 5.15) {
+function sideOf(h, near = 4.15) {
   return h.x >= 0 ? near : -near;
 }
+
+/** Metres from the centre line where a living actor waits. The grass starts near 4.93. */
+export const WAIT_X = {
+  pedestrian: 4.15,
+  dog: 3.9,
+  cutin: 4.35,
+};
 
 function smooth(t) {
   const u = clamp(t, 0, 1);
@@ -198,13 +205,7 @@ function derivedWorldX(h, sim) {
     const t = clamp(1 - dist / 18, 0, 1);
     return side + (h.x - side) * t + Math.sin(t * Math.PI) * 0.85 * Math.sign(side || 1);
   }
-  if (h.type === "roller") return actorCurve(h, dist, 5.35, -Math.sign(h.x || 1) * 5.15);
-  if (h.type === "bin") {
-    const side = sideOf(h, 4.55);
-    if (dist > 16) return side;
-    const t = clamp(1 - Math.max(dist, 0) / 16, 0, 1);
-    return side + (h.x - side) * smooth(t);
-  }
+  // Bins, lids, holes and parked cars never drift. Their authored x is the position.
   return h.x;
 }
 
@@ -241,22 +242,19 @@ function initEntity(h) {
   h.motionT = 0;
   const x = h.family === "static" || h.type === "stopped"
     ? h.x
-    : h.family === "animal"
-      ? sideX(h, 4.9)
-      : h.type === "cutin"
-        ? sideX(h, 5.6)
-        : sideX(h, 5.2);
+    : sideX(h, WAIT_X[h.type] || WAIT_X.pedestrian);
   h.pose = { s: h.s, x };
   h.prevPose = { s: h.s, x };
 }
 
 /**
  * People walk across and finish. Animals dart and leave. A cut-in takes
- * the lane and drives along it. Bins, lids and holes stay where they were
- * authored until a shove moves the pose.
+ * the lane and drives along it. Bins, lids, holes and parked cars never
+ * change their own x.
  */
 function advanceEntity(h, sim, dt) {
   if (!h.pose) initEntity(h);
+  if (h.wobbleT > 0) h.wobbleT = Math.max(0, h.wobbleT - dt);
   if (h.resolved) return;
   const dist = h.s - sim.s;
   if (h.family === "pedestrian") advancePedestrian(h, sim, dt, dist);
@@ -270,7 +268,7 @@ function advanceEntity(h, sim, dt) {
 }
 
 function advancePedestrian(h, sim, dt, dist) {
-  const curb = sideX(h, 5.2);
+  const curb = sideX(h, WAIT_X.pedestrian);
   const lane = h.x;
   const far = -Math.sign(h.x || 1) * 5.35;
   if (h.motion === "curb" && h.crossT >= 0) {
@@ -320,7 +318,7 @@ function advancePedestrian(h, sim, dt, dist) {
 }
 
 function advanceAnimal(h, sim, dt, dist) {
-  const curb = sideX(h, 4.9);
+  const curb = sideX(h, WAIT_X.dog);
   const lane = h.x;
   if (h.motion === "curb") {
     h.pose.x = curb + Math.sin(h.s) * 0.15;
@@ -351,7 +349,7 @@ function advanceAnimal(h, sim, dt, dist) {
 }
 
 function advanceCutin(h, sim, dt, dist) {
-  const curb = sideX(h, 5.6);
+  const curb = sideX(h, WAIT_X.cutin);
   const lane = h.x;
   const onTop = dist < h.halfL + CFG.carHalfFront && dist > -(h.halfL + CFG.carHalfBack);
   if (h.motion === "curb" && onTop) {
@@ -395,11 +393,12 @@ function advanceCutin(h, sim, dt, dist) {
   if (sim.v < 3.6 && h.playerBraked) h.yielded = true;
 }
 
-/** Knock the body out of the car. Statics move only here, not on their own. */
+/** Knock a living body out of the car. Statics and a stopped car stay put. */
 function shovePose(sim, h) {
+  if (familyOf(h.type) === "static" || h.type === "stopped") return;
   if (!h.pose) initEntity(h);
   h.hopped = true;
-  if (h.type === "cutin" || h.type === "stopped") {
+  if (h.type === "cutin") {
     h.pose.x = h.x;
     h.pose.s = Math.max(h.pose.s, sim.s + CFG.carHalfFront + h.halfL + 0.55);
     h.s = h.pose.s;
@@ -411,13 +410,7 @@ function shovePose(sim, h) {
     h.pose.s = h.s;
     h.motion = "off";
     h.crossT = h.crossDur || PED_TOTAL;
-    return;
   }
-  const sign = Math.sign((h.pose.x || 0) - sim.x) || 1;
-  h.pose.x = sim.x + sign * (CFG.carHalfW + (h.halfW || 0.5) + 0.5);
-  h.x = h.pose.x;
-  h.pose.s = h.s;
-  h.motion = "shoved";
 }
 
 function log(sim, entry) {
@@ -803,7 +796,8 @@ function markClear(sim, h, how) {
     if (h.trust && h.committed === "avoid") sim.patience = Math.max(0, sim.patience - CFG.trustReward);
     else if (!h.trust && h.playerBraked) sim.patience = Math.max(0, sim.patience - CFG.saveReward);
   }
-  if (h.type === "roller" && (how === "slow" || how === "scrape" || how === "pass" || how === "yield")) say(sim, "ЦЕЛЫ");
+  if (how === "touch") say(sim, "ФУХ.");
+  else if (h.type === "roller" && (how === "slow" || how === "scrape" || how === "pass" || how === "yield")) say(sim, "ЦЕЛЫ");
   else if (how === "slow" || how === "scrape") say(sim, "ФУХ.");
   else if (how === "yield") say(sim, "НУ ПРОШЁЛ");
   log(sim, { kind: "clear", id: h.id, how });
@@ -914,12 +908,34 @@ function boxesOverlapNow(sim, h) {
  * Detection already happened. Resolution is a table: stop short, comic shove,
  * or a real hit. Every branch leaves the pose outside the car.
  */
+function softTouch(sim, h) {
+  h.solid = false;
+  h.wobbleT = 0.45;
+  sim.shake = Math.max(sim.shake, 1.5);
+  markClear(sim, h, "touch");
+}
+
 function resolveContact(sim, h) {
   const near = (h.pose?.s ?? h.s) - h.halfL;
   const gap = near - frontOf(sim.s);
   const geometric = isGeometric(h.type);
   const limit = safeSpeed(h.type);
-  if (!geometric && sim.v <= limit && gap >= -0.45 && h.type !== "bin" && h.type !== "roller") {
+  // A hole can dent the car. It never moves and it is never taken away.
+  if (h.type === "pothole") {
+    resolveHit(sim, h);
+    return;
+  }
+  // Cruise clips a bin or a lid. The sprite stays; the collider lets the car go.
+  if (h.type === "bin" || h.type === "roller") {
+    if (sim.v <= limit) {
+      softTouch(sim, h);
+      return;
+    }
+    h.solid = false;
+    resolveHit(sim, h);
+    return;
+  }
+  if (!geometric && sim.v <= limit && gap >= -0.45) {
     if (!h.yielded) log(sim, { kind: "yield", id: h.id });
     sim.stats.yields += h.yielded ? 0 : 1;
     pinShort(sim, h);
@@ -928,7 +944,6 @@ function resolveContact(sim, h) {
   if (!geometric && sim.v <= limit) {
     shovePose(sim, h);
     markClear(sim, h, sim.v <= 1.25 ? "scrape" : "slow");
-    if (h.type === "bin") say(sim, "БАК ЛЁГ");
     return;
   }
   shovePose(sim, h);

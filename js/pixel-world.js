@@ -86,6 +86,15 @@ export function reactionSeconds(cruise) {
   return warnMetres(cruise) / Math.max(1, Number(cruise) || 10);
 }
 
+/** Screen pixels of daylight between the drawn nose and the pedestrian sprite. */
+export function pixelBumperBodyGap(sim, hazard) {
+  const footY = yNative(hazard.pose?.s ?? hazard.s, sim.s);
+  const bodyNearY = footY + 2;
+  const noseY = CAR_CENTER_Y - 21;
+  const native = noseY - bodyNearY;
+  return { native, screen: native * PIXEL_SCALE };
+}
+
 export function pedalDropPx(brake) {
   const steps = Math.round(Math.max(0, Math.min(1, brake)) * 7);
   return steps * 4;
@@ -181,6 +190,36 @@ function blitSprite(nctx, spec, xFoot, yFoot) {
   if (img) nctx.drawImage(img, x, y);
 }
 
+/** Sidewalk slabs on road-straight-strip.png, inclusive native pixels. */
+export const SIDEWALK_BANDS = {
+  left: [96, 111],
+  right: [176, 191],
+};
+
+/** xPx is the sprite centre. The whole image stays inside one sidewalk slab. */
+export function dressProp(spec, onRight) {
+  const ax = Math.floor(spec.w / 2);
+  const [lo, hi] = onRight ? SIDEWALK_BANDS.right : SIDEWALK_BANDS.left;
+  const span = hi - lo + 1;
+  const start = lo + Math.max(0, Math.floor((span - spec.w) / 2));
+  return {
+    spec: { ...spec, ax },
+    xPx: start + ax,
+    left: start,
+    right: start + spec.w - 1,
+  };
+}
+
+export function sidewalkDressing() {
+  return SIDEWALK.flatMap((name) => {
+    const spec = spriteOf(name);
+    return [
+      { name, side: "left", ...dressProp(spec, false) },
+      { name, side: "right", ...dressProp(spec, true) },
+    ];
+  });
+}
+
 function dressing(cam) {
   const items = [];
   const first = Math.floor((cam - 8) / 32);
@@ -199,7 +238,8 @@ function dressing(cam) {
     items.push({ spec: tree, s: s + 18, xPx: side ? 30 : 220 });
     const prop = spriteOf(SIDEWALK[(h >>> 12) % SIDEWALK.length]);
     const walk = (h >>> 16) & 1;
-    items.push({ spec: prop, s: s + 4, xPx: walk ? 104 : 182 });
+    const placed = dressProp(prop, !walk);
+    items.push({ spec: placed.spec, s: s + 4, xPx: placed.xPx });
   }
   return items;
 }
@@ -304,10 +344,47 @@ const BANG = [
 ];
 const BANG_KEY = { o: "#6E4210", h: "#FFE06A", y: "#FAC83C", d: "#D49A20", k: "#2A2430" };
 
-function drawBang(nctx, x) {
-  const cx = Math.max(5, Math.min(WORLD_W - 6, Math.round(x)));
-  const x0 = cx - 4;
-  const y0 = 2;
+/** Paper cards so the gauge and the pause button sit above the houses. */
+export const HUD_PLATES = [
+  { x: 0, y: 0, w: 80, h: 52 },
+  { x: 219, y: 0, w: 31, h: 28 },
+];
+
+const BANG_W = 9;
+const BANG_H = 12;
+
+function rectsOverlap(a, b, pad = 0) {
+  return a.x - pad < b.x + b.w
+    && a.x + a.w + pad > b.x
+    && a.y - pad < b.y + b.h
+    && a.y + a.h + pad > b.y;
+}
+
+/** The "!" sits in the conflict lane, clear of the HUD and of sprites already on screen. */
+export function bangPlacement(laneX, blockers = []) {
+  const lo = 112;
+  const hi = 176;
+  let x = Math.round(xNative(laneX)) - 4;
+  x = Math.max(lo, Math.min(hi - BANG_W, x));
+  let y = 4;
+  for (let i = 0; i < 18; i += 1) {
+    const box = { x, y, w: BANG_W, h: BANG_H };
+    const blocked = HUD_PLATES.some((plate) => rectsOverlap(box, plate, 4))
+      || blockers.some((rect) => rectsOverlap(box, rect, 1));
+    if (!blocked) return box;
+    y += 6;
+    if (y > 64) {
+      y = 4;
+      const mid = Math.round(xNative(laneX));
+      x = Math.max(lo, Math.min(hi - BANG_W, x + (x >= mid ? -8 : 8)));
+    }
+  }
+  return { x, y: 36, w: BANG_W, h: BANG_H };
+}
+
+function drawBang(nctx, box) {
+  const x0 = box.x;
+  const y0 = box.y;
   for (let j = 0; j < BANG.length; j += 1) {
     const row = BANG[j];
     for (let i = 0; i < row.length; i += 1) {
@@ -354,20 +431,32 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
   }
 
   const queue = [];
+  const blockers = [];
+  const noteBox = (x, y, w, h) => {
+    if (y + h < 0 || y > WORLD_H) return;
+    blockers.push({ x, y, w, h });
+  };
   for (const item of dressing(pose.s)) {
     const spec = item.spec;
     const y = yNative(item.s, pose.s);
+    noteBox(Math.round(item.xPx - spec.ax), Math.round(y - spec.ay), spec.w, spec.h);
     queue.push({ y, draw: () => blitSprite(nctx, spec, item.xPx, y) });
   }
   for (const h of sim.hazards || []) {
     if (h.resolved && (h.pose?.s ?? h.s) - pose.s < -12) continue;
     const hs = h.pose?.s ?? h.s;
-    const hx = h.pose && Number.isFinite(h.pose.x) && h.motion && h.motion !== "curb"
-      ? h.pose.x
-      : hazardWorldX(h, { ...sim, s: pose.s });
+    const planted = h.family === "static" || h.type === "bin" || h.type === "roller" || h.type === "pothole";
+    const hx = planted
+      ? h.x
+      : h.pose && Number.isFinite(h.pose.x) && h.motion && h.motion !== "curb"
+        ? h.pose.x
+        : hazardWorldX(h, { ...sim, s: pose.s });
     const y = yNative(hs, pose.s);
-    const x = xNative(hx);
+    let x = xNative(hx);
+    if (h.wobbleT > 0) x += Math.round(Math.sin(h.wobbleT * 36));
     if (h.type === "pothole") {
+      const rx = Math.max(3, Math.round((h.halfW || 0.7) * WORLD_PX_PER_M));
+      noteBox(x - rx, y - rx, rx * 2, rx);
       queue.push({ y, draw: () => drawOldHole(nctx, x, y, h.halfW || 0.7) });
       continue;
     }
@@ -376,27 +465,23 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
     else if (h.type === "dog") name = dogName(h);
     else if (h.type === "bin") name = "trash-bin";
     else if (h.type === "roller") name = "manhole";
-    else if (h.type === "stopped") {
+    else if (h.type === "stopped" || h.type === "cutin") {
+      noteBox(x - 13, y - 21, 26, 44);
+      const file = h.type === "stopped" ? "car/npc-white-up.png" : "car/npc-blue-up.png";
       queue.push({
         y,
         draw: () => {
-          const img = pixelImage("car/npc-white-up.png");
-          if (img) nctx.drawImage(img, x - 13, y - 21);
-        },
-      });
-      continue;
-    } else if (h.type === "cutin") {
-      queue.push({
-        y,
-        draw: () => {
-          const img = pixelImage("car/npc-blue-up.png");
+          const img = pixelImage(file);
           if (img) nctx.drawImage(img, x - 13, y - 21);
         },
       });
       continue;
     }
     const spec = name ? spriteOf(name) : null;
-    if (spec) queue.push({ y, draw: () => blitSprite(nctx, spec, x, y) });
+    if (spec) {
+      noteBox(Math.round(x - spec.ax), Math.round(y - spec.ay), spec.w, spec.h);
+      queue.push({ y, draw: () => blitSprite(nctx, spec, x, y) });
+    }
   }
   const carX = xNative(pose.x);
   const carY = CAR_CENTER_Y;
@@ -420,16 +505,13 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
     const hs = h.pose?.s ?? h.s;
     const dist = hs - pose.s - CFG.carHalfFront;
     if (dist <= ahead || dist > warn) continue;
-    const hx = h.pose?.x ?? hazardWorldX(h, sim);
-    drawBang(nctx, xNative(hx));
+    drawBang(nctx, bangPlacement(h.x, blockers));
   }
 
+  if (hud) paintHudPlates(nctx);
   if (hud) drawPixelGauge(nctx, sim.patience);
   const pause = hud ? pixelImage("ui/pause-button.png") : null;
-  if (pause) {
-    pxRoundRect(nctx, 225, 5, 24, 22, 4, "rgba(0,0,0,0.2)");
-    nctx.drawImage(pause, 223, 3);
-  }
+  if (pause) nctx.drawImage(pause, 223, 3);
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;
@@ -441,6 +523,18 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
   if (frame) ctx.drawImage(frame, 24, 24, 1008, 852);
   ctx.restore();
   return gaugeReadout(sim.patience);
+}
+
+function paintHudPlates(nctx) {
+  for (const plate of HUD_PLATES) {
+    nctx.fillStyle = "#F6ECD6";
+    nctx.fillRect(plate.x, plate.y, plate.w, plate.h);
+    nctx.fillStyle = "#1C181C";
+    nctx.fillRect(plate.x, plate.y, plate.w, 1);
+    nctx.fillRect(plate.x, plate.y + plate.h - 1, plate.w, 1);
+    nctx.fillRect(plate.x, plate.y, 1, plate.h);
+    nctx.fillRect(plate.x + plate.w - 1, plate.y, 1, plate.h);
+  }
 }
 
 function drawPixelGauge(nctx, patience) {
@@ -559,7 +653,7 @@ export function drawPixelCabin(ctx, sim, state, cabinId, opts = {}) {
   const hint = callout && state.hint && phase === "drive";
   const needs = sim?.attention === "phone" || sim?.attention === "drowsy" || sim?.attention === "asleep";
   if (hint || (callout && phase === "drive" && needs)) {
-    const label = needs ? (sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F") : "Он газует. Ты жмёшь тормоз.";
+    const label = needs ? (sim.attention === "phone" ? "Ткни в Антона" : "Разбуди — ткни в Антона") : "Он газует. Ты жмёшь тормоз.";
     const glyph = thresholdText(label, 2);
     ctx.fillStyle = "#FFF6E4";
     ctx.fillRect(1080, 576, 472, 48);
