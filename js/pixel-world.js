@@ -232,42 +232,95 @@ function learnerFile(sim, state) {
 function drawOldHole(nctx, x, y, halfW) {
   const rx = Math.max(3, Math.round(halfW * WORLD_PX_PER_M));
   const ry = Math.max(2, Math.round(rx * 0.55));
-  nctx.save();
-  nctx.beginPath();
-  nctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
-  nctx.fillStyle = "#241C16";
-  nctx.fill();
-  nctx.strokeStyle = "#1C161E";
-  nctx.lineWidth = 1;
-  nctx.stroke();
-  nctx.strokeStyle = "#FAC83C";
-  nctx.beginPath();
-  nctx.moveTo(x - rx * 0.4, y);
-  nctx.lineTo(x - rx * 0.7, y - ry * 0.6);
-  nctx.moveTo(x + rx * 0.3, y);
-  nctx.lineTo(x + rx * 0.65, y - ry * 0.55);
-  nctx.stroke();
-  nctx.restore();
+  pxEllipse(nctx, Math.round(x), Math.round(y), rx, ry, "#241C16");
+  pxLine(nctx, x - rx * 0.4, y, x - rx * 0.7, y - ry * 0.6, 1, "#FAC83C");
+  pxLine(nctx, x + rx * 0.3, y, x + rx * 0.65, y - ry * 0.55, 1, "#FAC83C");
 }
+
+/** Hard-edged line on the native grid (no antialiasing). Width 1 or 2. */
+export function pxLine(nctx, x0, y0, x1, y1, width, color) {
+  let x = Math.round(x0);
+  let y = Math.round(y0);
+  const xe = Math.round(x1);
+  const ye = Math.round(y1);
+  const dx = Math.abs(xe - x);
+  const dy = Math.abs(ye - y);
+  const sx = x < xe ? 1 : -1;
+  const sy = y < ye ? 1 : -1;
+  const steep = dy > dx;
+  let err = dx - dy;
+  nctx.fillStyle = color;
+  for (let guard = 0; guard < 512; guard += 1) {
+    if (width > 1) nctx.fillRect(x, y, steep ? width : 1, steep ? 1 : width);
+    else nctx.fillRect(x, y, 1, 1);
+    if (x === xe && y === ye) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) {
+      err -= dy;
+      x += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+}
+
+/** Filled ellipse, one rect per row, so edges stay hard. */
+function pxEllipse(nctx, cx, cy, rx, ry, color) {
+  nctx.fillStyle = color;
+  for (let j = -ry; j <= ry; j += 1) {
+    const half = Math.floor(rx * Math.sqrt(Math.max(0, 1 - (j * j) / (ry * ry))) + 0.5);
+    if (half > 0) nctx.fillRect(cx - half, cy + j, half * 2 + 1, 1);
+  }
+}
+
+/** Filled rounded rect, one rect per row: hard corners, and a translucent fill never doubles up. */
+function pxRoundRect(nctx, x, y, w, h, r, color) {
+  nctx.fillStyle = color;
+  for (let j = 0; j < h; j += 1) {
+    const dyTop = r - 1 - j;
+    const dyBot = j - (h - r);
+    const dy = Math.max(dyTop, dyBot, -1);
+    let inset = 0;
+    if (dy >= 0) inset = r - Math.floor(Math.sqrt(Math.max(0, r * r - (dy + 0.5) * (dy + 0.5))) + 0.5);
+    nctx.fillRect(x + inset, y + j, w - inset * 2, 1);
+  }
+}
+
+/** Warning chip, in the world style: 1px outline, one highlight and one shadow step. 9×12 native. */
+const BANG = [
+  ".ooooooo.",
+  "ohhhhhhho",
+  "oyyykyyyo",
+  "oyyykyyyo",
+  "oyyykyyyo",
+  "oyyykyyyo",
+  "oyyykyyyo",
+  "oyyyyyyyo",
+  "oyyykyyyo",
+  "odddddddo",
+  ".ooooooo.",
+];
+const BANG_KEY = { o: "#6E4210", h: "#FFE06A", y: "#FAC83C", d: "#D49A20", k: "#2A2430" };
 
 function drawBang(nctx, x) {
-  const cx = Math.max(4, Math.min(WORLD_W - 5, Math.round(x)));
-  nctx.fillStyle = "#FAC83C";
-  nctx.fillRect(cx - 3, 1, 7, 9);
-  nctx.fillStyle = "#1C181C";
-  nctx.fillRect(cx - 1, 2, 2, 5);
-  nctx.fillRect(cx - 1, 8, 2, 1);
-}
-
-function roundRect(ctx, x, y, w, h, r) {
-  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.arcTo(x + w, y, x + w, y + h, radius);
-  ctx.arcTo(x + w, y + h, x, y + h, radius);
-  ctx.arcTo(x, y + h, x, y, radius);
-  ctx.arcTo(x, y, x + w, y, radius);
-  ctx.closePath();
+  const cx = Math.max(5, Math.min(WORLD_W - 6, Math.round(x)));
+  const x0 = cx - 4;
+  const y0 = 2;
+  for (let j = 0; j < BANG.length; j += 1) {
+    const row = BANG[j];
+    for (let i = 0; i < row.length; i += 1) {
+      const c = BANG_KEY[row[i]];
+      if (!c) continue;
+      nctx.fillStyle = c;
+      nctx.fillRect(x0 + i, y0 + j, 1, 1);
+    }
+  }
+  // wider stroke: the bar and the dot are 2px, like the HUD lettering
+  nctx.fillStyle = BANG_KEY.k;
+  nctx.fillRect(x0 + 3, y0 + 2, 1, 5);
+  nctx.fillRect(x0 + 3, y0 + 8, 1, 1);
 }
 
 export function drawPixelWorld(ctx, sim, state) {
@@ -350,11 +403,7 @@ export function drawPixelWorld(ctx, sim, state) {
   queue.push({
     y: tailY,
     draw: () => {
-      nctx.save();
-      nctx.fillStyle = "rgba(0,0,0,0.2)";
-      roundRect(nctx, carX - 13 + 5, carY - 21 + 3, 20, 40, 5);
-      nctx.fill();
-      nctx.restore();
+      pxRoundRect(nctx, carX - 13 + 5, carY - 21 + 3, 20, 40, 5, "rgba(0,0,0,0.2)");
       const img = pixelImage(learnerFile(sim, state));
       if (img) nctx.drawImage(img, carX - 13, carY - 21);
     },
@@ -377,9 +426,7 @@ export function drawPixelWorld(ctx, sim, state) {
   drawPixelGauge(nctx, sim.patience);
   const pause = pixelImage("ui/pause-button.png");
   if (pause) {
-    nctx.fillStyle = "rgba(0,0,0,0.2)";
-    roundRect(nctx, 225, 5, 24, 22, 4);
-    nctx.fill();
+    pxRoundRect(nctx, 225, 5, 24, 22, 4, "rgba(0,0,0,0.2)");
     nctx.drawImage(pause, 223, 3);
   }
 
@@ -398,9 +445,7 @@ export function drawPixelWorld(ctx, sim, state) {
 function drawPixelGauge(nctx, patience) {
   const face = pixelImage("ui/gauge-face.png");
   nctx.save();
-  nctx.fillStyle = "rgba(0,0,0,0.2)";
-  roundRect(nctx, 5, 5, 72, 46, 4);
-  nctx.fill();
+  pxRoundRect(nctx, 5, 5, 72, 46, 4, "rgba(0,0,0,0.2)");
   if (face) nctx.drawImage(face, 3, 3);
   const deg = patienceNeedleDegrees(patience);
   const rad = (deg * Math.PI) / 180;
@@ -408,13 +453,7 @@ function drawPixelGauge(nctx, patience) {
   const hubY = 3 + 39;
   const tipX = Math.round(hubX + Math.cos(rad) * 15);
   const tipY = Math.round(hubY - Math.sin(rad) * 15);
-  nctx.strokeStyle = "#2A2430";
-  nctx.lineWidth = 2;
-  nctx.lineCap = "butt";
-  nctx.beginPath();
-  nctx.moveTo(hubX, hubY);
-  nctx.lineTo(tipX, tipY);
-  nctx.stroke();
+  pxLine(nctx, hubX, hubY, tipX, tipY, 2, "#2A2430");
   nctx.fillStyle = "#2A2430";
   nctx.fillRect(hubX - 2, hubY - 2, 5, 4);
   nctx.fillStyle = "#FFF6E4";
@@ -498,7 +537,7 @@ function drawBubble(ctx, text) {
     ctx.drawImage(slice, sw - 1, 1, 1, sh - 2, x + w - b, y + b, b, h - b * 2);
     ctx.drawImage(slice, 1, 1, sw - 2, sh - 2, x + b, y + b, w - b * 2, h - b * 2);
   }
-  ctx.drawImage(glyph, x + (w - glyph.width) / 2, y + (h - glyph.height) / 2);
+  ctx.drawImage(glyph, Math.round(x + (w - glyph.width) / 2), Math.round(y + (h - glyph.height) / 2));
   const tail = pixelImage("ui/bubble-tail.png");
   if (tail) ctx.drawImage(tail, x + 140, y + h - 4, 24, 20);
   ctx.restore();
@@ -525,7 +564,7 @@ export function drawPixelCabin(ctx, sim, state, cabinId) {
     ctx.strokeStyle = "#1C181C";
     ctx.lineWidth = 4;
     ctx.strokeRect(1080, 576, 472, 48);
-    if (glyph) ctx.drawImage(glyph, 1080 + (472 - glyph.width) / 2, 576 + (48 - glyph.height) / 2);
+    if (glyph) ctx.drawImage(glyph, Math.round(1080 + (472 - glyph.width) / 2), Math.round(576 + (48 - glyph.height) / 2));
   }
   ctx.restore();
 }
