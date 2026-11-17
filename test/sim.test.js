@@ -58,9 +58,9 @@ import { pedPoseKey, dogPoseKey } from "../js/cast.js";
 import { pulse, vibrationPattern } from "../js/haptics.js";
 import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
-import { actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import { CABIN_POSES } from "../js/cabin.js";
-import { lookAheadMetres, pedalDropPx, pixelPoseFrame, poseMapCoversCabin, reactionSeconds, warnMetres, WORLD_PX_PER_M, yNative, camPxOf } from "../js/pixel-world.js";
+import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
 import {
   createSession,
   keyDown,
@@ -414,7 +414,7 @@ test("cruise contact is a hit, and a hop leaves the body outside the car", () =>
     const along = sim.s + CFG.carHalfFront > hs - h.halfL && sim.s - CFG.carHalfBack < hs + h.halfL;
     return lateral && along;
   }
-  for (const type of ["pedestrian", "bin", "cutin"]) {
+  for (const type of ["pedestrian", "cutin"]) {
     const sim = createSim(
       empty({
         cruise: 13,
@@ -453,8 +453,128 @@ test("cruise contact is a hit, and a hop leaves the body outside the car", () =>
   stepSim(slow, 1 / 60, { held: false });
   const bin = slow.hazards[0];
   assert.equal(bin.resolved, "clear");
-  assert.equal(bin.hopped, true);
-  assert.equal(overlaps(slow, bin), false);
+  assert.equal(bin.hopped, false);
+  assert.equal(bin.x, 1.8);
+  assert.equal(bin.pose.x, 1.8);
+  assert.equal(bin.solid, false);
+  assert.equal(slow.body, 100);
+  assert.equal(slow.done, false);
+  assert.ok(slow.events.some((event) => event.kind === "clear" && event.how === "touch"));
+  assert.equal(slow.events.some((event) => event.kind === "hit"), false);
+});
+
+function bodyOverlaps(sim, h) {
+  const hx = hazardWorldX(h, sim);
+  const hs = h.pose?.s ?? h.s;
+  const lateral = Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW - 0.02;
+  const along = sim.s + CFG.carHalfFront > hs - h.halfL && sim.s - CFG.carHalfBack < hs + h.halfL;
+  return lateral && along;
+}
+
+test("statics keep their x on a touch and on a hit, in every lesson", () => {
+  for (const mission of LESSONS) {
+    for (const hazard of mission.hazards) {
+      if (!["bin", "roller", "pothole", "stopped"].includes(hazard.type)) continue;
+      for (const speed of [10, 16]) {
+        const sim = createSim(empty({
+          cruise: speed,
+          hazards: [{ ...hazard, s: 28, trust: false }],
+        }), 3);
+        sim.v = speed;
+        sim.x = hazard.x;
+        const h = sim.hazards[0];
+        const x0 = h.x;
+        const pose0 = h.pose.x;
+        const s0 = h.s;
+        let touched = false;
+        let tunneled = false;
+        for (let i = 0; i < 500 && !touched; i += 1) {
+          sim.x = hazard.x;
+          sim.prevX = hazard.x;
+          stepSim(sim, 1 / 60, { held: false, lockSpeed: true });
+          if (!h.resolved && bodyOverlaps(sim, h)) tunneled = true;
+          if (h.resolved) touched = true;
+        }
+        const label = `${mission.id} ${hazard.id} ${hazard.type} @${speed}`;
+        assert.equal(tunneled, false, `${label} was inside the car before the touch`);
+        assert.equal(touched, true, `${label} was never touched`);
+        assert.equal(h.x, x0, label);
+        assert.equal(h.pose.x, pose0, label);
+        assert.equal(h.s, s0, label);
+        assert.equal(JSON.stringify(sim.events).includes("БАК ЛЁГ"), false);
+        if (speed === 10 && (hazard.type === "bin" || hazard.type === "roller")) {
+          assert.equal(h.resolved, "clear", label);
+          assert.equal(h.solid, false, label);
+          assert.equal(sim.stats.collisions, 0, label);
+          assert.equal(sim.body, 100, label);
+          assert.equal(sim.cargo, 100, label);
+          assert.equal(sim.done, false, label);
+          assert.equal(sim.bubble, "ФУХ.", label);
+          assert.ok(h.wobbleT > 0, label);
+        }
+        if (hazard.type === "pothole") {
+          assert.equal(sim.hazards.includes(h), true, label);
+          assert.equal(h.resolved, "hit", label);
+          assert.ok(sim.body < 100, label);
+          assert.notEqual(h.solid, false, label);
+        }
+      }
+    }
+  }
+});
+
+test("actors wait on the sidewalk, and a yielded stop still shows daylight", () => {
+  const sim = createSim(empty({
+    hazards: [
+      { id: "p", type: "pedestrian", s: 80, x: 1.8, halfW: 0.42, halfL: 0.55 },
+      { id: "d", type: "dog", s: 90, x: -1.2, halfW: 0.55, halfL: 0.8 },
+      { id: "c", type: "cutin", s: 110, x: 1.8, halfW: 0.95, halfL: 2.1 },
+    ],
+  }), 1);
+  sim.v = 0;
+  for (let i = 0; i < 20; i += 1) stepSim(sim, 1 / 60, { held: false, lockSpeed: true });
+  for (const h of sim.hazards) {
+    const ax = Math.abs(h.pose.x);
+    assert.equal(h.motion, "curb", h.type);
+    assert.ok(ax >= 3.6 && ax <= 4.5, `${h.type} waits at ${h.pose.x}`);
+    assert.ok(ax < 4.93, `${h.type} is in the grass at ${h.pose.x}`);
+  }
+  assert.equal(Math.abs(sim.hazards[0].pose.x), WAIT_X.pedestrian);
+  assert.ok(Math.abs(Math.abs(sim.hazards[1].pose.x) - WAIT_X.dog) <= 0.15);
+
+  const ped = sim.hazards[0];
+  sim.s = ped.s - ped.halfL - CFG.carHalfFront - CFG.yieldStandoff;
+  const gap = pixelBumperBodyGap(sim, ped);
+  assert.ok(gap.screen > 48, `pixel gap ${gap.screen}`);
+  assert.ok(gap.native > 12, gap.native);
+});
+
+test("sidewalk props stay on the slab, and the warning stays in the lane", () => {
+  for (const item of sidewalkDressing()) {
+    const band = item.side === "left" ? SIDEWALK_BANDS.left : SIDEWALK_BANDS.right;
+    assert.ok(item.left >= band[0] && item.right <= band[1], `${item.name} ${item.side} ${item.left}-${item.right}`);
+    assert.equal(item.spec.ax, Math.floor(item.spec.w / 2));
+    assert.equal(item.xPx, item.left + item.spec.ax);
+  }
+  const lane = bangPlacement(1.8, []);
+  assert.ok(lane.x >= 112 && lane.x + lane.w <= 176, JSON.stringify(lane));
+  assert.ok(Math.abs(lane.x + 4 - xNative(1.8)) <= 6, JSON.stringify(lane));
+  const grass = bangPlacement(5.6, []);
+  assert.ok(grass.x + grass.w <= 176, JSON.stringify(grass));
+  for (const plate of HUD_PLATES) {
+    const apart = lane.x + lane.w + 4 <= plate.x || plate.x + plate.w + 4 <= lane.x
+      || lane.y + lane.h + 4 <= plate.y || plate.y + plate.h + 4 <= lane.y;
+    assert.equal(apart, true, JSON.stringify({ lane, plate }));
+    assert.equal(plate.y, 0);
+  }
+  const gauge = { x: 3, y: 3, w: 72, h: 46 };
+  const pause = { x: 223, y: 3, w: 24, h: 22 };
+  const covers = (plate, icon) => plate.x <= icon.x && plate.y <= icon.y
+    && plate.x + plate.w >= icon.x + icon.w && plate.y + plate.h >= icon.y + icon.h;
+  assert.equal(covers(HUD_PLATES[0], gauge), true);
+  assert.equal(covers(HUD_PLATES[1], pause), true);
+  const blocked = bangPlacement(1.8, [{ x: lane.x - 2, y: lane.y - 2, w: lane.w + 4, h: lane.h + 4 }]);
+  assert.ok(blocked.y > lane.y, JSON.stringify(blocked));
 });
 
 test("a pedestrian finishes crossing, and statics do not walk off the road", () => {
@@ -2378,13 +2498,14 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   const before = [shown.sim.attention, shown.sim.stowT, shown.sim.stats.attentionPokes, shown.sim.events.length];
   const phoneFrame = render(mockCtx().ctx, playState(shown, 0.5));
   assert.deepEqual([shown.sim.attention, shown.sim.stowT, shown.sim.stats.attentionPokes, shown.sim.events.length], before);
-  assert.ok(phoneFrame.labels.some((label) => label.text === "Ткни в него · F"));
+  assert.ok(phoneFrame.labels.some((label) => label.text === "Ткни в Антона"));
+  assert.equal(phoneFrame.labels.some((label) => label.text.includes("F")), false);
   assert.ok(phoneFrame.spots.some((spot) => spot.id === "anton"));
   assert.ok(phoneFrame.spots.some((spot) => spot.id === "pedal"));
   shown.sim.attention = "drowsy";
-  assert.ok(render(mockCtx().ctx, playState(shown, 1)).labels.some((label) => label.text === "Разбуди · F"));
+  assert.ok(render(mockCtx().ctx, playState(shown, 1)).labels.some((label) => label.text === "Разбуди — ткни в Антона"));
   shown.sim.attention = "asleep";
-  assert.ok(render(mockCtx().ctx, playState(shown, 1)).labels.some((label) => label.text === "Разбуди · F"));
+  assert.ok(render(mockCtx().ctx, playState(shown, 1)).labels.some((label) => label.text === "Разбуди — ткни в Антона"));
   shown.sim.attention = "earnest";
   const back = render(mockCtx().ctx, playState(shown, 1));
   assert.equal(back.labels.some((label) => label.text.includes("Ткни") || label.text.includes("Разбуди")), false);

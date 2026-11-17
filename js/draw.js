@@ -7,7 +7,7 @@ import { CFG, PALETTE as P } from "./config.js";
 import { damageStage } from "./physics.js";
 import { cabinPoseId, drawPassenger, paintCabin } from "./cabin.js";
 import { usePixel } from "./pixel-assets.js";
-import { drawPixelCabin, drawPixelWorld, pixelChrome } from "./pixel-world.js";
+import { drawPixelCabin, drawPixelWorld, pixelBumperBodyGap, pixelChrome } from "./pixel-world.js";
 import { CALLOUT, DRIVER_PLATE, NOTICE_BOX } from "./layout.js";
 import {
   drawDriveChrome,
@@ -233,11 +233,16 @@ export function pedestrianFootShift() {
  * `world` is metres from the bumper to the near face of the hitbox.
  */
 export function bumperFootGap(sim, hazard) {
+  const world = hazard.s - hazard.halfL - (sim.s + CFG.carHalfFront);
+  if (usePixel()) {
+    const gap = pixelBumperBodyGap(sim, hazard);
+    return { world, screen: gap.screen, bumperY: null, footY: null };
+  }
   bindView(sim.s);
   const bumper = viewProject(CFG.carHalfFront, sim.x);
   const foot = viewProject(hazard.s - (hazard.halfL || 0) - sim.s, hazardWorldX(hazard, sim));
   return {
-    world: hazard.s - hazard.halfL - (sim.s + CFG.carHalfFront),
+    world,
     screen: bumper.y - foot.y,
     bumperY: bumper.y,
     footY: foot.y,
@@ -385,7 +390,7 @@ function drawPlay(ctx, state, sink) {
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
+    paintCenter(ctx, sim.attention === "phone" ? "Ткни в Антона" : "Разбуди — ткни в Антона", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
   } else if (state.hint && driving) {
     roundRect(ctx, CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 12);
     ctx.fillStyle = P.YEL;
