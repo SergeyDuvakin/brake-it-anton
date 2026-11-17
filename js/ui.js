@@ -457,6 +457,22 @@ function starsLine(graded) {
   return `${"★".repeat(graded.stars)}${"☆".repeat(3 - graded.stars)}`;
 }
 
+export function nextLessonOpen(state) {
+  const order = ["lesson1", "lesson2", "lesson3", "lesson4"];
+  const idx = order.indexOf(state.session?.mission?.id);
+  if (idx < 0 || idx >= order.length - 1) return false;
+  return state.save.unlocked >= idx + 2;
+}
+
+/** Enter advances a finished lesson when the next one is open. Every other result key retries. */
+export function resultKeyAction(session, save, code) {
+  if (!session || session.phase !== "result") return null;
+  if (code !== "Enter" && code !== "Space") return null;
+  const win = session.result?.success === true && !session.sim?.infinite;
+  if (code === "Enter" && win && nextLessonOpen({ session, save })) return "next";
+  return "retry";
+}
+
 function momentButton(ctx, sink, state) {
   if (!state.replayReady) return;
   drawButton(ctx, sink, {
@@ -512,16 +528,67 @@ export function drawResultScreen(ctx, state, sink) {
     }
   }
 
-  const again = place(card, 150, 740, 560, 220);
-  drawRetryButton(ctx, sink, {
-    id: "retry",
-    x: again.x,
-    y: again.y,
-    w: again.w,
-    h: again.h,
-    text: "ЕЩЁ РАЗ",
-    pointer: state.pointer,
-  });
+  if (success) {
+    const open = nextLessonOpen(state);
+    const next = place(card, 150, 720, 560, 130);
+    const again = place(card, 150, 862, 560, 88);
+    const garage = place(card, 150, 962, 560, 64);
+    drawButton(ctx, sink, {
+      id: "next",
+      x: next.x,
+      y: next.y,
+      w: next.w,
+      h: next.h,
+      text: "ДАЛЬШЕ",
+      kind: "teal",
+      disabled: !open,
+      pointer: state.pointer,
+      size: 36,
+    });
+    drawRetryButton(ctx, sink, {
+      id: "retry",
+      x: again.x,
+      y: again.y,
+      w: again.w,
+      h: again.h,
+      text: "ЕЩЁ РАЗ",
+      pointer: state.pointer,
+    });
+    drawButton(ctx, sink, {
+      id: "to-garage",
+      x: garage.x,
+      y: garage.y,
+      w: garage.w,
+      h: garage.h,
+      text: "В ГАРАЖ",
+      kind: "cream",
+      pointer: state.pointer,
+      size: 26,
+    });
+  } else {
+    const again = place(card, 150, 760, 560, 180);
+    const garage = place(card, 150, 956, 560, 70);
+    drawRetryButton(ctx, sink, {
+      id: "retry",
+      x: again.x,
+      y: again.y,
+      w: again.w,
+      h: again.h,
+      text: "ЕЩЁ РАЗ",
+      pointer: state.pointer,
+    });
+    drawButton(ctx, sink, {
+      id: "to-garage",
+      x: garage.x,
+      y: garage.y,
+      w: garage.w,
+      h: garage.h,
+      text: "В ГАРАЖ",
+      kind: "cream",
+      pointer: state.pointer,
+      size: 26,
+    });
+  }
   momentButton(ctx, sink, state);
 }
 
@@ -551,7 +618,8 @@ function drawRetryButton(ctx, sink, spec) {
   ctx.imageSmoothingEnabled = false;
   fillStepped(ctx, x, y, w, h, [8, 4], "#1C181C");
   fillStepped(ctx, x + 4, y + 4, w - 8, h - 8, [4], "#F6ECD6");
-  ctx.font = "700 48px 'Pixeloid Sans', 'Rubik Mono One', sans-serif";
+  const fontPx = Math.min(48, Math.max(28, Math.round(h * 0.42)));
+  ctx.font = `700 ${fontPx}px 'Pixeloid Sans', 'Rubik Mono One', sans-serif`;
   ctx.fillStyle = "#1C181C";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";

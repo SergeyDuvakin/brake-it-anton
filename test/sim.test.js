@@ -16,7 +16,7 @@ import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
-import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint } from "../js/ui.js";
+import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, nextLessonOpen, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint, resultKeyAction } from "../js/ui.js";
 import { CALLOUT, DRIVER_PLATE, MOOD_TILE, PAUSE_BUTTON, platesSeparated } from "../js/layout.js";
 import {
   CAR_BODY_H,
@@ -2952,14 +2952,31 @@ test("patience needle and pedal hinge follow the live input", () => {
     }
   }
 
-  const won = ride("result", 12, 0, true, applyVictory(freshSave(), "lesson1", 3));
+  const wonSave = applyVictory(freshSave(), "lesson1", 3);
+  const won = ride("result", 12, 0, true, wonSave);
   assert.ok(won.labels.some((item) => item.text === "ДОЕХАЛИ!"));
   assert.ok(won.labels.some((item) => item.text === "Машина цела"));
+  assert.ok(won.labels.some((item) => item.text === "ДАЛЬШЕ"));
   assert.ok(won.labels.some((item) => item.text === "ЕЩЁ РАЗ"));
-  assert.equal(won.labels.some((item) => item.text === "ДАЛЬШЕ" || item.text === "В ГАРАЖ"), false);
-  assert.equal(won.spots.some((spot) => spot.id === "next" || spot.id === "to-garage"), false);
+  assert.ok(won.labels.some((item) => item.text === "В ГАРАЖ"));
+  const wonNext = won.spots.find((spot) => spot.id === "next");
   const wonRetry = won.spots.find((spot) => spot.id === "retry");
-  assert.ok(wonRetry.w > 300 && wonRetry.h > 120, JSON.stringify(wonRetry));
+  const wonGarage = won.spots.find((spot) => spot.id === "to-garage");
+  assert.ok(wonNext && wonRetry && wonGarage);
+  assert.ok(wonNext.h > wonRetry.h && wonRetry.h > wonGarage.h, JSON.stringify({ wonNext, wonRetry, wonGarage }));
+  const wonSession = createSession(getMission("lesson1"), { seed: 11 });
+  wonSession.phase = "result";
+  wonSession.result = { success: true };
+  wonSession.sim.infinite = false;
+  assert.equal(nextLessonOpen({ session: wonSession, save: wonSave }), true);
+  assert.equal(resultKeyAction(wonSession, wonSave, "Enter"), "next");
+  assert.equal(resultKeyAction(wonSession, wonSave, "Space"), "retry");
+  const locked = ride("result", 12, 0, true, freshSave());
+  assert.ok(locked.labels.some((item) => item.text === "ДАЛЬШЕ"));
+  assert.equal(locked.spots.some((spot) => spot.id === "next"), false);
+  assert.ok(locked.spots.some((spot) => spot.id === "retry"));
+  assert.ok(locked.spots.some((spot) => spot.id === "to-garage"));
+  assert.equal(resultKeyAction(wonSession, freshSave(), "Enter"), "retry");
   const lost = ride("result", 80, 0, false);
   assert.ok(lost.labels.some((item) => item.text === "НЕ ДОЕХАЛИ"));
   const crashed = createSession(getMission("lesson1"), { seed: 11 });
@@ -3009,11 +3026,19 @@ test("patience needle and pedal hinge follow the live input", () => {
   });
   assert.ok(fishLoss.labels.some((item) => item.text === "Рыбка разлилась"));
   assert.ok(lost.labels.some((item) => item.text === "ЕЩЁ РАЗ"));
-  assert.equal(lost.labels.some((item) => item.text === "ЗАНОВО" || item.text === "В ГАРАЖ"), false);
-  assert.equal(lost.spots.some((spot) => spot.id === "next" || spot.id === "to-garage"), false);
+  assert.ok(lost.labels.some((item) => item.text === "В ГАРАЖ"));
+  assert.equal(lost.labels.some((item) => item.text === "ДАЛЬШЕ"), false);
+  assert.equal(lost.spots.some((spot) => spot.id === "next"), false);
   const lostRetry = lost.spots.find((spot) => spot.id === "retry");
-  assert.ok(lostRetry.w > 300 && lostRetry.h > 120);
-  for (const frame of [won, lost]) {
+  const lostGarage = lost.spots.find((spot) => spot.id === "to-garage");
+  assert.ok(lostRetry && lostGarage);
+  assert.ok(lostRetry.h > lostGarage.h && lostRetry.h > 100);
+  const lostSession = createSession(getMission("lesson1"), { seed: 11 });
+  lostSession.phase = "result";
+  lostSession.result = { success: false };
+  assert.equal(resultKeyAction(lostSession, freshSave(), "Enter"), "retry");
+  assert.equal(resultKeyAction(lostSession, freshSave(), "Space"), "retry");
+  for (const frame of [won, lost, locked]) {
     for (let i = 0; i < frame.labels.length; i += 1) {
       for (let j = i + 1; j < frame.labels.length; j += 1) {
         assert.equal(boxesOverlap(frame.labels[i], frame.labels[j]), false, `${frame.labels[i].text}/${frame.labels[j].text}`);

@@ -720,11 +720,15 @@ test("clicked retry, hotkey R and a stale space: the ride starts now", async ({ 
       h: spot.h * (rect.height / 900),
       again: labels.includes("ЕЩЁ РАЗ"),
       garage: labels.includes("В ГАРАЖ"),
+      next: window.__anton.hotspots().some((item) => item.id === "next"),
+      toGarage: window.__anton.hotspots().some((item) => item.id === "to-garage"),
     };
   });
   expect(retryCss.h).toBeGreaterThanOrEqual(48);
   expect(retryCss.again).toBe(true);
-  expect(retryCss.garage).toBe(false);
+  expect(retryCss.garage).toBe(true);
+  expect(retryCss.next).toBe(false);
+  expect(retryCss.toGarage).toBe(true);
   await page.keyboard.down("Space");
   const clicked = await page.evaluate(() => window.__anton.getState());
   expect(clicked.phase).toBe("drive");
@@ -2212,12 +2216,11 @@ test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", asy
     labels: window.__anton.labels().map((item) => item.text),
     spots: window.__anton.hotspots().map((item) => item.id),
   }));
-  expect(successActions.labels).toContain("ЕЩЁ РАЗ");
-  expect(successActions.spots).not.toContain("to-garage");
-  expect(successActions.spots).not.toContain("next");
+  expect(successActions.labels).toEqual(expect.arrayContaining(["ДАЛЬШЕ", "ЕЩЁ РАЗ", "В ГАРАЖ"]));
+  expect(successActions.spots).toEqual(expect.arrayContaining(["next", "retry", "to-garage"]));
   await page.screenshot({ path: shot("result-success") });
   await page.keyboard.press("Enter");
-  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.waitForFunction(() => window.__anton.getState().phase !== "result");
 
   await page.evaluate(() => {
     window.__anton.setAutopilot("panic");
@@ -2227,6 +2230,16 @@ test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", asy
   const lost = await page.evaluate(() => window.__anton.getState());
   expect(lost.success).toBe(false);
   expect(lost.fail).toBe("cargo");
+  const failActions = await page.evaluate(() => ({
+    labels: window.__anton.labels().map((item) => item.text),
+    spots: window.__anton.hotspots().map((item) => item.id),
+  }));
+  expect(failActions.labels).toContain("ЕЩЁ РАЗ");
+  expect(failActions.labels).toContain("В ГАРАЖ");
+  expect(failActions.labels).not.toContain("ДАЛЬШЕ");
+  expect(failActions.spots).toContain("retry");
+  expect(failActions.spots).toContain("to-garage");
+  expect(failActions.spots).not.toContain("next");
   await page.screenshot({ path: shot("result-fail") });
   expect(errors).toEqual([]);
 });
