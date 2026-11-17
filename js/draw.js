@@ -5,7 +5,9 @@
 
 import { CFG, PALETTE as P } from "./config.js";
 import { damageStage } from "./physics.js";
-import { drawPassenger, paintCabin } from "./cabin.js";
+import { cabinPoseId, drawPassenger, paintCabin } from "./cabin.js";
+import { usePixel } from "./pixel-assets.js";
+import { drawPixelCabin, drawPixelWorld, pixelChrome } from "./pixel-world.js";
 import { CALLOUT, DRIVER_PLATE, NOTICE_BOX } from "./layout.js";
 import {
   drawDriveChrome,
@@ -320,8 +322,14 @@ export function render(ctx, state) {
 
 function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
-  drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
-  paintCabin(ctx, state.preview, { ...state, pose: "preen", session: { phase: "drive", sim: state.preview } });
+  const previewState = { ...state, pose: "preen", session: { phase: "drive", sim: state.preview }, alpha: 1 };
+  if (usePixel(state)) {
+    drawPixelWorld(ctx, state.preview, previewState);
+    drawPixelCabin(ctx, state.preview, previewState, "preen");
+  } else {
+    drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
+    paintCabin(ctx, state.preview, previewState);
+  }
   drawTitleChrome(ctx, { spots, labels }, state);
 }
 
@@ -335,13 +343,20 @@ function drawPlay(ctx, state, sink) {
   const driving = session.phase === "drive";
   const brake = driving ? sim.brakeInput : 0;
 
+  const pixel = usePixel(state);
   ctx.save();
-  if (mag) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
-  drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
+  if (mag && !pixel) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
+  if (pixel) drawPixelWorld(ctx, sim, state);
+  else drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
-  drawCabin(ctx, sim, state);
+  if (pixel) drawPixelCabin(ctx, sim, state, cabinPoseId(sim, session.phase, state.pose));
+  else drawCabin(ctx, sim, state);
   const showHud = driving || session.phase === "countdown";
-  const chrome = showHud ? drawDriveChrome(ctx, state, sink, brake) : null;
+  let chrome = null;
+  if (showHud && pixel) {
+    chrome = pixelChrome(ctx, sim, state, brake);
+    sink.spots.push({ id: "pause", x: 920, y: 40, w: 96, h: 88 });
+  } else if (showHud) chrome = drawDriveChrome(ctx, state, sink, brake);
   if (driving) {
     spots.push({
       id: "anton",
@@ -361,7 +376,9 @@ function drawPlay(ctx, state, sink) {
     paintCenter(ctx, String(session.countdown || 1), 640, 150, 120, 84, 42, P.INK, true, false);
   }
   const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
-  if (driving && needsTap) {
+  if (pixel) {
+    /* The pixel cabin already drew the callout. */
+  } else if (driving && needsTap) {
     roundRect(ctx, CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 12);
     ctx.fillStyle = P.YEL;
     ctx.fill();
