@@ -31,6 +31,7 @@ import {
 import { applyVictory, freshSave, noteInfiniteDistance, parseSave, toggleSetting } from "./storage.js";
 import { drainFrame } from "./clock.js";
 import { backingScale, clampPlacement, contentBox, stablePlacement, tightestBox } from "./viewport.js";
+import { HOME_HINT_KEY, isIosDevice, isPortraitOrientation, shouldShowHomeHint } from "./mobile.js";
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -502,10 +503,43 @@ function metricChanged(next) {
 }
 
 function syncOrient() {
-  const box = tightestBox(readMetric());
-  const width = box.width || window.innerWidth || 0;
-  const height = box.height || window.innerHeight || 0;
-  document.body.classList.toggle("is-portrait", height > width);
+  const query = window.matchMedia?.("(orientation: portrait)");
+  const mediaMatches = query && typeof query.matches === "boolean" ? query.matches : undefined;
+  const portrait = isPortraitOrientation(mediaMatches, window.innerWidth, window.innerHeight);
+  document.body.classList.toggle("is-portrait", portrait);
+}
+
+function currentDisplayMode() {
+  if (window.matchMedia?.("(display-mode: standalone)")?.matches) return "standalone";
+  if (window.matchMedia?.("(display-mode: fullscreen)")?.matches) return "fullscreen";
+  if (window.matchMedia?.("(display-mode: browser)")?.matches) return "browser";
+  return "unknown";
+}
+
+function syncHomeHint() {
+  const hint = document.getElementById("home-hint");
+  if (!hint) return;
+  let dismissed = false;
+  try {
+    dismissed = localStorage.getItem(HOME_HINT_KEY) === "1";
+  } catch {
+    dismissed = false;
+  }
+  const show = shouldShowHomeHint({
+    ios: isIosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints),
+    standalone: navigator.standalone,
+    displayMode: currentDisplayMode(),
+    dismissed,
+  });
+  hint.hidden = !show;
+  const wrap = document.getElementById("wrap");
+  if (!wrap) return;
+  if (show) {
+    const height = Math.max(0, Math.ceil(hint.getBoundingClientRect().height));
+    wrap.style.paddingTop = `${height}px`;
+  } else {
+    wrap.style.paddingTop = "";
+  }
 }
 
 let placement = null;
@@ -603,6 +637,7 @@ function fitCanvas() {
 
 function refitSoon() {
   syncOrient();
+  syncHomeHint();
   fitCanvas();
 }
 
@@ -618,9 +653,32 @@ function scheduleRefit() {
 window.addEventListener("resize", refitSoon);
 window.addEventListener("orientationchange", scheduleRefit);
 window.screen?.orientation?.addEventListener("change", scheduleRefit);
+window.matchMedia?.("(orientation: portrait)")?.addEventListener?.("change", scheduleRefit);
 window.visualViewport?.addEventListener("resize", refitSoon);
 syncOrient();
+syncHomeHint();
 fitCanvas();
+document.getElementById("home-hint-dismiss")?.addEventListener("click", () => {
+  try {
+    localStorage.setItem(HOME_HINT_KEY, "1");
+  } catch {
+    /* Private mode can refuse the write. Hide the line for this visit anyway. */
+  }
+  syncHomeHint();
+  fitCanvas();
+});
+
+const homeHintEl = document.getElementById("home-hint");
+if (homeHintEl && typeof window.ResizeObserver === "function") {
+  new window.ResizeObserver(() => {
+    syncHomeHint();
+    fitCanvas();
+  }).observe(homeHintEl);
+}
+document.fonts?.ready?.then?.(() => {
+  syncHomeHint();
+  fitCanvas();
+});
 
 window.__anton = {
   cabinReady,

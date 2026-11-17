@@ -5,6 +5,7 @@
   "start_url": "/brake-it-anton/",
   "scope": "/brake-it-anton/",
   "display": "standalone",
+  "orientation": "landscape",
   "background_color": "#FAD778",
   "theme_color": "#F6ECD6",
   "icons": [

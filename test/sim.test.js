@@ -11,6 +11,7 @@ import { anchorKind, farDs, groundDs, paintFarToNear, screenFootprint } from "..
 import { CFG } from "../js/config.js";
 import { drainFrame } from "../js/clock.js";
 import { backingScale, clampPlacement, contentBox, frameSize, stableFrame, stablePlacement, tightestBox } from "../js/viewport.js";
+import { HOME_HINT_KEY, isPortraitOrientation, shouldShowHomeHint } from "../js/mobile.js";
 import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
@@ -1351,6 +1352,23 @@ test("brake timing: early stop leaves a gap, late speed is a hit, crawl is not",
 
   const kinds = new Set(early.events.map((e) => e.kind + ":" + (e.id || "")));
   assert.ok([...kinds].some((name) => name.includes("lid") || name.includes("roller") || early.events.some((e) => e.id === "lid")));
+});
+
+test("orientation follows matchMedia, and the home hint stays out of standalone", () => {
+  assert.equal(isPortraitOrientation(true, 896, 414), true);
+  assert.equal(isPortraitOrientation(false, 414, 896), false);
+  assert.equal(isPortraitOrientation(undefined, 414, 896), true);
+  assert.equal(isPortraitOrientation(undefined, 896, 414), false);
+
+  const ios = { ios: true, standalone: false, displayMode: "browser", dismissed: false };
+  assert.equal(shouldShowHomeHint(ios), true);
+  assert.equal(shouldShowHomeHint({ ...ios, standalone: true }), false);
+  assert.equal(shouldShowHomeHint({ ...ios, standalone: undefined, displayMode: "standalone" }), false);
+  assert.equal(shouldShowHomeHint({ ...ios, displayMode: "fullscreen" }), false);
+  assert.equal(shouldShowHomeHint({ ...ios, dismissed: true }), false);
+  assert.equal(shouldShowHomeHint({ ...ios, ios: false }), false);
+  assert.equal(shouldShowHomeHint({ ios: true, standalone: undefined, displayMode: "browser", dismissed: false }), true);
+  assert.equal(HOME_HINT_KEY, "brake-it-anton-home-hint");
 });
 
 test("the mobile frame stays on whole pixels when the toolbar jitters", () => {
