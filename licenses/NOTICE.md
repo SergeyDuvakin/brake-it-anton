@@ -10,7 +10,9 @@ Those remain candidates only; see `docs/visual-assets.md`.
 
 - Balsamiq Sans, Copyright 2011 The Balsamiq Sans Project Authors
 - Rubik Mono One, Copyright 2015 The Rubik Project Authors
+- Pixeloid Sans, Copyright 2020 GGBotNet (SIL Open Font License 1.1)
 
-Both are under the SIL Open Font License 1.1. The license texts are in
-`licenses/fonts/OFL-BalsamiqSans.txt` and `licenses/fonts/OFL-RubikMonoOne.txt`.
-The font files live in `assets/fonts/`.
+All three are under the SIL Open Font License 1.1. The license texts are in
+`licenses/fonts/OFL-BalsamiqSans.txt`, `licenses/fonts/OFL-RubikMonoOne.txt`
+and `licenses/fonts/OFL-Pixeloid.txt`. Balsamiq and Rubik live in
+`assets/fonts/`. Pixeloid lives in `assets/pixel/fonts/`.

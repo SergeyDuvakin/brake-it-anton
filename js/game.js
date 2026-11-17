@@ -9,6 +9,7 @@ import { createReplay } from "./replay.js";
 import { expressionId } from "./physics.js";
 import { SAVE_KEY } from "./config.js";
 import { whenCabinReady, cabinReady } from "./cabin.js";
+import { whenPixelReady } from "./pixel-assets.js";
 import { bumperFootGap, render, whenCarsReady } from "./draw.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, futureMissions, getMission } from "./missions.js";
@@ -794,6 +795,11 @@ async function boot() {
     await whenCabinReady();
   } catch {
     /* The cabin stays a flat panel until the approved stills load. */
+  }
+  try {
+    await whenPixelReady();
+  } catch {
+    /* The classic renderer stays up if the pixel package fails. */
   }
   requestAnimationFrame(frame);
 }

@@ -58,6 +58,8 @@ import { pulse, vibrationPattern } from "../js/haptics.js";
 import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
 import { actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { CABIN_POSES } from "../js/cabin.js";
+import { lookAheadMetres, pedalDropPx, pixelPoseFrame, poseMapCoversCabin, reactionSeconds, warnMetres, WORLD_PX_PER_M, yNative, camPxOf } from "../js/pixel-world.js";
 import {
   createSession,
   keyDown,
@@ -2864,6 +2866,30 @@ test("patience needle and pedal hinge follow the live input", () => {
         assert.equal(boxesOverlap(frame.labels[i], frame.labels[j]), false, `${frame.labels[i].text}/${frame.labels[j].text}`);
       }
     }
+  }
+});
+
+test("pixel pose map, ground lock, pedal snap and a 2.6s warning", () => {
+  assert.equal(poseMapCoversCabin(), true);
+  for (const id of CABIN_POSES) assert.ok(pixelPoseFrame(id, "drive"));
+  assert.equal(pixelPoseFrame("belted", "countdown"), "drive");
+  assert.equal(pixelPoseFrame("belted", "drive"), "oy");
+  const ppm = 32 / CFG.roadHalf;
+  assert.ok(Math.abs(WORLD_PX_PER_M - ppm) < 1e-9);
+  const locked = [];
+  for (const cam of [0, 4.25, 11, 27.5]) {
+    const y = yNative(100, cam);
+    locked.push(y - camPxOf(cam));
+  }
+  assert.equal(locked[1], locked[0]);
+  assert.equal(locked[2], locked[0]);
+  assert.equal(locked[3], locked[0]);
+  assert.deepEqual([0, 0.1, 0.5, 1].map(pedalDropPx), [0, 4, 16, 28]);
+  const ahead = lookAheadMetres();
+  assert.ok(ahead > 16 && ahead < 19, ahead);
+  for (const cruise of [10, 16]) {
+    assert.equal(reactionSeconds(cruise), 2.6);
+    assert.ok(warnMetres(cruise) > ahead);
   }
 });
 
