@@ -324,8 +324,9 @@ function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
   const previewState = { ...state, pose: "preen", session: { phase: "drive", sim: state.preview }, alpha: 1 };
   if (usePixel(state)) {
-    drawPixelWorld(ctx, state.preview, previewState);
-    drawPixelCabin(ctx, state.preview, previewState, "preen");
+    // The title has its own card: no gauge, no pause and no drive callout behind it.
+    drawPixelWorld(ctx, state.preview, previewState, { hud: false });
+    drawPixelCabin(ctx, state.preview, previewState, "preen", { callout: false });
   } else {
     drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
     paintCabin(ctx, state.preview, previewState);
@@ -346,7 +347,7 @@ function drawPlay(ctx, state, sink) {
   const pixel = usePixel(state);
   ctx.save();
   if (mag && !pixel) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
-  if (pixel) drawPixelWorld(ctx, sim, state);
+  if (pixel) drawPixelWorld(ctx, sim, state, { hud: driving || session.phase === "countdown" });
   else drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
   if (pixel) drawPixelCabin(ctx, sim, state, cabinPoseId(sim, session.phase, state.pose));

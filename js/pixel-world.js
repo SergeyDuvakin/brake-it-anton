@@ -323,7 +323,8 @@ function drawBang(nctx, x) {
   nctx.fillRect(x0 + 3, y0 + 8, 1, 1);
 }
 
-export function drawPixelWorld(ctx, sim, state) {
+export function drawPixelWorld(ctx, sim, state, opts = {}) {
+  const hud = opts.hud !== false;
   const nctx = worldCtx();
   if (!nctx || !sim) return null;
   const alpha = state.alpha ?? 1;
@@ -423,8 +424,8 @@ export function drawPixelWorld(ctx, sim, state) {
     drawBang(nctx, xNative(hx));
   }
 
-  drawPixelGauge(nctx, sim.patience);
-  const pause = pixelImage("ui/pause-button.png");
+  if (hud) drawPixelGauge(nctx, sim.patience);
+  const pause = hud ? pixelImage("ui/pause-button.png") : null;
   if (pause) {
     pxRoundRect(nctx, 225, 5, 24, 22, 4, "rgba(0,0,0,0.2)");
     nctx.drawImage(pause, 223, 3);
@@ -543,7 +544,7 @@ function drawBubble(ctx, text) {
   ctx.restore();
 }
 
-export function drawPixelCabin(ctx, sim, state, cabinId) {
+export function drawPixelCabin(ctx, sim, state, cabinId, opts = {}) {
   const phase = state.session?.phase || "drive";
   const frameId = pixelPoseFrame(cabinId, phase);
   const plate = pixelImage("ui/plate-driver.png");
@@ -554,9 +555,10 @@ export function drawPixelCabin(ctx, sim, state, cabinId) {
   const pose = pixelImage(`cabin/poses/${frameId}.png`);
   if (pose) ctx.drawImage(pose, 1066, 34, 500, 600);
   if (sim?.bubble && sim.bubbleT > 0) drawBubble(ctx, sim.bubble);
-  const hint = state.hint && phase === "drive";
+  const callout = opts.callout !== false;
+  const hint = callout && state.hint && phase === "drive";
   const needs = sim?.attention === "phone" || sim?.attention === "drowsy" || sim?.attention === "asleep";
-  if (hint || (phase === "drive" && needs)) {
+  if (hint || (callout && phase === "drive" && needs)) {
     const label = needs ? (sim.attention === "phone" ? "Ткни в него · F" : "Разбуди · F") : "Он газует. Ты жмёшь тормоз.";
     const glyph = thresholdText(label, 2);
     ctx.fillStyle = "#FFF6E4";
