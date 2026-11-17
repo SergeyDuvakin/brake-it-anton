@@ -171,10 +171,23 @@ test("an iPhone browser can dismiss the home-screen hint, and standalone never s
   const hint = page.locator("#home-hint");
   await expect(hint).toBeVisible();
   await expect(hint).toContainText("На экран „Домой“");
+  await page.evaluate(() => document.fonts?.ready);
+  await page.waitForFunction(() => {
+    const bar = document.getElementById("home-hint");
+    const canvas = document.getElementById("game");
+    if (!bar || bar.hidden || !canvas) return false;
+    const hintBox = bar.getBoundingClientRect();
+    const canvasBox = canvas.getBoundingClientRect();
+    return canvasBox.height > 100 && canvasBox.top + 1 >= hintBox.bottom;
+  });
   const bar = await hint.boundingBox();
   const view = page.viewportSize();
+  const canvas = await page.locator("canvas").boundingBox();
   expect(bar.y).toBeLessThan(40);
   expect(bar.y + bar.height).toBeLessThan(view.height * 0.45);
+  expect(canvas.y).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
+  expect(canvas.y + canvas.height).toBeLessThanOrEqual(view.height + 1);
+  expect(canvas.width / canvas.height).toBeCloseTo(16 / 9, 1);
   await page.locator("#home-hint-dismiss").click();
   await expect(hint).toBeHidden();
   expect(await page.evaluate(() => localStorage.getItem("brake-it-anton-home-hint"))).toBe("1");

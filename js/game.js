@@ -532,6 +532,14 @@ function syncHomeHint() {
     dismissed,
   });
   hint.hidden = !show;
+  const wrap = document.getElementById("wrap");
+  if (!wrap) return;
+  if (show) {
+    const height = Math.max(0, Math.ceil(hint.getBoundingClientRect().height));
+    wrap.style.paddingTop = `${height}px`;
+  } else {
+    wrap.style.paddingTop = "";
+  }
 }
 
 let placement = null;
@@ -629,6 +637,7 @@ function fitCanvas() {
 
 function refitSoon() {
   syncOrient();
+  syncHomeHint();
   fitCanvas();
 }
 
@@ -647,16 +656,28 @@ window.screen?.orientation?.addEventListener("change", scheduleRefit);
 window.matchMedia?.("(orientation: portrait)")?.addEventListener?.("change", scheduleRefit);
 window.visualViewport?.addEventListener("resize", refitSoon);
 syncOrient();
-fitCanvas();
 syncHomeHint();
+fitCanvas();
 document.getElementById("home-hint-dismiss")?.addEventListener("click", () => {
   try {
     localStorage.setItem(HOME_HINT_KEY, "1");
   } catch {
     /* Private mode can refuse the write. Hide the line for this visit anyway. */
   }
-  const hint = document.getElementById("home-hint");
-  if (hint) hint.hidden = true;
+  syncHomeHint();
+  fitCanvas();
+});
+
+const homeHintEl = document.getElementById("home-hint");
+if (homeHintEl && typeof window.ResizeObserver === "function") {
+  new window.ResizeObserver(() => {
+    syncHomeHint();
+    fitCanvas();
+  }).observe(homeHintEl);
+}
+document.fonts?.ready?.then?.(() => {
+  syncHomeHint();
+  fitCanvas();
 });
 
 window.__anton = {
