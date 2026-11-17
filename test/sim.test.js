@@ -60,7 +60,7 @@ import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
 import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
 import { CABIN_POSES } from "../js/cabin.js";
-import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
+import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, platePixel, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
 import {
   createSession,
   keyDown,
@@ -573,6 +573,15 @@ test("sidewalk props stay on the slab, and the warning stays in the lane", () =>
     && plate.x + plate.w >= icon.x + icon.w && plate.y + plate.h >= icon.y + icon.h;
   assert.equal(covers(HUD_PLATES[0], gauge), true);
   assert.equal(covers(HUD_PLATES[1], pause), true);
+  for (const plate of HUD_PLATES) {
+    assert.equal(platePixel(plate, plate.x, plate.y), "cut");
+    assert.equal(platePixel(plate, plate.x + 1, plate.y), "cut");
+    assert.equal(platePixel(plate, plate.x + 2, plate.y), "ink");
+    assert.equal(platePixel(plate, plate.x + 1, plate.y + 1), "ink");
+    assert.equal(platePixel(plate, plate.x + 3, plate.y + 3), "paper");
+    assert.equal(platePixel(plate, plate.x + plate.w - 1, plate.y), "cut");
+    assert.equal(platePixel(plate, plate.x, plate.y + plate.h - 1), "cut");
+  }
   const blocked = bangPlacement(1.8, [{ x: lane.x - 2, y: lane.y - 2, w: lane.w + 4, h: lane.h + 4 }]);
   assert.ok(blocked.y > lane.y, JSON.stringify(blocked));
 });
@@ -2946,8 +2955,11 @@ test("patience needle and pedal hinge follow the live input", () => {
   const won = ride("result", 12, 0, true, applyVictory(freshSave(), "lesson1", 3));
   assert.ok(won.labels.some((item) => item.text === "ДОЕХАЛИ!"));
   assert.ok(won.labels.some((item) => item.text === "Машина цела"));
-  assert.ok(won.labels.some((item) => item.text === "ДАЛЬШЕ"));
-  assert.ok(won.spots.some((spot) => spot.id === "next"));
+  assert.ok(won.labels.some((item) => item.text === "ЕЩЁ РАЗ"));
+  assert.equal(won.labels.some((item) => item.text === "ДАЛЬШЕ" || item.text === "В ГАРАЖ"), false);
+  assert.equal(won.spots.some((spot) => spot.id === "next" || spot.id === "to-garage"), false);
+  const wonRetry = won.spots.find((spot) => spot.id === "retry");
+  assert.ok(wonRetry.w > 300 && wonRetry.h > 120, JSON.stringify(wonRetry));
   const lost = ride("result", 80, 0, false);
   assert.ok(lost.labels.some((item) => item.text === "НЕ ДОЕХАЛИ"));
   const crashed = createSession(getMission("lesson1"), { seed: 11 });
@@ -2996,9 +3008,11 @@ test("patience needle and pedal hinge follow the live input", () => {
     pointer: { over: null, pressed: null },
   });
   assert.ok(fishLoss.labels.some((item) => item.text === "Рыбка разлилась"));
-  assert.ok(lost.labels.some((item) => item.text === "ЗАНОВО"));
-  assert.equal(lost.spots.some((spot) => spot.id === "next"), false);
-  assert.ok(lost.spots.some((spot) => spot.id === "retry"));
+  assert.ok(lost.labels.some((item) => item.text === "ЕЩЁ РАЗ"));
+  assert.equal(lost.labels.some((item) => item.text === "ЗАНОВО" || item.text === "В ГАРАЖ"), false);
+  assert.equal(lost.spots.some((spot) => spot.id === "next" || spot.id === "to-garage"), false);
+  const lostRetry = lost.spots.find((spot) => spot.id === "retry");
+  assert.ok(lostRetry.w > 300 && lostRetry.h > 120);
   for (const frame of [won, lost]) {
     for (let i = 0; i < frame.labels.length; i += 1) {
       for (let j = i + 1; j < frame.labels.length; j += 1) {

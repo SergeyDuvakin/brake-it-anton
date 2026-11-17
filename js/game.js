@@ -444,6 +444,10 @@ window.addEventListener("keydown", (event) => {
   }
   audio.unlock();
   if (event.code === "Space") event.preventDefault();
+  if (session?.phase === "result" && (event.code === "Enter" || event.code === "Space") && !event.repeat) {
+    activate("retry");
+    return;
+  }
   if (event.repeat && event.code !== "Space") return;
   if (!session) {
     if (event.code === "Enter" || event.code === "Space") activate(screen === "garage" ? "go" : "start");

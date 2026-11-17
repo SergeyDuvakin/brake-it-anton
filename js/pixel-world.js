@@ -350,6 +350,33 @@ export const HUD_PLATES = [
   { x: 219, y: 0, w: 31, h: 28 },
 ];
 
+/** Stepped corner, native pixels: 2 then 1. No anti-aliasing. */
+export const HUD_CORNER = [2, 1];
+
+export function plateInset(row, height, steps = HUD_CORNER) {
+  if (row < 0 || row >= height) return height;
+  const edge = Math.min(row, height - 1 - row);
+  if (edge >= steps.length) return 0;
+  return steps[edge];
+}
+
+/** "cut" shows the world, "ink" is the 1px outline, "paper" is the fill. */
+export function platePixel(plate, x, y) {
+  const col = x - plate.x;
+  const row = y - plate.y;
+  const outer = plateInset(row, plate.h);
+  const inOuter = row >= 0 && row < plate.h && col >= outer && col < plate.w - outer;
+  const iy = row - 1;
+  const ix = col - 1;
+  const innerH = plate.h - 2;
+  const innerW = plate.w - 2;
+  const inner = plateInset(iy, innerH, [1]);
+  const inInner = iy >= 0 && iy < innerH && ix >= inner && ix < innerW - inner;
+  if (inInner) return "paper";
+  if (inOuter) return "ink";
+  return "cut";
+}
+
 const BANG_W = 9;
 const BANG_H = 12;
 
@@ -527,13 +554,14 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
 
 function paintHudPlates(nctx) {
   for (const plate of HUD_PLATES) {
-    nctx.fillStyle = "#F6ECD6";
-    nctx.fillRect(plate.x, plate.y, plate.w, plate.h);
-    nctx.fillStyle = "#1C181C";
-    nctx.fillRect(plate.x, plate.y, plate.w, 1);
-    nctx.fillRect(plate.x, plate.y + plate.h - 1, plate.w, 1);
-    nctx.fillRect(plate.x, plate.y, 1, plate.h);
-    nctx.fillRect(plate.x + plate.w - 1, plate.y, 1, plate.h);
+    for (let y = 0; y < plate.h; y += 1) {
+      for (let x = 0; x < plate.w; x += 1) {
+        const kind = platePixel(plate, plate.x + x, plate.y + y);
+        if (kind === "cut") continue;
+        nctx.fillStyle = kind === "ink" ? "#1C181C" : "#F6ECD6";
+        nctx.fillRect(plate.x + x, plate.y + y, 1, 1);
+      }
+    }
   }
 }
 

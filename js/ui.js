@@ -457,13 +457,6 @@ function starsLine(graded) {
   return `${"★".repeat(graded.stars)}${"☆".repeat(3 - graded.stars)}`;
 }
 
-function nextLessonOpen(state) {
-  const order = ["lesson1", "lesson2", "lesson3", "lesson4"];
-  const idx = order.indexOf(state.session.mission.id);
-  if (idx < 0 || idx >= order.length - 1) return false;
-  return state.save.unlocked >= idx + 2;
-}
-
 function momentButton(ctx, sink, state) {
   if (!state.replayReady) return;
   drawButton(ctx, sink, {
@@ -519,61 +512,62 @@ export function drawResultScreen(ctx, state, sink) {
     }
   }
 
-  if (success) {
-    const next = place(card, 175, 713, 515, 134);
-    const garage = place(card, 175, 864, 515, 120);
-    const open = nextLessonOpen(state);
-    drawButton(ctx, sink, {
-      id: open ? "next" : null,
-      x: next.x,
-      y: next.y,
-      w: next.w,
-      h: next.h,
-      text: "ДАЛЬШЕ",
-      kind: "teal",
-      disabled: !open,
-      pointer: state.pointer,
-      size: 32,
-    });
-    drawButton(ctx, sink, {
-      id: "to-garage",
-      x: garage.x,
-      y: garage.y,
-      w: garage.w,
-      h: garage.h,
-      text: "В ГАРАЖ",
-      kind: "cream",
-      pointer: state.pointer,
-      size: 32,
-    });
-    momentButton(ctx, sink, state);
-    return;
-  }
-  const again = place(card, 174, 713, 517, 135);
-  const garage = place(card, 174, 865, 517, 120);
-  drawButton(ctx, sink, {
+  const again = place(card, 150, 740, 560, 220);
+  drawRetryButton(ctx, sink, {
     id: "retry",
     x: again.x,
     y: again.y,
     w: again.w,
     h: again.h,
-    text: "ЗАНОВО",
-    kind: "orange",
+    text: "ЕЩЁ РАЗ",
     pointer: state.pointer,
-    size: 32,
-  });
-  drawButton(ctx, sink, {
-    id: "to-garage",
-    x: garage.x,
-    y: garage.y,
-    w: garage.w,
-    h: garage.h,
-    text: "В ГАРАЖ",
-    kind: "cream",
-    pointer: state.pointer,
-    size: 32,
   });
   momentButton(ctx, sink, state);
+}
+
+/** One stepped plate. `steps` is the corner cut on the first rows, in screen pixels. */
+function fillStepped(ctx, x, y, w, h, steps, color) {
+  ctx.fillStyle = color;
+  const ix = Math.round(x);
+  const iy = Math.round(y);
+  const iw = Math.round(w);
+  const ih = Math.round(h);
+  for (let row = 0; row < ih; row += 1) {
+    const edge = Math.min(row, ih - 1 - row);
+    const inset = edge < steps.length ? steps[edge] : 0;
+    const span = iw - inset * 2;
+    if (span > 0) ctx.fillRect(ix + inset, iy + row, span, 1);
+  }
+}
+
+function drawRetryButton(ctx, sink, spec) {
+  const state = controlState(spec.id, spec.pointer, spec);
+  const shift = state === "pressed" ? 4 : 0;
+  const x = Math.round(spec.x);
+  const y = Math.round(spec.y + shift);
+  const w = Math.round(spec.w);
+  const h = Math.round(spec.h);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  fillStepped(ctx, x, y, w, h, [8, 4], "#1C181C");
+  fillStepped(ctx, x + 4, y + 4, w - 8, h - 8, [4], "#F6ECD6");
+  ctx.font = "700 48px 'Pixeloid Sans', 'Rubik Mono One', sans-serif";
+  ctx.fillStyle = "#1C181C";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(spec.text, x + w / 2, y + h / 2);
+  ctx.restore();
+  const labelH = 56;
+  sink.labels.push({
+    text: spec.text,
+    x: spec.x,
+    y: spec.y + (spec.h - labelH) / 2,
+    w: spec.w,
+    h: labelH,
+    cx: spec.x + spec.w / 2,
+    cy: spec.y + spec.h / 2,
+  });
+  if (spec.id) sink.spots.push({ id: spec.id, x: spec.x, y: spec.y, w: spec.w, h: spec.h });
 }
 
 /** Math degrees: 0 points right, 90 points up, 180 points left. Patience 0 is the green end. */
