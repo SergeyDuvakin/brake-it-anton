@@ -1,0 +1,732 @@
+{
+ "name": "Brake It, Anton — pixel restyle asset package",
+ "version": 1,
+ "source": "proto5 (cabin/Anton), proto4 (world/car/HUD), proto2 (centred pedal). Approved by Sergey Duvakin 17.11.2026.",
+ "scale": 4,
+ "scale_note": "Native pixel art. Draw with ctx.imageSmoothingEnabled=false at integer x4 only (1 art px = 4 screen px). Exceptions: entries with \"scale\": 1 are already at screen resolution.",
+ "canvas": [
+  1600,
+  900
+ ],
+ "background": "#F6ECD6",
+ "palette_ref": {
+  "ink": "#1C181C",
+  "world_outline": "#2A2430",
+  "cream": "#FFF6E4",
+  "cabin": "#F8C064",
+  "paper": "#F6ECD6"
+ },
+ "cabin": {
+  "background": {
+   "file": "cabin/bg.png",
+   "size": [
+    125,
+    150
+   ],
+   "note": "Static: window, city, У sign, wall, A-pillar, mirror, seat. Never animated."
+  },
+  "seat_layer": {
+   "file": "cabin/seat.png",
+   "size": [
+    125,
+    150
+   ],
+   "bbox": [
+    27,
+    40,
+    98,
+    125
+   ],
+   "note": "Already baked into bg.png and every pose; separate copy only for reference/tools."
+  },
+  "poses": {
+   "drive": {
+    "file": "cabin/poses/drive.png",
+    "sheet_rect": {
+     "x": 0,
+     "y": 0,
+     "w": 125,
+     "h": 150
+    }
+   },
+   "phone": {
+    "file": "cabin/poses/phone.png",
+    "sheet_rect": {
+     "x": 125,
+     "y": 0,
+     "w": 125,
+     "h": 150
+    }
+   },
+   "asleep": {
+    "file": "cabin/poses/asleep.png",
+    "sheet_rect": {
+     "x": 250,
+     "y": 0,
+     "w": 125,
+     "h": 150
+    }
+   },
+   "oy": {
+    "file": "cabin/poses/oy.png",
+    "sheet_rect": {
+     "x": 375,
+     "y": 0,
+     "w": 125,
+     "h": 150
+    }
+   },
+   "yasam": {
+    "file": "cabin/poses/yasam.png",
+    "sheet_rect": {
+     "x": 500,
+     "y": 0,
+     "w": 125,
+     "h": 150
+    }
+   },
+   "grumble": {
+    "file": "cabin/poses/grumble.png",
+    "sheet_rect": {
+     "x": 625,
+     "y": 0,
+     "w": 125,
+     "h": 150
+    }
+   }
+  },
+  "sheet": "cabin/anton-poses-sheet.png",
+  "frame_size": [
+   125,
+   150
+  ],
+  "note": "Each pose is a full opaque 125x150 frame = bg + Anton + dash + wheel + hands. bg pixels are identical in all frames (only Anton changes).",
+  "target": {
+   "screen_xy": [
+    1066,
+    34
+   ],
+   "screen_size": [
+    500,
+    600
+   ],
+   "rule": "DRIVER_PLATE.x + CABIN_INSET(10), DRIVER_PLATE.y + 10; x4"
+  },
+  "fixed_geometry_native": {
+   "head_center": [
+    62,
+    56
+   ],
+   "head_r": [
+    21,
+    19
+   ],
+   "wheel_center": [
+    62,
+    113
+   ],
+   "wheel_r": [
+    27,
+    10
+   ]
+  },
+  "tap_target": "Keep the existing 'anton' spot in drawPlay (DRIVER_PLATE-based); the art keeps head and torso inside it."
+ },
+ "pedal": {
+  "scale": 1,
+  "frames": {
+   "idle": {
+    "file": "pedal/pedal-idle.png",
+    "size": [
+     160,
+     148
+    ]
+   },
+   "pressed": {
+    "file": "pedal/pedal-pressed.png",
+    "size": [
+     160,
+     148
+    ]
+   }
+  },
+  "frames_screen_xy": [
+   1236,
+   708
+  ],
+  "parts": {
+   "bracket": {
+    "file": "pedal/pedal-bracket.png",
+    "size": [
+     70,
+     36
+    ],
+    "screen_xy": [
+     1281,
+     708
+    ]
+   },
+   "pad": {
+    "file": "pedal/pedal-pad.png",
+    "size": [
+     160,
+     90
+    ],
+    "screen_xy_idle": [
+     1236,
+     738
+    ]
+   },
+   "rod": {
+    "x": 1308,
+    "w": 16,
+    "top_y": 732,
+    "bottom": "pad_y + 4",
+    "fill": "#4A4A52",
+    "edge": "#1C181C",
+    "edge_cols": [
+     1308,
+     1323
+    ]
+   }
+  },
+  "pivot_screen": [
+   1316,
+   724
+  ],
+  "travel_px": 28,
+  "travel_snap_px": 4,
+  "note": "Pad drops straight down by round(brake*7)*4 px (0..28). Bracket fixed. Draw order: bracket, rod, pad."
+ },
+ "plates": {
+  "scale": 1,
+  "driver": {
+   "file": "ui/plate-driver.png",
+   "screen_rect": [
+    1056,
+    24,
+    520,
+    620
+   ],
+   "fill": "#F8C064",
+   "border_px": 4
+  },
+  "pedal": {
+   "file": "ui/plate-pedal.png",
+   "screen_rect": [
+    1056,
+    660,
+    520,
+    216
+   ],
+   "fill": "#FFF6E4",
+   "border_px": 4
+  },
+  "world_frame": {
+   "file": "ui/world-plate-frame.png",
+   "scale": 4,
+   "native_size": [
+    252,
+    213
+   ],
+   "screen_xy": [
+    24,
+    24
+   ],
+   "screen_size": [
+    1008,
+    852
+   ],
+   "radius_native": 7
+  },
+  "world_corner_mask": {
+   "file": "ui/world-corner-mask.png",
+   "scale": 4,
+   "screen_xy": [
+    28,
+    28
+   ],
+   "note": "PAPER pixels that round the world view corners; draw after the world, before the frame."
+  }
+ },
+ "world": {
+  "view_native": [
+   250,
+   211
+  ],
+  "view_screen_xy": [
+   28,
+   28
+  ],
+  "view_screen_size": [
+   1000,
+   844
+  ],
+  "px_per_m_native": 9.85,
+  "px_per_m_note": "Lane = 32 native px = CFG.roadHalf 3.25 m. Use one constant WORLD_PX_PER_M (native) = 32/CFG.roadHalf.",
+  "straight_road": {
+   "file": "world/road-straight-strip.png",
+   "size": [
+    250,
+    128
+   ],
+   "tile_period_y": 128,
+   "columns_native": {
+    "grass_left": [
+     0,
+     95
+    ],
+    "sidewalk_left": [
+     96,
+     111
+    ],
+    "road": [
+     112,
+     175
+    ],
+    "centre_line": [
+     143,
+     144
+    ],
+    "sidewalk_right": [
+     176,
+     191
+    ],
+    "grass_right": [
+     192,
+     249
+    ]
+   },
+   "lane_centres_native_x": {
+    "oncoming": 127.5,
+    "own": 159.5
+   },
+   "road_centre_native_x": 143.5
+  },
+  "overlays": {
+   "zebra": {
+    "file": "world/zebra-across-road.png",
+    "place_native_x": 112
+   },
+   "stop_line": {
+    "file": "world/stop-line-right-lane.png",
+    "place_native_x": 145
+   },
+   "centre_solid": {
+    "file": "world/centre-solid-8.png",
+    "place_native_x": 143
+   }
+  },
+  "junction_ground_wave2": "world/junction-ground-250x211.png",
+  "reference_scene": "world/reference-scene-250x211.png",
+  "learner_car_target": {
+   "native_xy": [
+    147,
+    146
+   ],
+   "screen_xy": [
+    616,
+    612
+   ],
+   "body_centre_screen": [
+    668,
+    696
+   ]
+  },
+  "car_center_native_y": 167,
+  "car_nose_native_y": 147
+ },
+ "car": {
+  "canvas_native": [
+   26,
+   44
+  ],
+  "body_native": {
+   "x": 3,
+   "y": 1,
+   "w": 20,
+   "h": 40
+  },
+  "anchor_center_native": [
+   13,
+   21
+  ],
+  "nose_y": 1,
+  "tail_y": 40,
+  "shadow_rrect_native": {
+   "x": 5,
+   "y": 3,
+   "w": 20,
+   "h": 40,
+   "r": 5
+  },
+  "learner": {
+   "normal": "car/learner-normal.png",
+   "brake": "car/learner-brake.png",
+   "hazard": "car/learner-hazard.png"
+  },
+  "hazard_blink_hz": 2,
+  "hazard_note": "Alternate learner-hazard / learner-normal (or learner-brake while braking) every 250 ms.",
+  "npc": {
+   "blue": {
+    "up": "car/npc-blue-up.png",
+    "down": "car/npc-blue-down.png",
+    "left": "car/npc-blue-left.png",
+    "right": "car/npc-blue-right.png"
+   },
+   "white": {
+    "up": "car/npc-white-up.png",
+    "down": "car/npc-white-down.png",
+    "left": "car/npc-white-left.png",
+    "right": "car/npc-white-right.png"
+   }
+  },
+  "note": "Only exact 90-degree rotations are provided; never rotate by other angles or scale."
+ },
+ "sprites": {
+  "house-red-gable": {
+   "file": "world/sprites/house-red-gable.png",
+   "w": 45,
+   "h": 35,
+   "anchor": [
+    0,
+    32
+   ],
+   "shadow": "world/shadows/house-red-gable.png",
+   "foot_w": 42
+  },
+  "house-orange-gable": {
+   "file": "world/sprites/house-orange-gable.png",
+   "w": 61,
+   "h": 32,
+   "anchor": [
+    0,
+    29
+   ],
+   "shadow": "world/shadows/house-orange-gable.png",
+   "foot_w": 58
+  },
+  "block-teal-tall": {
+   "file": "world/sprites/block-teal-tall.png",
+   "w": 35,
+   "h": 41,
+   "anchor": [
+    0,
+    38
+   ],
+   "shadow": "world/shadows/block-teal-tall.png",
+   "foot_w": 32
+  },
+  "shop-grey": {
+   "file": "world/sprites/shop-grey.png",
+   "w": 65,
+   "h": 41,
+   "anchor": [
+    0,
+    38
+   ],
+   "shadow": "world/shadows/shop-grey.png",
+   "foot_w": 62
+  },
+  "block-brown-brick": {
+   "file": "world/sprites/block-brown-brick.png",
+   "w": 41,
+   "h": 39,
+   "anchor": [
+    0,
+    36
+   ],
+   "shadow": "world/shadows/block-brown-brick.png",
+   "foot_w": 38
+  },
+  "house-orange-tan": {
+   "file": "world/sprites/house-orange-tan.png",
+   "w": 49,
+   "h": 45,
+   "anchor": [
+    0,
+    42
+   ],
+   "shadow": "world/shadows/house-orange-tan.png",
+   "foot_w": 46
+  },
+  "shop-teal": {
+   "file": "world/sprites/shop-teal.png",
+   "w": 49,
+   "h": 49,
+   "anchor": [
+    0,
+    46
+   ],
+   "shadow": "world/shadows/shop-teal.png",
+   "foot_w": 46
+  },
+  "tree": {
+   "file": "world/sprites/tree.png",
+   "w": 19,
+   "h": 24,
+   "anchor": [
+    8,
+    19
+   ],
+   "shadow": "world/shadows/tree.png"
+  },
+  "traffic-light-red": {
+   "file": "world/sprites/traffic-light-red.png",
+   "w": 9,
+   "h": 29,
+   "anchor": [
+    2,
+    27
+   ],
+   "shadow": "world/shadows/traffic-light-red.png"
+  },
+  "traffic-light-green": {
+   "file": "world/sprites/traffic-light-green.png",
+   "w": 9,
+   "h": 29,
+   "anchor": [
+    2,
+    27
+   ],
+   "shadow": "world/shadows/traffic-light-green.png"
+  },
+  "sign-zebra": {
+   "file": "world/sprites/sign-zebra.png",
+   "w": 9,
+   "h": 20,
+   "anchor": [
+    4,
+    18
+   ],
+   "shadow": "world/shadows/sign-zebra.png"
+  },
+  "bench": {
+   "file": "world/sprites/bench.png",
+   "w": 14,
+   "h": 8,
+   "anchor": [
+    0,
+    6
+   ],
+   "shadow": "world/shadows/bench.png"
+  },
+  "trash-bin": {
+   "file": "world/sprites/trash-bin.png",
+   "w": 7,
+   "h": 8,
+   "anchor": [
+    0,
+    6
+   ],
+   "shadow": "world/shadows/trash-bin.png"
+  },
+  "hydrant": {
+   "file": "world/sprites/hydrant.png",
+   "w": 7,
+   "h": 7,
+   "anchor": [
+    0,
+    5
+   ],
+   "shadow": "world/shadows/hydrant.png"
+  },
+  "manhole": {
+   "file": "world/sprites/manhole.png",
+   "w": 9,
+   "h": 7,
+   "anchor": [
+    4,
+    3
+   ]
+  },
+  "planter": {
+   "file": "world/sprites/planter.png",
+   "w": 16,
+   "h": 7,
+   "anchor": [
+    0,
+    5
+   ],
+   "shadow": "world/shadows/planter.png"
+  },
+  "ped-pink-left-0": {
+   "file": "world/sprites/ped-pink-left-0.png",
+   "w": 10,
+   "h": 16,
+   "anchor": [
+    4,
+    14
+   ],
+   "shadow": "world/shadows/ped-pink-left-0.png"
+  },
+  "ped-pink-left-1": {
+   "file": "world/sprites/ped-pink-left-1.png",
+   "w": 10,
+   "h": 16,
+   "anchor": [
+    4,
+    14
+   ],
+   "shadow": "world/shadows/ped-pink-left-1.png"
+  },
+  "ped-pink-right-0": {
+   "file": "world/sprites/ped-pink-right-0.png",
+   "w": 10,
+   "h": 16,
+   "anchor": [
+    4,
+    14
+   ],
+   "shadow": "world/shadows/ped-pink-right-0.png"
+  },
+  "ped-pink-right-1": {
+   "file": "world/sprites/ped-pink-right-1.png",
+   "w": 10,
+   "h": 16,
+   "anchor": [
+    4,
+    14
+   ],
+   "shadow": "world/shadows/ped-pink-right-1.png"
+  },
+  "ped-blue-left-0": {
+   "file": "world/sprites/ped-blue-left-0.png",
+   "w": 10,
+   "h": 16,
+   "anchor": [
+    4,
+    14
+   ],
+   "shadow": "world/shadows/ped-blue-left-0.png"
+  },
+  "ped-blue-left-1": {
+   "file": "world/sprites/ped-blue-left-1.png",
+   "w": 10,
+   "h": 16,
+   "anchor": [
+    4,
+    14
+   ],
+   "shadow": "world/shadows/ped-blue-left-1.png"
+  },
+  "ped-blue-right-0": {
+   "file": "world/sprites/ped-blue-right-0.png",
+   "w": 10,
+   "h": 16,
+   "anchor": [
+    4,
+    14
+   ],
+   "shadow": "world/shadows/ped-blue-right-0.png"
+  },
+  "ped-blue-right-1": {
+   "file": "world/sprites/ped-blue-right-1.png",
+   "w": 10,
+   "h": 16,
+   "anchor": [
+    4,
+    14
+   ],
+   "shadow": "world/shadows/ped-blue-right-1.png"
+  },
+  "dog-left": {
+   "file": "world/sprites/dog-left.png",
+   "w": 14,
+   "h": 9,
+   "anchor": [
+    6,
+    7
+   ],
+   "shadow": "world/shadows/dog-left.png"
+  },
+  "dog-right": {
+   "file": "world/sprites/dog-right.png",
+   "w": 14,
+   "h": 9,
+   "anchor": [
+    6,
+    7
+   ],
+   "shadow": "world/shadows/dog-right.png"
+  }
+ },
+ "sprites_note": "anchor = foot/ground point in sprite px (buildings: bottom-left of the facade). Sort by anchor world-y (footY) ascending. Optional shadow mask: fill its opaque pixels with rgba(0,0,0,0.2) on the ground before the sprite (approximates the approved one-step ground shadow).",
+ "ui": {
+  "gauge": {
+   "file": "ui/gauge-face.png",
+   "w": 72,
+   "h": 46,
+   "hub": [
+    36,
+    39
+   ],
+   "needle_len": 15,
+   "needle_px": 2,
+   "native_xy_in_world": [
+    3,
+    3
+   ],
+   "screen_xy": [
+    40,
+    40
+   ],
+   "hub_cap": {
+    "x": -2,
+    "y": -2,
+    "w": 5,
+    "h": 4,
+    "inner": {
+     "x": -1,
+     "y": -1,
+     "w": 3,
+     "h": 2
+    }
+   }
+  },
+  "pause": {
+   "file": "ui/pause-button.png",
+   "w": 24,
+   "h": 22,
+   "native_xy_in_world": [
+    223,
+    3
+   ],
+   "screen_xy": [
+    920,
+    40
+   ]
+  },
+  "bubble": {
+   "nine_slice": "ui/bubble-9slice.png",
+   "border_native": 1,
+   "tail": "ui/bubble-tail.png",
+   "tail_size": [
+    6,
+    5
+   ],
+   "approved_example_screen": {
+    "x": 1096,
+    "y": 92,
+    "w": 220,
+    "h": 56,
+    "tail_x_offset": 140
+   },
+   "text_scale": 4
+  },
+  "font": {
+   "file": "fonts/PixeloidSans-Bold.ttf",
+   "family": "Pixeloid Sans",
+   "native_px": 9,
+   "scales": [
+    2,
+    3,
+    4
+   ],
+   "license": "fonts/OFL-LICENSE.txt"
+  }
+ },
+ "removed": {
+  "mood_tile": "MOOD_TILE (1076,500,72,64) is not drawn in the pixel style (Sergey, 17.11)."
+ }
+}
