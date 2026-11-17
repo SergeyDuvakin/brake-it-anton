@@ -354,8 +354,14 @@ test("cargo impulses, collisions and a failing trip", () => {
   fish.done = false;
   fish.success = false;
   fish.failReason = null;
+  // The first hit shoves the other car out of the hitbox. Put it back
+  // under the bumper to spend the rest of the cargo.
   fish.hazards[0].resolved = null;
+  fish.hazards[0].s = 5;
+  fish.hazards[0].pose = { s: 5, x: 1.8 };
+  fish.hazards[0].motion = "lane";
   fish.s = 5;
+  fish.x = 1.8;
   stepSim(fish, dt, { held: false, lockSpeed: true });
   assert.equal(fish.failReason, "cargo");
   assert.equal(fish.success, false);
@@ -390,6 +396,110 @@ test("a low-speed scrape is comic and the car is not stuck at zero", () => {
   frames(sim, 120, false);
   assert.ok(sim.v > 4, sim.v);
   assert.equal(sim.done, false);
+  const ped = sim.hazards[0];
+  const inside = Math.abs(sim.x - hazardWorldX(ped, sim)) < CFG.carHalfW + ped.halfW
+    && sim.s + CFG.carHalfFront > (ped.pose?.s ?? ped.s) - ped.halfL
+    && sim.s - CFG.carHalfBack < (ped.pose?.s ?? ped.s) + ped.halfL;
+  assert.equal(inside, false);
+});
+
+test("cruise contact is a hit, and a hop leaves the body outside the car", () => {
+  function overlaps(sim, h) {
+    const hx = hazardWorldX(h, sim);
+    const hs = h.pose?.s ?? h.s;
+    const lateral = Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW - 0.02;
+    const along = sim.s + CFG.carHalfFront > hs - h.halfL && sim.s - CFG.carHalfBack < hs + h.halfL;
+    return lateral && along;
+  }
+  for (const type of ["pedestrian", "bin", "cutin"]) {
+    const sim = createSim(
+      empty({
+        cruise: 13,
+        hazards: [{
+          id: "h",
+          type,
+          s: 36,
+          x: 1.8,
+          halfW: type === "pedestrian" ? 0.42 : 0.9,
+          halfL: type === "pedestrian" ? 0.55 : 2,
+          trust: false,
+        }],
+      }),
+      3,
+    );
+    let saw = false;
+    for (let i = 0; i < 5000 && !sim.done && sim.hazards[0].resolved !== "hit"; i += 1) {
+      stepSim(sim, 1 / 60, { held: false });
+      const h = sim.hazards[0];
+      if (overlaps(sim, h) && !h.resolved) saw = true;
+    }
+    const h = sim.hazards[0];
+    assert.equal(saw, false, `${type} overlapped without a resolution`);
+    assert.equal(h.resolved, "hit", `${type} ${h.resolved} ${dump(sim)}`);
+    assert.equal(overlaps(sim, h), false, `${type} still inside the car`);
+    assert.ok(sim.events.some((e) => e.kind === "hit" && e.id === "h"), type);
+  }
+
+  const slow = createSim(
+    empty({ hazards: [{ id: "bin", type: "bin", s: 8, x: 1.8, halfW: 0.55, halfL: 0.7 }] }),
+    1,
+  );
+  slow.s = 8;
+  slow.x = 1.8;
+  slow.v = 4;
+  stepSim(slow, 1 / 60, { held: false });
+  const bin = slow.hazards[0];
+  assert.equal(bin.resolved, "clear");
+  assert.equal(bin.hopped, true);
+  assert.equal(overlaps(slow, bin), false);
+});
+
+test("a pedestrian finishes crossing, and statics do not walk off the road", () => {
+  const walker = createSim(
+    empty({ hazards: [{ id: "ped", type: "pedestrian", s: 12, x: 1.8, halfW: 0.42, halfL: 0.55 }] }),
+    1,
+  );
+  walker.s = 11.2;
+  walker.v = 0;
+  stepSim(walker, 1 / 60, { held: false, lockSpeed: true });
+  const ped = walker.hazards[0];
+  assert.notEqual(ped.motion, "linger");
+  assert.ok(Math.abs(hazardWorldX(ped, walker) - ped.x) > 1, hazardWorldX(ped, walker));
+  for (let i = 0; i < 360; i += 1) stepSim(walker, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(ped.motion, "off");
+  assert.ok(Math.abs(hazardWorldX(ped, walker)) > CFG.roadHalf);
+
+  for (const type of ["bin", "roller", "pothole"]) {
+    const sim = createSim(
+      empty({ hazards: [{ id: "still", type, s: 80, x: 1.8, halfW: 0.55, halfL: 0.7 }] }),
+      2,
+    );
+    const body = sim.hazards[0];
+    assert.ok(Math.abs(hazardWorldX(body, sim) - 1.8) < 0.05, `${type} spawned at ${hazardWorldX(body, sim)}`);
+    assert.equal(body.family, type === "pothole" || type === "bin" || type === "roller" ? "static" : body.family);
+    for (let i = 0; i < 180; i += 1) stepSim(sim, 1 / 60, { held: false });
+    assert.ok(Math.abs(hazardWorldX(body, sim) - 1.8) < 0.05, `${type} walked to ${hazardWorldX(body, sim)}`);
+    assert.ok(Math.abs(hazardWorldX(body, sim)) < CFG.roadHalf);
+  }
+
+  const pull = createSim(
+    empty({ hazards: [{ id: "cut", type: "cutin", s: 20, x: 1.8, halfW: 0.95, halfL: 2.1 }] }),
+    4,
+  );
+  pull.v = 12;
+  let entered = false;
+  for (let i = 0; i < 800 && pull.hazards[0].motion !== "off"; i += 1) {
+    stepSim(pull, 1 / 60, { held: false, lockSpeed: true });
+    const car = pull.hazards[0];
+    if (car.motion === "lane" || car.motion === "enter") {
+      entered = true;
+      assert.ok(Math.abs(hazardWorldX(car, pull) - car.x) < 5.7);
+      assert.notEqual(car.family, "pedestrian");
+    }
+  }
+  assert.equal(entered, true);
+  assert.equal(pull.hazards[0].family, "car");
+  assert.notEqual(pull.hazards[0].motion, "off");
 });
 
 test("panic braking fails the cake; careful cake and fish trips can finish", () => {
@@ -2316,12 +2426,13 @@ test("every family shares its hitbox ground, and nearer bodies paint in front", 
 
   const order = paintFarToNear([
     { id: "ahead", ds: CFG.carHalfFront + 4, layer: 1 },
-    { id: "car", ds: CFG.carHalfFront, layer: 0 },
     { id: "on", ds: CFG.carHalfFront, layer: 1 },
     { id: "inside", ds: CFG.carHalfFront - 1.2, layer: 1 },
+    { id: "car", ds: -CFG.carHalfBack, layer: 0 },
     { id: "past", ds: -CFG.carHalfBack - 2, layer: 1 },
   ]).map((item) => item.id);
-  assert.deepEqual(order, ["ahead", "car", "on", "inside", "past"]);
+  // The car sorts by its tail, so a body at the nose paints before the roof.
+  assert.deepEqual(order, ["ahead", "on", "inside", "car", "past"]);
 
   sim.s = 20;
   const ped = sim.hazards.find((item) => item.id === "ped");
@@ -2698,6 +2809,52 @@ test("patience needle and pedal hinge follow the live input", () => {
   assert.ok(won.spots.some((spot) => spot.id === "next"));
   const lost = ride("result", 80, 0, false);
   assert.ok(lost.labels.some((item) => item.text === "НЕ ДОЕХАЛИ"));
+  const crashed = createSession(getMission("lesson1"), { seed: 11 });
+  crashed.phase = "result";
+  crashed.sim.done = true;
+  crashed.sim.success = false;
+  crashed.sim.failReason = "body";
+  crashed.result = grade(crashed.sim);
+  crashed.result.success = false;
+  const bodyLoss = render(mockCtx().ctx, {
+    screen: "play",
+    session: crashed,
+    save,
+    now: 0,
+    hint: false,
+    debug: false,
+    notice: null,
+    preview: null,
+    missions: LESSONS,
+    selected: "lesson1",
+    pose: null,
+    alpha: 1,
+    pointer: { over: null, pressed: null },
+  });
+  assert.ok(bodyLoss.labels.some((item) => item.text === "Врезались"));
+  const spilled = createSession(getMission("lesson4"), { seed: 11 });
+  spilled.phase = "result";
+  spilled.sim.done = true;
+  spilled.sim.success = false;
+  spilled.sim.failReason = "cargo";
+  spilled.result = grade(spilled.sim);
+  spilled.result.success = false;
+  const fishLoss = render(mockCtx().ctx, {
+    screen: "play",
+    session: spilled,
+    save,
+    now: 0,
+    hint: false,
+    debug: false,
+    notice: null,
+    preview: null,
+    missions: LESSONS,
+    selected: "lesson4",
+    pose: null,
+    alpha: 1,
+    pointer: { over: null, pressed: null },
+  });
+  assert.ok(fishLoss.labels.some((item) => item.text === "Рыбка разлилась"));
   assert.ok(lost.labels.some((item) => item.text === "ЗАНОВО"));
   assert.equal(lost.spots.some((spot) => spot.id === "next"), false);
   assert.ok(lost.spots.some((spot) => spot.id === "retry"));

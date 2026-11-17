@@ -528,13 +528,9 @@ function drawWorld(ctx, sim, boil, motion, alpha = 1, reduced = false, legacy = 
     if (dist < VIEW.near || dist > VIEW.look) continue;
     props.push({ ds: legacy ? dist : placed.groundDs, layer: 1, xm: placed.hx, kind: "hazard", h, placed });
   }
-  // The nose, not the tail. A body whose near face is still ahead of the
-  // bumper is farther up the screen and paints first. A body on the nose
-  // or closer paints after the car: its feet sit on the yellow because
-  // the near face has reached the bumper, and covering them made the
-  // torso look as if it were standing on the roof. The tail stays the
-  // hitbox's near edge; it is not the sort key.
-  if (!legacy) props.push({ ds: CFG.carHalfFront, layer: 0, kind: "car" });
+  // Depth is the near edge, far first. The car's near edge is its tail,
+  // so a body still up the road paints before the roof instead of on it.
+  if (!legacy) props.push({ ds: -CFG.carHalfBack, layer: 0, kind: "car" });
   const ordered = paintFarToNear(props);
   for (const item of ordered) {
     if (item.kind === "prop") drawProp(ctx, item, boil);
