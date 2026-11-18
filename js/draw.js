@@ -420,7 +420,9 @@ function drawPlay(ctx, state, sink) {
     ctx.fill();
     ink(ctx, 6);
     ctx.stroke();
-    if (pixel) drawAtlasCentered(ctx, String(session.countdown || 1), 640, 150, 120, 84, 2);
+    const beat = session.countdown;
+    const label = typeof beat === "string" ? beat : String(beat || 1);
+    if (pixel) drawAtlasCentered(ctx, label, 640, 150, 120, 84, 8);
     else paintCenter(ctx, String(session.countdown || 1), 640, 150, 120, 84, 42, P.INK, true, false);
   }
   const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";

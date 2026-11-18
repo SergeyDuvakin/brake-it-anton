@@ -6,6 +6,9 @@ import { createSim, snapRenderPose, stepSim } from "./sim.js";
  * Countdown, pause and the single brake pointer live outside the integrator
  * so blur can zero the pedal without inventing a physics frame.
  */
+/** 3, 2, 1, then «ПОЕХАЛИ!» — one second each. The car stays put until it ends. */
+export const COUNTDOWN_TOTAL = 4;
+
 export function createSession(mission, opts = {}) {
   const seed = opts.seed ?? mission.seed ?? 1;
   return {
@@ -56,7 +59,7 @@ export function pauseSession(session, reason = "pause") {
 export function resumeSession(session) {
   if (!session || session.phase !== "pause") return;
   session.pauseReason = null;
-  session.phase = session.countdownAcc >= 3 ? "drive" : "countdown";
+  session.phase = session.countdownAcc >= COUNTDOWN_TOTAL ? "drive" : "countdown";
   clearControls(session);
   snapRenderPose(session.sim);
 }
@@ -69,7 +72,7 @@ export function restartSession(session) {
   // cannot drop the player back into that countdown.
   session.phase = "drive";
   session.countdown = 0;
-  session.countdownAcc = 3;
+  session.countdownAcc = COUNTDOWN_TOTAL;
   session.pauseReason = null;
   session.result = null;
   session.recorded = false;
@@ -169,14 +172,14 @@ export function sessionStep(session, dt) {
   }
   if (session.phase === "countdown") {
     session.countdownAcc += dt;
-    if (session.countdownAcc >= 3) {
+    if (session.countdownAcc >= COUNTDOWN_TOTAL) {
       session.phase = "drive";
       session.countdown = 0;
       if (session.sim.v < 1) session.sim.v = session.mission.roll ?? 10;
       snapRenderPose(session.sim);
       return;
     }
-    session.countdown = Math.ceil(3 - session.countdownAcc);
+    session.countdown = session.countdownAcc >= 3 ? "ПОЕХАЛИ!" : Math.ceil(3 - session.countdownAcc);
     return;
   }
   const held = session.brakeHeld || session.keysDown.has("Space");

@@ -17,7 +17,7 @@ import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, futureMissions, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
 import { applyHazardSnap, createSim, hazardSnap, nextHazard, renderAlpha, renderPose, snapRenderPose } from "./sim.js";
-import { attractFreeze as freezeAttract, reloadStartArt, setLoadCaption as forceLoadCaption, stepAttract, warmStartPixels } from "./pixel-start.js";
+import { attractFreeze as freezeAttract, holdStartExhaust, reloadStartArt, setLoadCaption as forceLoadCaption, startMoverBoxes, stepAttract, warmStartPixels } from "./pixel-start.js";
 import {
   createSession,
   keyDown,
@@ -895,6 +895,17 @@ window.__anton = {
   },
   warmStartPixels() {
     return warmStartPixels();
+  },
+  stepTitle(dt) {
+    if (!debug) return null;
+    return stepAttract(Number(dt) || 0, false);
+  },
+  holdStartExhaust() {
+    if (!debug) return;
+    holdStartExhaust();
+  },
+  startMoverBoxes() {
+    return startMoverBoxes();
   },
   debugSpeed(value) {
     if (!debug || !session) return;

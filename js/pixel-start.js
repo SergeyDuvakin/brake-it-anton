@@ -188,6 +188,33 @@ export function startLayout() {
   return layout;
 }
 
+/** Blink is 400 ms on, 400 ms off. Snap to the on phase without moving anyone. */
+export function holdStartExhaust() {
+  attract.t = Math.floor(attract.t / 0.8) * 0.8;
+}
+
+/** Native rects of the actors that move, at the mockup and where they are now. */
+export function startMoverBoxes() {
+  if (!layout) return [];
+  const boxes = [];
+  const add = (file, x, y) => {
+    const img = pixelImage(file);
+    boxes.push({
+      x,
+      y,
+      w: img?.naturalWidth || 44,
+      h: img?.naturalHeight || 26,
+    });
+  };
+  for (const [file, x, y] of layout.scene) {
+    if (MOVERS[file]) add(file, x, y);
+  }
+  for (const item of sceneSprites(false)) {
+    if (item.moving) add(item.file, item.x, item.y);
+  }
+  return boxes;
+}
+
 export function attractStaticPlaces() {
   return sceneSprites(false)
     .filter((item) => !item.moving)
@@ -537,6 +564,38 @@ function rectsOverlap(a, b) {
 
 let fastBake = null;
 
+function buildCabinCard() {
+  const frame = layout.elements["cabin-frame"];
+  const pose = layout["cabin-pose"];
+  const base = document.createElement("canvas");
+  base.width = 1600;
+  base.height = 900;
+  const g = base.getContext("2d", { willReadFrequently: true });
+  g.imageSmoothingEnabled = false;
+  const ground = layout.elements["street-ground"];
+  blit(g, ground.file, ground.x, ground.y, ground.w, ground.h);
+  const statics = sceneSprites(false).filter((item) => !item.moving).map(spriteBox).sort((a, b) => a.bottom - b.bottom);
+  for (const item of statics) blit(g, item.file, item.x, item.y);
+  blitElement(g, "cabin-frame");
+  blit(g, pose.file, pose.x, pose.y);
+  blitElement(g, "bubble-poekhali");
+  const card = document.createElement("canvas");
+  card.width = frame.w * SCALE;
+  card.height = frame.h * SCALE;
+  card.getContext("2d").drawImage(
+    base,
+    frame.x * SCALE,
+    frame.y * SCALE,
+    card.width,
+    card.height,
+    0,
+    0,
+    card.width,
+    card.height,
+  );
+  return { canvas: card, x: frame.x * SCALE, y: frame.y * SCALE };
+}
+
 function buildFastBake(ready, soundOff) {
   const canvas = document.createElement("canvas");
   canvas.width = 1600;
@@ -547,9 +606,7 @@ function buildFastBake(ready, soundOff) {
   blit(g, ground.file, ground.x, ground.y, ground.w, ground.h);
   const statics = sceneSprites(false).filter((item) => !item.moving).map(spriteBox).sort((a, b) => a.bottom - b.bottom);
   for (const item of statics) blit(g, item.file, item.x, item.y);
-  const pose = layout["cabin-pose"];
-  blit(g, pose.file, pose.x, pose.y);
-  const keys = ["logo-plate", "logo-title", "logo-badge", "logo-tagline", "cabin-frame", "bubble-poekhali", "loadbar-frame"];
+  const keys = ["logo-plate", "logo-title", "logo-badge", "logo-tagline", "loadbar-frame"];
   if (ready) keys.push("btn-start-base", "btn-start-label", "icon-hand-tap", "chip-garage", "chip-sound");
   for (const key of keys) {
     if (key === "chip-sound" && soundOff) {
@@ -557,7 +614,7 @@ function buildFastBake(ready, soundOff) {
       drawDim(g, sound.file, sound.x, sound.y);
     } else blitElement(g, key);
   }
-  return { canvas, ready, soundOff };
+  return { canvas, cabin: buildCabinCard(), ready, soundOff };
 }
 
 function drawFast(ctx, state) {
@@ -578,11 +635,12 @@ function drawFast(ctx, state) {
     if (item.moving) continue;
     if (movers.some((mover) => mover.bottom < item.bottom && rectsOverlap(mover, item))) blit(ctx, item.file, item.x, item.y);
   }
-  const frame = layout.elements["cabin-frame"];
-  const underFrame = movers.some((mover) => rectsOverlap(mover, frame));
-  if (underFrame) blitElement(ctx, "cabin-frame");
+  ctx.drawImage(fastBake.cabin.canvas, fastBake.cabin.x, fastBake.cabin.y);
   const exhaustOn = attract.frozen || reduced || Math.floor(attract.t / 0.4) % 2 === 0;
-  if (exhaustOn) blitElement(ctx, "exhaust-0");
+  if (exhaustOn) {
+    const puff = layout.elements["exhaust-0"];
+    blit(ctx, puff.file, puff.x, puff.y, puff.w, puff.h);
+  }
   drawLoadBar(ctx, progress, true);
 }
 
@@ -638,15 +696,15 @@ export function drawPixelStart(ctx, state, sink) {
   return true;
 }
 
-export function drawAtlasCentered(ctx, text, x, y, w, h, mul) {
+/** `px` is whole screen pixels per font pixel. Shrinks until the line fits. */
+export function drawAtlasCentered(ctx, text, x, y, w, h, px) {
   if (!font || !layout) return false;
   const img = pixelImage(layout.loadbar.label_font);
   if (!img) return false;
-  const fit = Math.max(1, mul | 0);
-  const scale = SCALE * fit;
+  const scale = Math.max(1, px | 0);
   const textW = atlasWidth(text) * scale;
   const textH = 9 * scale;
-  if ((textW > w || textH > h) && fit > 1) return drawAtlasCentered(ctx, text, x, y, w, h, fit - 1);
+  if ((textW > w || textH > h) && scale > 1) return drawAtlasCentered(ctx, text, x, y, w, h, scale - 1);
   let pen = x + Math.round((w - textW) / 2);
   const top = y + Math.round((h - textH) / 2);
   ctx.imageSmoothingEnabled = false;

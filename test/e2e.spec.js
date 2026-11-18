@@ -2685,6 +2685,60 @@ test("the ready start screen matches the approved mockup", async ({ page }) => {
   expect(diff.bad, JSON.stringify(diff.first)).toBe(0);
 });
 
+test("a moving start frame matches the mockup outside the actors", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.pixelProgress?.().ready);
+  await page.evaluate(() => {
+    window.__anton.setLoadCaption("ГОТОВО · 91/91");
+    window.__anton.stepTitle(0.3);
+    window.__anton.holdStartExhaust();
+    window.__anton.setTimeScale(0);
+  });
+  await page.evaluate(() => window.__anton.warmStartPixels());
+  await page.waitForTimeout(50);
+  const diff = await page.evaluate(async () => {
+    const canvas = document.querySelector("canvas");
+    const ctx = canvas.getContext("2d");
+    const mock = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("mockup"));
+      img.src = "docs/stage4/ref/start-mockup-native-400x225.png";
+    });
+    const native = document.createElement("canvas");
+    native.width = 400;
+    native.height = 225;
+    const nctx = native.getContext("2d");
+    nctx.imageSmoothingEnabled = false;
+    nctx.drawImage(canvas, 0, 0, 1600, 900, 0, 0, 400, 225);
+    const got = nctx.getImageData(0, 0, 400, 225).data;
+    const refc = document.createElement("canvas");
+    refc.width = 400;
+    refc.height = 225;
+    refc.getContext("2d").drawImage(mock, 0, 0);
+    const ref = refc.getContext("2d").getImageData(0, 0, 400, 225).data;
+    const boxes = window.__anton.startMoverBoxes();
+    const inside = (px, py) => boxes.some((box) => px >= box.x && px < box.x + box.w && py >= box.y && py < box.y + box.h);
+    let bad = 0;
+    let first = null;
+    for (let y = 0; y < 225; y += 1) {
+      for (let x = 0; x < 400; x += 1) {
+        if (inside(x, y)) continue;
+        const i = (y * 400 + x) * 4;
+        if (got[i] !== ref[i] || got[i + 1] !== ref[i + 1] || got[i + 2] !== ref[i + 2]) {
+          bad += 1;
+          if (!first) first = { x, y, got: [got[i], got[i + 1], got[i + 2]], ref: [ref[i], ref[i + 1], ref[i + 2]] };
+        }
+      }
+    }
+    return { bad, first, moved: boxes.length };
+  });
+  expect(diff.moved).toBeGreaterThan(0);
+  expect(diff.bad, JSON.stringify(diff.first)).toBe(0);
+});
+
 test("the load bar grows and the start button waits until the pack is ready", async ({ page }) => {
   let n = 0;
   await page.route("**/*.png", async (route) => {
