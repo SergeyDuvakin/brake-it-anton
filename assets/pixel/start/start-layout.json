@@ -1,0 +1,312 @@
+{
+ "native": [
+  400,
+  225
+ ],
+ "scale": 4,
+ "note": "x,y = top-left in native px; multiply by 4 for the 1600x900 canvas. Draw order = order of keys in draw_order.",
+ "draw_order": [
+  "street-ground",
+  "scene",
+  "exhaust-0",
+  "logo-plate",
+  "logo-title",
+  "logo-badge",
+  "logo-tagline",
+  "cabin-frame",
+  "cabin-pose",
+  "bubble-poekhali",
+  "btn-start-base",
+  "btn-start-label",
+  "icon-hand-tap",
+  "loadbar-frame",
+  "loadbar-segments",
+  "loadbar-label",
+  "chip-garage",
+  "chip-sound"
+ ],
+ "elements": {
+  "street-ground": {
+   "file": "start/street-ground.png",
+   "x": 0,
+   "y": 0,
+   "w": 400,
+   "h": 225,
+   "from_layer": "ground+zebra"
+  },
+  "exhaust-0": {
+   "file": "start/exhaust-0.png",
+   "x": 98,
+   "y": 156,
+   "w": 11,
+   "h": 5,
+   "from_layer": "exhaust"
+  },
+  "logo-plate": {
+   "file": "start/logo-plate.png",
+   "x": 9,
+   "y": 5,
+   "w": 198,
+   "h": 71,
+   "from_layer": "logo-plate"
+  },
+  "logo-title": {
+   "file": "start/logo-title.png",
+   "x": 17,
+   "y": 7,
+   "w": 110,
+   "h": 49,
+   "from_layer": "logo-title"
+  },
+  "logo-badge": {
+   "file": "start/logo-badge.png",
+   "x": 168,
+   "y": 14,
+   "w": 25,
+   "h": 25,
+   "from_layer": "logo-badge"
+  },
+  "logo-tagline": {
+   "file": "start/logo-tagline.png",
+   "x": 14,
+   "y": 59,
+   "w": 185,
+   "h": 12,
+   "from_layer": "logo-tagline"
+  },
+  "cabin-frame": {
+   "file": "start/cabin-frame.png",
+   "x": 265,
+   "y": 4,
+   "w": 131,
+   "h": 159,
+   "from_layer": "cabin-frame"
+  },
+  "bubble-poekhali": {
+   "file": "start/bubble-poekhali.png",
+   "x": 273,
+   "y": 12,
+   "w": 65,
+   "h": 17,
+   "from_layer": "bubble-poekhali"
+  },
+  "btn-start-base": {
+   "file": "start/btn-start-base.png",
+   "x": 40,
+   "y": 182,
+   "w": 183,
+   "h": 28,
+   "from_layer": "btn-start-base"
+  },
+  "btn-start-label": {
+   "file": "start/btn-start-label.png",
+   "x": 90,
+   "y": 186,
+   "w": 104,
+   "h": 15,
+   "from_layer": "btn-start-label"
+  },
+  "icon-hand-tap": {
+   "file": "start/icon-hand-tap.png",
+   "x": 48,
+   "y": 184,
+   "w": 11,
+   "h": 16,
+   "from_layer": "icon-hand-tap"
+  },
+  "loadbar-frame": {
+   "file": "start/loadbar-frame.png",
+   "x": 40,
+   "y": 211,
+   "w": 181,
+   "h": 11,
+   "from_layer": "loadbar-frame"
+  },
+  "loadbar-segment": {
+   "file": "start/loadbar-segment.png",
+   "x": 42,
+   "y": 213,
+   "w": 4,
+   "h": 7,
+   "from_layer": "loadbar-segments"
+  },
+  "chip-garage": {
+   "file": "start/chip-garage.png",
+   "x": 270,
+   "y": 186,
+   "w": 48,
+   "h": 17,
+   "from_layer": "chips"
+  },
+  "chip-sound": {
+   "file": "start/chip-sound.png",
+   "x": 322,
+   "y": 186,
+   "w": 49,
+   "h": 17,
+   "from_layer": "chips"
+  },
+  "icon-speaker": {
+   "file": "start/icon-speaker.png",
+   "x": 326,
+   "y": 189,
+   "w": 7,
+   "h": 9,
+   "from_layer": "chips (ink pixels only)"
+  },
+  "loadbar-label-ref": {
+   "file": "start/loadbar-label-ref.png",
+   "x": 83,
+   "y": 212,
+   "w": 94,
+   "h": 9,
+   "from_layer": "loadbar-label"
+  }
+ },
+ "cabin-pose": {
+  "file": "cabin/poses/yasam.png",
+  "x": 267,
+  "y": 6
+ },
+ "scene": [
+  [
+   "world/sprites/block-teal-tall.png",
+   210,
+   52
+  ],
+  [
+   "world/sprites/tree.png",
+   -4,
+   73
+  ],
+  [
+   "world/sprites/tree.png",
+   58,
+   69
+  ],
+  [
+   "world/sprites/tree.png",
+   118,
+   69
+  ],
+  [
+   "world/sprites/tree.png",
+   176,
+   70
+  ],
+  [
+   "world/sprites/bench.png",
+   26,
+   83
+  ],
+  [
+   "world/sprites/planter.png",
+   86,
+   85
+  ],
+  [
+   "world/sprites/bench.png",
+   146,
+   83
+  ],
+  [
+   "world/sprites/traffic-light-green.png",
+   247,
+   71
+  ],
+  [
+   "world/sprites/sign-zebra.png",
+   198,
+   81
+  ],
+  [
+   "world/sprites/hydrant.png",
+   106,
+   94
+  ],
+  [
+   "world/sprites/trash-bin.png",
+   180,
+   94
+  ],
+  [
+   "world/sprites/ped-pink-right-0.png",
+   64,
+   87
+  ],
+  [
+   "world/sprites/dog-right.png",
+   194,
+   168
+  ],
+  [
+   "world/sprites/ped-blue-left-1.png",
+   230,
+   160
+  ],
+  [
+   "world/sprites/tree.png",
+   4,
+   181
+  ],
+  [
+   "world/sprites/tree.png",
+   236,
+   189
+  ],
+  [
+   "world/sprites/manhole.png",
+   150,
+   113
+  ],
+  [
+   "car/npc-white-left.png",
+   18,
+   107
+  ],
+  [
+   "car/learner-normal-right.png",
+   112,
+   137
+  ]
+ ],
+ "loadbar": {
+  "frame": [
+   40,
+   211,
+   220,
+   221
+  ],
+  "segment_x0": 42,
+  "segment_step": 5,
+  "segment_y": 213,
+  "slots": 36,
+  "last_slot_width": 2,
+  "label_backing_pad": [
+   3,
+   2
+  ],
+  "label_font": "start/font9-ink.png"
+ },
+ "hitboxes": {
+  "start": [
+   38,
+   180,
+   224,
+   210
+  ],
+  "garage": [
+   266,
+   180,
+   319,
+   206
+  ],
+  "sound": [
+   320,
+   180,
+   373,
+   206
+  ],
+  "note": "inclusive native rects; >=44 CSS px on iPhone 11 landscape"
+ }
+}
