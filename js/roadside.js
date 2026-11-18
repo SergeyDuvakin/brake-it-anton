@@ -209,11 +209,14 @@ export function fenceTiles(sFrom, sTo) {
   return tiles;
 }
 
-/** Centre of the nearest 2.6 m gate that is not buried in a house. */
-export function nearestGateS(s, side) {
+/**
+ * Centre of an open 2.6 m gate. A dog already standing in an opening uses
+ * that one. Otherwise prefer a gate at or beyond `aheadOf`, so the run
+ * does not turn back toward the car.
+ */
+export function nearestGateS(s, side, aheadOf = null) {
   const block = Math.round((s - 26) / 32);
-  let best = null;
-  let bestD = Infinity;
+  const open = [];
   for (let b = block - 3; b <= block + 3; b += 1) {
     const gate = b * 32 + 26;
     const houses = blockLayout(b).filter((item) => item.kind === "house" && item.side === side);
@@ -221,14 +224,14 @@ export function nearestGateS(s, side) {
       const span = houseSpan(house);
       return span && rangesTouch(gate - GATE_HALF, gate + GATE_HALF, span[0], span[1]);
     });
-    if (buried) continue;
-    const dist = Math.abs(gate - s);
-    if (dist < bestD) {
-      best = gate;
-      bestD = dist;
-    }
+    if (!buried) open.push(gate);
   }
-  return best ?? block * 32 + 26;
+  if (!open.length) return block * 32 + 26;
+  const standing = open.find((gate) => Math.abs(gate - s) <= GATE_HALF + 1e-6);
+  if (standing !== undefined) return standing;
+  const ahead = aheadOf === null ? open : open.filter((gate) => gate >= aheadOf - 1e-6);
+  const pool = ahead.length ? ahead : open;
+  return pool.reduce((best, gate) => (Math.abs(gate - s) < Math.abs(best - s) ? gate : best));
 }
 
 function lampRows(sFrom, sTo) {

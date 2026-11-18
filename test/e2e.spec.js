@@ -117,6 +117,44 @@ test("pause keys stay readable on a 896×414 phone", async ({ page }) => {
   await page.screenshot({ path: shot("pause-phone") });
 });
 
+test("ПОЕХАЛИ stays as tall as the countdown digits", async ({ page }) => {
+  await page.setViewportSize({ width: 896, height: 414 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await page.evaluate(() => window.__anton.setTimeScale(1));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().countdown === "ПОЕХАЛИ!");
+  await page.evaluate(() => window.__anton.setTimeScale(0));
+  const ink = await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    const ctx = canvas.getContext("2d");
+    const x = 464;
+    const y = 150;
+    const w = 472;
+    const h = 84;
+    const data = ctx.getImageData(x, y, w, h).data;
+    let top = h;
+    let bot = 0;
+    let left = w;
+    let right = 0;
+    for (let yy = 0; yy < h; yy += 1) {
+      for (let xx = 0; xx < w; xx += 1) {
+        const i = (yy * w + xx) * 4;
+        if (data[i] < 80 && data[i + 1] < 80 && data[i + 2] < 80) {
+          if (yy < top) top = yy;
+          if (yy > bot) bot = yy;
+          if (xx < left) left = xx;
+          if (xx > right) right = xx;
+        }
+      }
+    }
+    return { span: bot - top + 1, wide: right - left + 1 };
+  });
+  expect(ink.span).toBeGreaterThanOrEqual(50);
+  expect(ink.wide).toBeGreaterThanOrEqual(400);
+  await page.screenshot({ path: shot("countdown-poekhali") });
+});
+
 test("letterbox at 1280x720 and a mismatched landscape viewport", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(gameURL());
