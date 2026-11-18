@@ -16,7 +16,8 @@ import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
-import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, nextLessonOpen, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint, resultKeyAction } from "../js/ui.js";
+import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, nextLessonOpen, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint, resultKeyAction, startLesson } from "../js/ui.js";
+import { atlasWidth, attractStaticPlaces, loadSlots, startLayout, stepAttract } from "../js/pixel-start.js";
 import { CALLOUT, DRIVER_PLATE, MOOD_TILE, PAUSE_BUTTON, platesSeparated } from "../js/layout.js";
 import {
   CAR_BODY_H,
@@ -3802,4 +3803,55 @@ test("a pages-style /brake-it-anton/ server has every picture the game names", a
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("the start screen picks the next unfinished lesson", () => {
+  assert.equal(startLesson(null), "lesson1");
+  assert.equal(startLesson({}), "lesson1");
+  assert.equal(startLesson({ unlocked: 0 }), "lesson1");
+  assert.equal(startLesson({ unlocked: 1, best: {} }), "lesson1");
+  assert.equal(startLesson({ unlocked: 2, best: { lesson1: 3 } }), "lesson2");
+  assert.equal(startLesson({ unlocked: 3, best: { lesson1: 3, lesson2: 2, lesson3: 1 } }), "lesson3");
+  assert.equal(startLesson({ unlocked: 4, best: { lesson1: 1, lesson2: 1, lesson3: 1, lesson4: 2 } }), "lesson4");
+  const fresh = { unlocked: 1, best: {} };
+  assert.equal(startLesson(fresh), "lesson1");
+});
+
+test("the load bar and the start layout match the approved sheet", () => {
+  assert.equal(loadSlots(0, 10), 0);
+  assert.equal(loadSlots(91, 91), 36);
+  assert.equal(loadSlots(10, 0), 0);
+  let prev = 0;
+  for (let done = 0; done <= 40; done += 1) {
+    const slots = loadSlots(done, 40);
+    assert.ok(slots >= prev);
+    prev = slots;
+  }
+  const font = JSON.parse(readFileSync("assets/pixel/start/font9-ink.json", "utf8"));
+  assert.equal(atlasWidth("ГОТОВО · 91/91", font), 88);
+  const layout = startLayout();
+  assert.deepEqual(layout.native, [400, 225]);
+  const boxes = ["start", "garage", "sound"].map((id) => {
+    const [x0, y0, x1, y1] = layout.hitboxes[id];
+    return { id, x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  });
+  for (const box of boxes) {
+    assert.ok(box.h >= 26, box.id);
+    assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.w <= 400 && box.y + box.h <= 225, box.id);
+  }
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  assert.equal(overlaps(boxes[1], boxes[2]), false);
+  const pngSize = (file) => {
+    const buf = readFileSync(file);
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  };
+  for (const item of Object.values(layout.elements)) {
+    const size = pngSize(`assets/pixel/${item.file}`);
+    assert.equal(size.w, item.w, item.file);
+    assert.equal(size.h, item.h, item.file);
+    assert.ok(item.x >= 0 && item.y >= 0 && item.x + item.w <= 400 && item.y + item.h <= 225, item.file);
+  }
+  const before = attractStaticPlaces();
+  stepAttract(10, false);
+  assert.deepEqual(attractStaticPlaces(), before);
 });

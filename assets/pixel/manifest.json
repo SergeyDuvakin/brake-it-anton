@@ -743,6 +743,44 @@
   "ped_pink_react": { "file": "world/sprites/ped-pink-react.png" },
   "dog_react": { "file": "world/sprites/dog-react.png" }
  },
+ "start": {
+  "street": "start/street-ground.png",
+  "logo_plate": "start/logo-plate.png",
+  "logo_title": "start/logo-title.png",
+  "logo_badge": "start/logo-badge.png",
+  "logo_tagline": "start/logo-tagline.png",
+  "cabin_frame": "start/cabin-frame.png",
+  "bubble": "start/bubble-poekhali.png",
+  "btn_base": "start/btn-start-base.png",
+  "btn_label": "start/btn-start-label.png",
+  "hand": "start/icon-hand-tap.png",
+  "load_frame": "start/loadbar-frame.png",
+  "load_segment": "start/loadbar-segment.png",
+  "chip_garage": "start/chip-garage.png",
+  "chip_sound": "start/chip-sound.png",
+  "exhaust": "start/exhaust-0.png",
+  "font": "start/font9-ink.png",
+  "learner": "car/learner-normal-right.png",
+  "pose": "cabin/poses/yasam.png",
+  "scene": [
+   "world/sprites/block-teal-tall.png",
+   "world/sprites/tree.png",
+   "world/sprites/bench.png",
+   "world/sprites/planter.png",
+   "world/sprites/traffic-light-green.png",
+   "world/sprites/sign-zebra.png",
+   "world/sprites/hydrant.png",
+   "world/sprites/trash-bin.png",
+   "world/sprites/ped-pink-right-0.png",
+   "world/sprites/ped-pink-right-1.png",
+   "world/sprites/ped-blue-left-0.png",
+   "world/sprites/ped-blue-left-1.png",
+   "world/sprites/dog-right.png",
+   "world/sprites/manhole.png",
+   "car/npc-white-left.png",
+   "car/npc-blue-left.png"
+  ]
+ },
  "removed": {
   "mood_tile": "MOOD_TILE (1076,500,72,64) is not drawn in the pixel style (Sergey, 17.11)."
  }
