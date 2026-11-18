@@ -473,7 +473,7 @@ export function resultKeyAction(session, save, code) {
   return "retry";
 }
 
-function momentButton(ctx, sink, state) {
+export function momentButton(ctx, sink, state) {
   if (!state.replayReady) return;
   drawButton(ctx, sink, {
     id: "moment",

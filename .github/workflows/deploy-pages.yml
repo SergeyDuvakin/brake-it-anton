@@ -56,6 +56,7 @@ jobs:
           cp js/geom.js .pages-dist/js/geom.js
           cp js/missions.js .pages-dist/js/missions.js
           cp js/mobile.js .pages-dist/js/mobile.js
+          cp js/impact.js .pages-dist/js/impact.js
           cp js/physics.js .pages-dist/js/physics.js
           cp js/pixel-assets.js .pages-dist/js/pixel-assets.js
           cp js/pixel-world.js .pages-dist/js/pixel-world.js

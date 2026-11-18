@@ -95,6 +95,9 @@ export function createSim(mission, seed = 1) {
     done: false,
     success: false,
     failReason: null,
+    failCause: null,
+    lastHit: null,
+    potholeLineAt: 0,
     shake: 0,
     crashT: 0,
     lastThrottle: 0,
@@ -151,6 +154,17 @@ export function nextHazard(sim) {
     if (!best || dist < best.dist) best = { ...h, dist };
   }
   return best;
+}
+
+function hashPed(n) {
+  let x = Math.imul(n | 0, 0x9e3779b1);
+  x ^= x >>> 16;
+  return x >>> 0;
+}
+
+/** Same blue/pink split the pixel pedestrians use. */
+export function pedColor(h) {
+  return (hashPed(String(h?.id || "").length * 13 + ((h?.s || 0) | 0)) & 1) ? "blue" : "pink";
 }
 
 function sideOf(h, near = 4.15) {
@@ -816,6 +830,7 @@ function resolveHit(sim, h) {
   if (!sim.cargoType && (h.type === "pedestrian" || h.type === "cutin") && impact > 8) {
     bodyLoss = Math.max(bodyLoss, 100);
   }
+  if ((h.type === "pedestrian" || h.type === "dog") && impact >= 1.2) bodyLoss = 100;
   sim.body = clamp(sim.body - bodyLoss, 0, 100);
   const cargoLoss = collisionCargoLoss(sim.cargoType, impact);
   sim.cargo = clamp(sim.cargo - cargoLoss, 0, 100);
@@ -828,7 +843,24 @@ function resolveHit(sim, h) {
   sim.shake = impact > 8 ? 7 : 4.5;
   sim.crashT = 0.24;
   sim.beltT = Math.max(sim.beltT, 0.28);
-  say(sim, "ОЙ!");
+  sim.lastHit = {
+    id: h.id,
+    type: h.type,
+    t: sim.t,
+    x: hazardWorldX(h, sim),
+    color: h.type === "pedestrian" ? pedColor(h) : (h.color ?? null),
+    object: h.object ?? null,
+  };
+  const quiet = (sim.attention === "asleep" || sim.attention === "drowsy") && h.type === "pothole";
+  const ended = sim.body <= 0;
+  if (!quiet && !ended) {
+    say(sim, "ОЙ!");
+    if (h.type === "pothole") sim.potholeLineAt = sim.t + 0.7;
+  } else if (!quiet && ended && h.type !== "pothole") {
+    say(sim, "ОЙ!");
+  }
+  const carHit = h.type === "pothole" || h.type === "stopped" || h.type === "cutin" || h.type === "bin" || h.type === "roller";
+  if (!quiet && carHit && sim.body > 0) sim.beltT = Math.max(sim.beltT, 0.7);
   log(sim, { kind: "hit", id: h.id, hitId, type: h.type, impact: round3(impact), bodyLoss: round3(bodyLoss), cargoLoss });
 }
 
@@ -983,6 +1015,8 @@ function fail(sim, reason) {
   sim.failReason = reason;
   sim.body = clamp(sim.body, 0, 100);
   sim.cargo = clamp(sim.cargo, 0, 100);
+  const recent = sim.lastHit && Math.abs(sim.t - sim.lastHit.t) <= 0.05;
+  sim.failCause = recent ? sim.lastHit.type : reason;
 }
 
 export function stepSim(sim, dt, input = {}) {
@@ -1191,6 +1225,11 @@ export function stepSim(sim, dt, input = {}) {
   else sim.bubble = null;
   if (sim.bubbleGap > 0) sim.bubbleGap -= dt;
   sim.t += dt;
+  if (sim.potholeLineAt && sim.t + 1e-9 >= sim.potholeLineAt) {
+    sim.potholeLineAt = 0;
+    sim.bubbleGap = 0;
+    say(sim, "ЯМА ЖЕ!");
+  }
   sim.wasHeld = held;
   return sim;
 }

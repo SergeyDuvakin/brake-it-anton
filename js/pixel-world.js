@@ -8,7 +8,8 @@ import { CFG } from "./config.js";
 import { CABIN_POSES } from "./cabin.js";
 import { damageStage } from "./physics.js";
 import { patienceNeedleDegrees, pedalHingeDegrees } from "./ui.js";
-import { hazardWorldX, isSolidHazard, renderPose } from "./sim.js";
+import { driveHitDecor, impactFrame, LOSS_SUBTITLE } from "./impact.js";
+import { hazardWorldX, isSolidHazard, pedColor, renderPose } from "./sim.js";
 import { notePixelSmoothing, pixelImage, usePixel } from "./pixel-assets.js";
 
 export const PIXEL_SCALE = 4;
@@ -42,10 +43,12 @@ export const PIXEL_POSE = {
   angry: "grumble",
   furious: "grumble",
   ashamed: "grumble",
+  bams: "bams",
 };
 
-export function pixelPoseFrame(cabinId, phase) {
+export function pixelPoseFrame(cabinId, phase, impactMs = 0) {
   if (phase === "countdown") return "drive";
+  if (cabinId === "bams") return Math.floor(impactMs / 100) % 2 ? "bams-1" : "bams-0";
   return PIXEL_POSE[cabinId] || "drive";
 }
 
@@ -245,7 +248,7 @@ function dressing(cam) {
 }
 
 function pedName(h, sim, reduced) {
-  const color = (hash(String(h.id).length * 13 + (h.s | 0)) & 1) ? "blue" : "pink";
+  const color = pedColor(h);
   const moving = h.motion === "enter" || h.motion === "leave";
   const step = moving && !reduced ? Math.floor((sim?.t || 0) / 0.25) % 2 : 0;
   const faceLeft = (h.x || 0) >= 0 ? h.motion !== "leave" : h.motion === "leave";
@@ -435,6 +438,21 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
   const pose = renderPose(sim, alpha);
   const cam = camPxOf(pose.s);
   const reduced = !!state.save?.settings?.reducedMotion;
+  const phase = state.session?.phase;
+  const impact = state.session?.impact;
+  const scene = impact && (phase === "impact" || phase === "result")
+    ? impactFrame(impact.kind, phase === "result" ? 1300 : impact.ms, {
+      cause: impact.cause,
+      reducedMotion: reduced,
+      shake: state.save?.settings?.shake !== false,
+      color: impact.hitColor,
+    })
+    : null;
+  const driveFx = scene ? null : driveHitDecor(sim, {
+    reducedMotion: reduced,
+    shake: state.save?.settings?.shake !== false,
+  });
+  const hitId = scene ? sim.lastHit?.id : null;
   nctx.imageSmoothingEnabled = false;
   notePixelSmoothing(false);
   nctx.clearRect(0, 0, WORLD_W, WORLD_H);
@@ -481,6 +499,7 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
     const y = yNative(hs, pose.s);
     let x = xNative(hx);
     if (h.wobbleT > 0) x += Math.round(Math.sin(h.wobbleT * 36));
+    if (hitId && h.id === hitId && (h.type === "pedestrian" || h.type === "dog")) continue;
     if (h.type === "pothole") {
       const rx = Math.max(3, Math.round((h.halfW || 0.7) * WORLD_PX_PER_M));
       noteBox(x - rx, y - rx, rx * 2, rx);
@@ -494,7 +513,10 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
     else if (h.type === "roller") name = "manhole";
     else if (h.type === "stopped" || h.type === "cutin") {
       noteBox(x - 13, y - 21, 26, 44);
-      const file = h.type === "stopped" ? "car/npc-white-up.png" : "car/npc-blue-up.png";
+      const crashed = hitId && h.id === hitId && scene?.npcSprite;
+      const file = crashed
+        ? scene.npcSprite
+        : (h.type === "stopped" ? "car/npc-white-up.png" : "car/npc-blue-up.png");
       queue.push({
         y,
         draw: () => {
@@ -511,23 +533,28 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
     }
   }
   const carX = xNative(pose.x);
-  const carY = CAR_CENTER_Y;
-  const tailY = carY + TAIL_BELOW_CENTER;
+  const carDy = driveFx?.carDy || 0;
+  const carTop = CAR_CENTER_Y - 21 + carDy;
+  const tailY = CAR_CENTER_Y + TAIL_BELOW_CENTER;
   queue.push({
     y: tailY,
     draw: () => {
-      pxRoundRect(nctx, carX - 13 + 5, carY - 21 + 3, 20, 40, 5, "rgba(0,0,0,0.2)");
-      const img = pixelImage(learnerFile(sim, state));
-      if (img) nctx.drawImage(img, carX - 13, carY - 21);
+      pxRoundRect(nctx, carX - 13 + 5, carTop + 3, 20, 40, 5, "rgba(0,0,0,0.2)");
+      const file = scene?.carSprite || learnerFile(sim, state);
+      const img = pixelImage(file);
+      if (img) nctx.drawImage(img, carX - 13, carTop);
     },
   });
   queue.sort((a, b) => a.y - b.y);
   for (const item of queue) item.draw();
+  paintSceneBits(nctx, carX - 13, carTop, scene, driveFx);
+
+  if (scene?.fadeLevel) ditherWorld(nctx, scene.fadeLevel);
 
   const cruise = sim.cruise || 10;
   const warn = warnMetres(cruise);
   const ahead = lookAheadMetres();
-  for (const h of sim.hazards || []) {
+  if (!scene) for (const h of sim.hazards || []) {
     if (h.resolved || !isSolidHazard(h)) continue;
     const hs = h.pose?.s ?? h.s;
     const dist = hs - pose.s - CFG.carHalfFront;
@@ -535,21 +562,91 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
     drawBang(nctx, bangPlacement(h.x, blockers));
   }
 
-  if (hud) paintHudPlates(nctx);
-  if (hud) drawPixelGauge(nctx, sim.patience);
-  const pause = hud ? pixelImage("ui/pause-button.png") : null;
-  if (pause) nctx.drawImage(pause, 223, 3);
-
+  const shake = scene?.shake || driveFx?.shake || [0, 0];
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   notePixelSmoothing(false);
+  ctx.translate(shake[0] || 0, shake[1] || 0);
   ctx.drawImage(worldCanvas, WORLD_X, WORLD_Y, WORLD_W * PIXEL_SCALE, WORLD_H * PIXEL_SCALE);
+  ctx.restore();
+  if (scene?.flash) {
+    ctx.save();
+    ctx.globalAlpha = scene.flash;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(28, 28, 1000, 844);
+    ctx.restore();
+  }
+  if (hud) {
+    const hover = hudCtx();
+    hover.clearRect(0, 0, WORLD_W, WORLD_H);
+    paintHudPlates(hover);
+    drawPixelGauge(hover, sim.patience);
+    const pause = pixelImage("ui/pause-button.png");
+    if (pause) hover.drawImage(pause, 223, 3);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(hudCanvas, WORLD_X, WORLD_Y, WORLD_W * PIXEL_SCALE, WORLD_H * PIXEL_SCALE);
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
   const mask = pixelImage("ui/world-corner-mask.png");
   if (mask) ctx.drawImage(mask, WORLD_X, WORLD_Y, mask.naturalWidth * PIXEL_SCALE, mask.naturalHeight * PIXEL_SCALE);
   const frame = pixelImage("ui/world-plate-frame.png");
   if (frame) ctx.drawImage(frame, 24, 24, 1008, 852);
   ctx.restore();
   return gaugeReadout(sim.patience);
+}
+
+let hudCanvas = null;
+
+function hudCtx() {
+  if (!hudCanvas && typeof document !== "undefined") {
+    hudCanvas = document.createElement("canvas");
+    hudCanvas.width = WORLD_W;
+    hudCanvas.height = WORLD_H;
+  }
+  return hudCanvas.getContext("2d");
+}
+
+const BAYER = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5],
+];
+
+function ditherWorld(nctx, level) {
+  nctx.fillStyle = "#1C181C";
+  for (let y = 0; y < WORLD_H; y += 1) {
+    for (let x = 0; x < WORLD_W; x += 1) {
+      if (BAYER[y & 3][x & 3] < level) nctx.fillRect(x, y, 1, 1);
+    }
+  }
+}
+
+function paintStrip(nctx, bit, originX, originY, flip) {
+  const img = pixelImage(bit.sheet);
+  if (!img) return;
+  const dx0 = flip ? (26 - bit.dx - bit.fw) : bit.dx;
+  let x = Math.round(originX + dx0);
+  const y = Math.round(originY + bit.dy);
+  if (bit.clampX !== undefined && bit.clampX !== null) x = Math.max(bit.clampX, x);
+  nctx.drawImage(img, bit.frame * bit.fw, 0, bit.fw, bit.fh, x, y, bit.fw, bit.fh);
+}
+
+function paintSceneBits(nctx, originX, originY, scene, driveFx) {
+  const flip = (originX + 13) < Math.round(ROAD_CX);
+  if (driveFx) {
+    for (const puff of driveFx.dust) {
+      paintStrip(nctx, {
+        sheet: "fx/steam.png", frame: puff.frame, fw: 14, fh: 14, dx: puff.dx, dy: puff.dy,
+      }, originX, originY, false);
+    }
+  }
+  if (!scene) return;
+  if (scene.react) paintStrip(nctx, scene.react, originX, originY, flip);
+  for (const bit of scene.fx) paintStrip(nctx, bit, originX, originY, flip);
 }
 
 function paintHudPlates(nctx) {
@@ -668,7 +765,7 @@ function drawBubble(ctx, text) {
 
 export function drawPixelCabin(ctx, sim, state, cabinId, opts = {}) {
   const phase = state.session?.phase || "drive";
-  const frameId = pixelPoseFrame(cabinId, phase);
+  const frameId = pixelPoseFrame(cabinId, phase, opts.impactMs || 0);
   const plate = pixelImage("ui/plate-driver.png");
   ctx.save();
   ctx.imageSmoothingEnabled = false;
@@ -676,7 +773,8 @@ export function drawPixelCabin(ctx, sim, state, cabinId, opts = {}) {
   if (plate) ctx.drawImage(plate, 1056, 24);
   const pose = pixelImage(`cabin/poses/${frameId}.png`);
   if (pose) ctx.drawImage(pose, 1066, 34, 500, 600);
-  if (sim?.bubble && sim.bubbleT > 0) drawBubble(ctx, sim.bubble);
+  const line = opts.line || (sim?.bubbleT > 0 ? sim.bubble : null);
+  if (line) drawBubble(ctx, line);
   const callout = opts.callout !== false;
   const hint = callout && state.hint && phase === "drive";
   const needs = sim?.attention === "phone" || sim?.attention === "drowsy" || sim?.attention === "asleep";
@@ -691,6 +789,134 @@ export function drawPixelCabin(ctx, sim, state, cabinId, opts = {}) {
     if (glyph) ctx.drawImage(glyph, Math.round(1080 + (472 - glyph.width) / 2), Math.round(576 + (48 - glyph.height) / 2));
   }
   ctx.restore();
+}
+
+const RETRY_GLYPH = [
+  ".ooo...",
+  "o...o..",
+  "....o..",
+  "o..ooo.",
+  ".o.o...",
+  "..o....",
+  "...o...",
+];
+
+function hardLabel(text, fontPx) {
+  if (typeof document === "undefined") return null;
+  const native = document.createElement("canvas");
+  const measure = native.getContext("2d");
+  measure.font = `${fontPx}px 'Pixeloid Sans', sans-serif`;
+  const width = Math.max(1, Math.ceil(measure.measureText(text).width));
+  const height = fontPx + 2;
+  native.width = width;
+  native.height = height;
+  const nctx = native.getContext("2d");
+  nctx.font = `${fontPx}px 'Pixeloid Sans', sans-serif`;
+  nctx.fillStyle = "#000";
+  nctx.textBaseline = "top";
+  nctx.fillText(text, 0, 0);
+  const data = nctx.getImageData(0, 0, width, height);
+  for (let i = 3; i < data.data.length; i += 4) data.data[i] = data.data[i] >= 128 ? 255 : 0;
+  nctx.putImageData(data, 0, 0);
+  return native;
+}
+
+function paintNativePlate(nctx, x, y, w, h, fill) {
+  nctx.fillStyle = "rgba(28,24,28,0.35)";
+  nctx.fillRect(x + 2, y + 3, w, h);
+  for (let row = 0; row < h; row += 1) {
+    const edge = Math.min(row, h - 1 - row);
+    const inset = edge === 0 ? 2 : edge === 1 ? 1 : 0;
+    nctx.fillStyle = "#1C181C";
+    nctx.fillRect(x + inset, y + row, w - inset * 2, 1);
+  }
+  for (let row = 1; row < h - 1; row += 1) {
+    const edge = Math.min(row - 1, h - 2 - (row - 1));
+    const inset = edge === 0 ? 1 : 0;
+    const innerW = w - 2 - inset * 2;
+    nctx.fillStyle = fill;
+    if (innerW > 0) nctx.fillRect(x + 1 + inset, y + row, innerW, 1);
+  }
+  nctx.fillStyle = "#CCBE9E";
+  nctx.fillRect(x + 2, y + h - 3, w - 4, 2);
+}
+
+/** Pixel loss card. Hotspots are in screen pixels. */
+export function drawPixelLossCard(ctx, sim, sink) {
+  const cause = sim.failCause || sim.failReason;
+  const lines = cause === "cargo"
+    ? [sim.cargoType === "fish" ? "Рыбка разлилась" : "Крем помялся"]
+    : (LOSS_SUBTITLE[cause] || ["Антон задумался..."]);
+  const card = document.createElement("canvas");
+  card.width = 150;
+  card.height = 112;
+  const nctx = card.getContext("2d");
+  nctx.imageSmoothingEnabled = false;
+  paintNativePlate(nctx, 0, 0, 150, 112, "#FFF6E4");
+  const title = hardLabel("НЕ ДОЕХАЛИ", 18);
+  if (title) {
+    const tint = document.createElement("canvas");
+    tint.width = title.width;
+    tint.height = title.height;
+    const tctx = tint.getContext("2d");
+    tctx.drawImage(title, 0, 0);
+    tctx.globalCompositeOperation = "source-in";
+    tctx.fillStyle = "#E83428";
+    tctx.fillRect(0, 0, tint.width, tint.height);
+    nctx.drawImage(tint, Math.round((150 - tint.width) / 2), 8);
+  }
+  const icon = cause === "pedestrian"
+    ? { file: `world/sprites/ped-${sim.lastHit?.color === "blue" ? "blue" : "pink"}-react.png`, frame: 3, fw: 12, fh: 20 }
+    : cause === "dog"
+      ? { file: "world/sprites/dog-react.png", frame: 2, fw: 16, fh: 12 }
+      : { file: "car/learner-crash.png", frame: 0, fw: 26, fh: 44 };
+  const iconImg = pixelImage(icon.file);
+  if (iconImg) nctx.drawImage(iconImg, icon.frame * icon.fw, 0, icon.fw, icon.fh, 12, 30, icon.fw, icon.fh);
+  lines.forEach((line, index) => {
+    const glyph = hardLabel(line, 9);
+    if (glyph) nctx.drawImage(glyph, 46, 36 + index * 11);
+    sink?.labels?.push({ text: line, x: 228 + 46 * 4, y: 204 + (36 + index * 11) * 4, w: 200, h: 36 });
+  });
+  nctx.fillStyle = "#1C181C";
+  nctx.fillRect(14, 78, 119, 28);
+  nctx.fillStyle = "#FAC83C";
+  nctx.fillRect(16, 80, 115, 24);
+  for (let j = 0; j < RETRY_GLYPH.length; j += 1) {
+    for (let i = 0; i < RETRY_GLYPH[j].length; i += 1) {
+      if (RETRY_GLYPH[j][i] === "o") {
+        nctx.fillStyle = "#1C181C";
+        nctx.fillRect(14 + 7 + i, 78 + 8 + j, 1, 1);
+      }
+    }
+  }
+  const again = hardLabel("ЕЩЁ РАЗ", 9);
+  if (again) nctx.drawImage(again, Math.round(14 + (119 - again.width) / 2), 84);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  notePixelSmoothing(false);
+  ctx.drawImage(card, 228, 204, 600, 448);
+  const chipW = 92;
+  const chipH = 16;
+  const chipX = 50 + Math.round((150 - chipW) / 2);
+  const chipY = 44 + 112 + 4;
+  const chip = document.createElement("canvas");
+  chip.width = chipW;
+  chip.height = chipH;
+  const cctx = chip.getContext("2d");
+  cctx.imageSmoothingEnabled = false;
+  cctx.fillStyle = "#1C181C";
+  cctx.fillRect(0, 0, chipW, chipH);
+  cctx.fillStyle = "#FFF6E4";
+  cctx.fillRect(1, 1, chipW - 2, chipH - 2);
+  const garage = hardLabel("В ГАРАЖ", 9);
+  if (garage) cctx.drawImage(garage, Math.round((chipW - garage.width) / 2), 3);
+  ctx.drawImage(chip, 28 + chipX * 4, 28 + chipY * 4, chipW * 4, chipH * 4);
+  ctx.restore();
+  sink?.labels?.push({ text: "НЕ ДОЕХАЛИ", x: 228, y: 204 + 32, w: 600, h: 40 });
+  sink?.labels?.push({ text: "ЕЩЁ РАЗ", x: 228 + 56, y: 204 + 78 * 4, w: 476, h: 88 });
+  sink?.labels?.push({ text: "В ГАРАЖ", x: 28 + chipX * 4, y: 28 + chipY * 4, w: chipW * 4, h: chipH * 4 });
+  sink?.spots?.push({ id: "retry", x: 228 + 14 * 4, y: 204 + 78 * 4, w: 119 * 4, h: 28 * 4 });
+  sink?.spots?.push({ id: "to-garage", x: 28 + chipX * 4, y: 28 + chipY * 4, w: chipW * 4, h: chipH * 4 });
 }
 
 export function drawPixelPedal(ctx, brake) {

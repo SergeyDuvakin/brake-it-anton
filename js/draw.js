@@ -7,7 +7,7 @@ import { CFG, PALETTE as P } from "./config.js";
 import { damageStage } from "./physics.js";
 import { cabinPoseId, drawPassenger, paintCabin } from "./cabin.js";
 import { usePixel } from "./pixel-assets.js";
-import { drawPixelCabin, drawPixelWorld, pixelBumperBodyGap, pixelChrome } from "./pixel-world.js";
+import { drawPixelCabin, drawPixelLossCard, drawPixelWorld, pixelBumperBodyGap, pixelChrome } from "./pixel-world.js";
 import { CALLOUT, DRIVER_PLATE, NOTICE_BOX } from "./layout.js";
 import {
   drawDriveChrome,
@@ -15,6 +15,7 @@ import {
   drawPauseScreen,
   drawResultScreen,
   drawTitleChrome,
+  momentButton,
   pedalHitBox,
   setLargeUi,
   uiImages,
@@ -355,7 +356,16 @@ function drawPlay(ctx, state, sink) {
   if (pixel) drawPixelWorld(ctx, sim, state, { hud: driving || session.phase === "countdown" });
   else drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
-  if (pixel) drawPixelCabin(ctx, sim, state, cabinPoseId(sim, session.phase, state.pose));
+  const impactMs = session.impact?.ms || 0;
+  const cabinId = session.phase === "impact"
+    ? "bams"
+    : cabinPoseId(sim, session.phase, state.pose);
+  const impactLine = session.phase === "impact" && impactMs >= 33
+    ? "ОЙ!"
+    : (pixel && session.phase === "result" && session.result && session.result.success !== true && !sim.infinite
+      ? "НУ ВОТ…"
+      : null);
+  if (pixel) drawPixelCabin(ctx, sim, state, cabinId, { impactMs, line: impactLine });
   else drawCabin(ctx, sim, state);
   const showHud = driving || session.phase === "countdown";
   let chrome = null;
@@ -399,8 +409,13 @@ function drawPlay(ctx, state, sink) {
     ctx.stroke();
     paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
   }
+  const pixelLoss = pixel && session.phase === "result" && session.result && session.result.success !== true && !sim.infinite;
   if (session.phase === "pause") drawPauseScreen(ctx, state, sink);
-  if (session.phase === "result") drawResultScreen(ctx, state, sink);
+  if (session.phase === "result" && !pixelLoss) drawResultScreen(ctx, state, sink);
+  if (pixelLoss) {
+    drawPixelLossCard(ctx, sim, sink);
+    momentButton(ctx, sink, state);
+  }
   const needle = chrome?.needle;
   return {
     needleDeg: needle ? needle.deg : null,

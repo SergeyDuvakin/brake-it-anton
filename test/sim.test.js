@@ -59,6 +59,7 @@ import { pulse, vibrationPattern } from "../js/haptics.js";
 import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
 import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { IMPACT_TOTAL_MS, LOSS_SUBTITLE, impactFrame, impactKind } from "../js/impact.js";
 import { CABIN_POSES } from "../js/cabin.js";
 import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, platePixel, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
 import {
@@ -586,6 +587,171 @@ test("sidewalk props stay on the slab, and the warning stays in the lane", () =>
   assert.ok(blocked.y > lane.y, JSON.stringify(blocked));
 });
 
+test("the crash scene keeps its clock, and a soft bin stays a bump", () => {
+  assert.equal(impactFrame("car", 0, { cause: "stopped" }).flash, 0.78);
+  assert.equal(impactFrame("car", 20, { cause: "stopped" }).flash, 0.43);
+  assert.equal(impactFrame("car", 33, { cause: "stopped" }).flash, 0);
+  assert.deepEqual(impactFrame("car", 10, { cause: "stopped" }).shake, [0, 0]);
+  assert.notDeepEqual(impactFrame("car", 40, { cause: "stopped" }).shake, [0, 0]);
+  assert.deepEqual(impactFrame("car", 220, { cause: "stopped" }).shake, [0, 0]);
+  assert.notDeepEqual(impactFrame("ped", 40).shake, [0, 0]);
+  assert.deepEqual(impactFrame("ped", 120).shake, [0, 0]);
+  assert.deepEqual(impactFrame("dog", 120).shake, [0, 0]);
+  assert.equal(impactFrame("ped", 50).pose, "bams-0");
+  assert.equal(impactFrame("ped", 150).pose, "bams-1");
+  assert.equal(impactFrame("ped", 250).pose, "bams-0");
+  assert.equal(impactFrame("car", 500, { cause: "stopped" }).fx.some((bit) => bit.sheet === "fx/bams.png"), true);
+  assert.equal(impactFrame("car", 566, { cause: "stopped" }).fx.some((bit) => bit.sheet === "fx/bams.png"), false);
+  assert.equal(impactFrame("car", 900, { cause: "stopped" }).fadeLevel, 2);
+  assert.equal(impactFrame("car", 1000, { cause: "stopped" }).fadeLevel, 4);
+  assert.equal(impactFrame("car", 1100, { cause: "stopped" }).fadeLevel, 6);
+  assert.equal(impactFrame("car", 1200, { cause: "stopped" }).fadeLevel, 8);
+  assert.equal(impactFrame("car", 1299, { cause: "stopped" }).card, false);
+  assert.equal(impactFrame("car", IMPACT_TOTAL_MS, { cause: "stopped" }).card, true);
+  assert.equal(impactFrame("car", 0, { cause: "stopped", reducedMotion: true }).flash, 0);
+  assert.deepEqual(impactFrame("car", 40, { cause: "stopped", shake: false }).shake, [0, 0]);
+
+  function ended(cause, success = false) {
+    const session = createSession(getMission("lesson1"), { seed: 11 });
+    session.phase = "drive";
+    session.countdownAcc = 3;
+    session.sim.done = true;
+    session.sim.success = success;
+    session.sim.failCause = cause;
+    session.sim.failReason = success ? null : "body";
+    session.sim.lastHit = { id: "h", type: cause, t: session.sim.t, x: 1.2, color: "pink" };
+    const still = session.sim.hazards.map((h) => ({ id: h.id, s: h.pose?.s, x: h.pose?.x }));
+    sessionStep(session, 1 / 60);
+    return { session, still };
+  }
+  const ped = ended("pedestrian");
+  assert.equal(ped.session.phase, "impact");
+  assert.equal(ped.session.impact.kind, "ped");
+  sessionStep(ped.session, 1.29);
+  assert.equal(ped.session.phase, "impact");
+  sessionStep(ped.session, 0.03);
+  assert.equal(ped.session.phase, "result");
+  assert.ok(ped.session.result);
+  restartSession(ped.session);
+  assert.equal(ped.session.phase, "drive");
+  assert.equal(ped.session.impact, null);
+  assert.equal(ped.session.sim.stats.collisions, 0);
+
+  assert.equal(ended("dog").session.impact.kind, "dog");
+  assert.equal(ended("stopped").session.impact.kind, "car");
+  assert.equal(ended("drift-phone").session.impact.kind, "car");
+  assert.equal(impactKind("drift-phone"), "car");
+  assert.deepEqual(LOSS_SUBTITLE["drift-phone"], ["Антон засмотрелся", "в телефон."]);
+  assert.equal(ended(null, true).session.phase, "result");
+  assert.equal(ended("timeout").session.phase, "result");
+
+  const parked = ended("stopped");
+  for (const h of parked.session.sim.hazards) {
+    if (h.type !== "bin" && h.type !== "roller" && h.type !== "pothole" && h.type !== "stopped") continue;
+    const before = parked.still.find((item) => item.id === h.id);
+    assert.equal(h.pose.x, before.x);
+    assert.equal(h.pose.s, before.s);
+  }
+
+  const cake = createSim(empty({
+    cargo: "cake",
+    hazards: [{ id: "ped", type: "pedestrian", s: 8, x: 1.8, halfW: 0.42, halfL: 0.55 }],
+  }), 3);
+  cake.v = 10;
+  cake.x = 1.8;
+  cake.s = 8;
+  cake.hazards[0].pose = { s: 8, x: 1.8 };
+  cake.hazards[0].motion = "linger";
+  stepSim(cake, 1 / 60, { held: false });
+  assert.equal(cake.done, true, cake.failReason);
+  assert.equal(cake.failCause, "pedestrian");
+
+  const dog = createSim(empty({ hazards: [{ id: "dog", type: "dog", s: 12, x: 1.8, halfW: 0.55, halfL: 0.8 }] }), 1);
+  dog.v = 10;
+  dog.x = 1.8;
+  dog.s = 12;
+  dog.hazards[0].pose = { s: 12, x: 1.8 };
+  dog.hazards[0].motion = "dart";
+  stepSim(dog, 1 / 60, { held: false });
+  assert.equal(dog.done, true);
+  assert.equal(dog.failCause, "dog");
+
+  const asleep = createSim(empty({ hazards: [{ id: "hole", type: "pothole", s: 8, x: 1.8, halfW: 0.72, halfL: 1.15 }] }), 1);
+  asleep.attention = "asleep";
+  asleep.v = 10;
+  asleep.x = 1.8;
+  asleep.s = 8;
+  const hole = asleep.hazards[0];
+  const at = { x: hole.pose.x, s: hole.pose.s };
+  stepSim(asleep, 1 / 60, { held: false });
+  assert.equal(asleep.done, false);
+  assert.ok(asleep.body > 0);
+  assert.notEqual(asleep.bubble, "ОЙ!");
+  assert.equal(asleep.potholeLineAt, 0);
+  assert.equal(hole.pose.x, at.x);
+  assert.equal(hole.pose.s, at.s);
+  for (let i = 0; i < 60; i += 1) stepSim(asleep, 1 / 60, { held: false, lockSpeed: true });
+  assert.notEqual(asleep.bubble, "ЯМА ЖЕ!");
+
+  const awake = createSim(empty({ hazards: [{ id: "hole", type: "pothole", s: 8, x: 1.8, halfW: 0.72, halfL: 1.15 }] }), 1);
+  awake.patience = 80;
+  awake.v = 10;
+  awake.x = 1.8;
+  awake.s = 8;
+  const awakeHole = awake.hazards[0];
+  const awakeAt = { x: awakeHole.pose.x, s: awakeHole.pose.s };
+  stepSim(awake, 1 / 60, { held: false });
+  assert.equal(awake.bubble, "ОЙ!");
+  assert.equal(awakeHole.pose.x, awakeAt.x);
+  for (let i = 0; i < 50 && awake.bubble !== "ЯМА ЖЕ!"; i += 1) stepSim(awake, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(awake.bubble, "ЯМА ЖЕ!");
+  assert.equal(awakeHole.pose.s, awakeAt.s);
+
+  const bin = createSim(empty({ hazards: [{ id: "bin", type: "bin", s: 8, x: 1.8, halfW: 0.55, halfL: 0.7 }] }), 1);
+  bin.v = 10;
+  bin.x = 1.8;
+  bin.s = 8;
+  const binPose = { x: bin.hazards[0].pose.x, s: bin.hazards[0].pose.s };
+  const body = bin.body;
+  stepSim(bin, 1 / 60, { held: false });
+  assert.equal(bin.body, body);
+  assert.equal(bin.done, false);
+  assert.equal(bin.failCause, null);
+  assert.equal(bin.hazards[0].pose.x, binPose.x);
+  assert.equal(bin.hazards[0].pose.s, binPose.s);
+
+  const manifest = JSON.parse(readFileSync(new URL("../assets/pixel/manifest.json", import.meta.url)));
+  const expected = {
+    "cabin/poses/bams-0.png": [125, 150],
+    "cabin/poses/bams-1.png": [125, 150],
+    "car/learner-crash.png": [26, 44],
+    "car/npc-white-up-crash.png": [26, 44],
+    "car/npc-blue-up-crash.png": [26, 44],
+    "fx/stars.png": [90, 14],
+    "fx/steam.png": [56, 14],
+    "fx/bams.png": [192, 46],
+    "fx/opa.png": [128, 32],
+    "fx/gav.png": [120, 30],
+    "fx/anger.png": [5, 5],
+    "fx/alarm.png": [3, 7],
+    "world/sprites/ped-blue-react.png": [60, 20],
+    "world/sprites/ped-pink-react.png": [60, 20],
+    "world/sprites/dog-react.png": [48, 12],
+  };
+  const listed = new Set();
+  const walk = (value) => {
+    if (typeof value === "string" && value.endsWith(".png")) listed.add(value);
+    else if (value && typeof value === "object") Object.values(value).forEach(walk);
+  };
+  walk(manifest.crash);
+  for (const [file, size] of Object.entries(expected)) {
+    assert.equal(listed.has(file), true, file);
+    const buf = readFileSync(new URL(`../assets/pixel/${file}`, import.meta.url));
+    assert.equal(buf.readUInt32BE(16), size[0], file);
+    assert.equal(buf.readUInt32BE(20), size[1], file);
+  }
+});
+
 test("a pedestrian finishes crossing, and statics do not walk off the road", () => {
   const walker = createSim(
     empty({ hazards: [{ id: "ped", type: "pedestrian", s: 12, x: 1.8, halfW: 0.42, halfL: 0.55 }] }),
@@ -638,7 +804,9 @@ test("panic braking fails the cake; careful cake and fish trips can finish", () 
   const cake = getMission("lesson3");
   const ruined = runSim(cake, policyPanic, { maxTime: 40 });
   assert.equal(ruined.success, false, dump(ruined));
-  assert.equal(ruined.failReason, "cargo", dump(ruined));
+  // A pedestrian taken at speed now ends the trip, cargo or not. Panic hits one.
+  assert.equal(ruined.failReason, "body", dump(ruined));
+  assert.equal(ruined.failCause, "pedestrian", dump(ruined));
 
   const baked = runSim(cake, policyCareful, { maxTime: 180 });
   assert.equal(baked.success, true, dump(baked));
