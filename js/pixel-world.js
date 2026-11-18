@@ -44,6 +44,8 @@ export const PIXEL_POSE = {
   sorry: "sorry-0",
   drop: "drop-0",
   grope: "grope-0",
+  oy: "oy",
+  grumble: "grumble",
   surface: "surface",
   "surface-empty": "surface-empty",
   "flinch-l": "flinch-l",
@@ -59,9 +61,25 @@ export const PIXEL_POSE = {
   bams: "bams",
 };
 
-export function pixelPoseFrame(cabinId, phase, impactMs = 0) {
+const POSE_PAIR = {
+  yawn: ["yawn-0", "yawn-1"],
+  shchas: ["shchas-0", "shchas-1"],
+  sorry: ["sorry-0", "sorry-1"],
+  drop: ["drop-0", "drop-1"],
+};
+
+export function pixelPoseFrame(cabinId, phase, impactMs = 0, now = 0, reduced = false) {
   if (phase === "countdown") return "drive";
   if (cabinId === "bams") return Math.floor(impactMs / 100) % 2 ? "bams-1" : "bams-0";
+  if (cabinId === "grope") {
+    const frame = reduced ? 0 : Math.floor(Math.max(0, now) / 160) % 3;
+    return `grope-${frame}`;
+  }
+  const pair = POSE_PAIR[cabinId];
+  if (pair) {
+    const frame = reduced ? 0 : Math.floor(Math.max(0, now) / 200) % 2;
+    return pair[frame];
+  }
   return PIXEL_POSE[cabinId] || "drive";
 }
 
@@ -237,20 +255,17 @@ export function sidewalkDressing() {
 function dressing(cam) {
   const items = [];
   for (const row of dressingLayout(cam)) {
-    if (row.kind === "fence") {
-      const spec = spriteOf("fence");
-      if (!spec) continue;
-      const xPx = row.side === "right" ? 193 : 88;
-      for (let i = -3; i <= 3; i += 1) {
-        if (i === 0 || i === 1) continue;
-        items.push({ spec, s: row.s + i * 0.9, xPx, mirror: row.side === "right" });
-      }
-      continue;
-    }
     const spec = spriteOf(row.name);
     if (!spec) continue;
     const drawn = row.kind === "prop" ? { ...spec, ax: row.ax } : spec;
-    items.push({ spec: drawn, s: row.s, xPx: row.xPx, mirror: !!row.mirror });
+    items.push({
+      spec: drawn,
+      s: row.s,
+      xPx: row.xPx,
+      mirror: !!row.mirror,
+      leftEdge: row.leftEdge,
+      shadowX: row.shadowX,
+    });
   }
   return items;
 }
@@ -508,11 +523,20 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
           blitSprite(nctx, spec, item.xPx, y);
           return;
         }
-        nctx.save();
-        nctx.translate(Math.round(item.xPx), 0);
-        nctx.scale(-1, 1);
-        blitSprite(nctx, spec, 0, y);
-        nctx.restore();
+        const img = pixelImage(spec.file);
+        const top = Math.round(y - spec.ay);
+        const left = item.leftEdge;
+        if (spec.shadow) {
+          const shadow = tintShadow(spec.shadow);
+          if (shadow) nctx.drawImage(shadow, Math.round(item.shadowX - spec.ax), top);
+        }
+        if (img) {
+          nctx.save();
+          nctx.translate(left + spec.w, top);
+          nctx.scale(-1, 1);
+          nctx.drawImage(img, 0, 0);
+          nctx.restore();
+        }
       },
     });
   }
@@ -576,8 +600,16 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
         const beep = pixelImage("fx/beep.png");
         const arcs = pixelImage("fx/honk-arcs.png");
         const frame = Math.floor((0.4 - sim.honkFlashT) / 0.066) % 2;
-        if (beep) nctx.drawImage(beep, frame * 48, 0, 48, 22, carX - 24, carTop - 24, 48, 22);
-        if (arcs) nctx.drawImage(arcs, frame * 12, 0, 12, 10, carX + 8, carTop + 6, 12, 10);
+        if (beep) nctx.drawImage(beep, frame * 48, 0, 48, 22, carX - 24, carTop - 36, 48, 22);
+        if (arcs) nctx.drawImage(arcs, frame * 12, 0, 12, 10, carX - 6, carTop - 12, 12, 10);
+      }
+      if (sim.curbBumpT > 0 && !state.save?.settings?.reducedMotion) {
+        const steam = pixelImage("fx/steam.png");
+        const puff = Math.floor((0.2 - sim.curbBumpT) / 0.05) % 4;
+        if (steam) {
+          nctx.drawImage(steam, puff * 14, 0, 14, 14, carX - 18, carTop + 28, 14, 14);
+          nctx.drawImage(steam, puff * 14, 0, 14, 14, carX + 8, carTop + 28, 14, 14);
+        }
       }
     },
   });
@@ -813,7 +845,13 @@ function drawBubble(ctx, text) {
 
 export function drawPixelCabin(ctx, sim, state, cabinId, opts = {}) {
   const phase = state.session?.phase || "drive";
-  const frameId = pixelPoseFrame(cabinId, phase, opts.impactMs || 0);
+  const frameId = pixelPoseFrame(
+    cabinId,
+    phase,
+    opts.impactMs || 0,
+    state.now || 0,
+    !!state.save?.settings?.reducedMotion,
+  );
   const plate = pixelImage("ui/plate-driver.png");
   ctx.save();
   ctx.imageSmoothingEnabled = false;

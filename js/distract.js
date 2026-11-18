@@ -9,7 +9,7 @@ import { roadsideItems } from "./roadside.js";
 const DRIFT_STATES = new Set(["phone", "drowsy", "asleep", "grope"]);
 
 export function bootDistraction(sim) {
-  sim.drift = { t: 0, dir: 0, holdT: 0, vLat: 0, active: false, fade: 0, recover: 0, offroad: false };
+  sim.drift = { t: 0, dir: 0, holdT: 0, vLat: 0, active: false, fade: 0, homeWait: 0, homing: false, offroad: false };
   sim.poke = { count: 0, lastT: -10 };
   sim.flinch = null;
   sim.flinchPrev = 0;
@@ -36,9 +36,9 @@ export function driftState(sim) {
   return DRIFT_STATES.has(sim.attention) ? sim.attention : null;
 }
 
-function sayIf(sim, text) {
-  if (sim.outburstT > 0) return;
-  if (typeof sim.say === "function") sim.say(text);
+function sayIf(sim, text, force) {
+  if (!force && sim.outburstT > 0) return;
+  if (typeof sim.say === "function") sim.say(text, force);
 }
 
 function setReact(sim, id, seconds) {
@@ -101,15 +101,18 @@ export function advanceDrift(sim, dt) {
   if (!state) {
     if (drift.active) {
       drift.fade = 0.25;
-      drift.recover = CFG.drift.recoverDelay;
+      drift.homeWait = CFG.drift.recoverDelay;
+      drift.homing = true;
     }
     drift.active = false;
     drift.t = 0;
     if (drift.fade > 0) {
       drift.fade = Math.max(0, drift.fade - dt);
       drift.vLat *= Math.max(0, 1 - dt / 0.25);
-    } else drift.vLat = 0;
-    if (drift.recover > 0) drift.recover = Math.max(0, drift.recover - dt);
+    } else {
+      drift.vLat = 0;
+      if (drift.homeWait > 0) drift.homeWait = Math.max(0, drift.homeWait - dt);
+    }
     return;
   }
   drift.t += dt;
@@ -140,10 +143,11 @@ export function steerWithDrift(sim, dt, want, rate) {
   const curb = CFG.drift.curbX;
   if (drift.active && drift.t >= CFG.drift.startDelay) x += drift.vLat * dt;
   else if (drift.fade > 0) x += drift.vLat * dt;
-  else if (drift.recover > 0 && Math.abs(sim.x) > curb) {
+  else if (drift.homing && !(drift.homeWait > 0)) {
     const step = Math.max(-CFG.drift.recoverRate * dt, Math.min(CFG.drift.recoverRate * dt, want - x));
     x += step;
-  } else {
+    if (Math.abs(x) <= curb && Math.abs(want - x) < 0.08) drift.homing = false;
+  } else if (!drift.homing) {
     x += Math.max(-rate * dt, Math.min(rate * dt, want - x));
   }
   if (sim.flinch) {
@@ -354,7 +358,7 @@ export function playerHonk(sim, danger) {
   sim.patience = Math.min(100, sim.patience + CFG.honk.cost);
   if (sim.stats.playerHonks === 1) {
     setReact(sim, "oy", 0.6);
-    sayIf(sim, "ТЫ ЧЕГО СИГНАЛИШЬ?");
+    sayIf(sim, "ТЫ ЧЕГО СИГНАЛИШЬ?", true);
   }
   if (sim.attention === "drowsy" || sim.attention === "asleep") {
     const amp = sim.attention === "asleep" ? CFG.flinch.asleep : CFG.flinch.drowsy;
@@ -387,7 +391,7 @@ export function strikeRoadside(sim, prevS) {
 function intervalsOverlap(a0, a1, lo, hi) {
   const loS = Math.min(a0, a1);
   const hiS = Math.max(a0, a1);
-  return hiS > lo && loS < hi;
+  return hiS >= lo && loS <= hi;
 }
 
 export function applyRoadside(sim, box) {

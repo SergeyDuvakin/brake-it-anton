@@ -165,7 +165,7 @@ export function createSim(mission, seed = 1) {
     events: [],
   };
   bootDistraction(sim);
-  sim.say = (text) => say(sim, text);
+  sim.say = (text, force) => say(sim, text, force);
   return sim;
 }
 
@@ -508,8 +508,8 @@ function log(sim, entry) {
   if (sim.events.length > 80) sim.events.shift();
 }
 
-function say(sim, text) {
-  if (sim.bubble && sim.bubbleGap > 0.4) return;
+function say(sim, text, force) {
+  if (!force && sim.bubble && sim.bubbleGap > 0.4) return;
   sim.bubble = text;
   sim.bubbleT = 1.15;
   sim.bubbleGap = 2.3;

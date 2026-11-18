@@ -894,7 +894,11 @@ test("the crash scene keeps its clock, and a soft bin stays a bump", () => {
   assert.equal(ended("stopped").session.impact.kind, "car");
   assert.equal(ended("drift-phone").session.impact.kind, "car");
   assert.equal(impactKind("drift-phone"), "car");
-  assert.deepEqual(LOSS_SUBTITLE["drift-phone"], ["Антон засмотрелся", "в телефон."]);
+  assert.deepEqual(LOSS_SUBTITLE["drift-phone"], ["Антон", "засмотрелся", "в телефон."]);
+  for (const [cause, lines] of Object.entries(LOSS_SUBTITLE)) {
+    assert.ok(lines.length >= 1 && lines.length <= 3, cause);
+    for (const line of lines) assert.ok(line.length <= 16, `${cause} ${line}`);
+  }
   assert.equal(ended(null, true).session.phase, "result");
   assert.equal(ended("timeout").session.phase, "result");
 
@@ -3887,6 +3891,39 @@ test("taps, drift and the horn follow the approved rules", () => {
   assert.equal(bin.pose.s, before.s);
   frames(horn, Math.ceil(5.1 / dt), false, { lockSpeed: true });
   assert.equal(playerHonk(horn), true);
+
+  assert.equal(pixelPoseFrame("yawn", "drive", 0, 0, false), "yawn-0");
+  assert.equal(pixelPoseFrame("yawn", "drive", 0, 200, false), "yawn-1");
+  assert.equal(pixelPoseFrame("grope", "drive", 0, 0, false), "grope-0");
+  assert.equal(pixelPoseFrame("grope", "drive", 0, 160, false), "grope-1");
+  assert.equal(pixelPoseFrame("grope", "drive", 0, 320, false), "grope-2");
+  assert.equal(pixelPoseFrame("grope", "drive", 0, 320, true), "grope-0");
+  assert.equal(pixelPoseFrame("drop", "drive", 0, 200, false), "drop-1");
+  assert.equal(pixelPoseFrame("shchas", "drive", 0, 200, false), "shchas-1");
+  assert.equal(pixelPoseFrame("sorry", "drive", 0, 200, false), "sorry-1");
+  const hornFace = createSim(getMission("lesson1"), 1);
+  hornFace.react = { id: "oy", until: 10 };
+  assert.equal(cabinPoseId(hornFace, "drive"), "oy");
+  hornFace.react = { id: "grumble", until: 10 };
+  assert.equal(cabinPoseId(hornFace, "drive"), "grumble");
+  assert.equal(cabinPoseId(hornFace, "impact"), "drive");
+
+  const earlyHit = [];
+  for (const attention of ["phone", "asleep"]) {
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const ride = createSim({ id: "drift", seed, cruise: 10, length: 500, hazards: [], slippery: [] }, seed);
+      ride.attention = attention;
+      ride.v = 10;
+      ride.x = 1.8;
+      let t = 0;
+      while (!ride.done && t < 8) {
+        stepSim(ride, dt, { held: false, lockSpeed: true });
+        t += dt;
+      }
+      if (ride.done && t < 3) earlyHit.push({ attention, seed, t, cause: ride.failCause });
+    }
+  }
+  assert.deepEqual(earlyHit, []);
 
   const swipe = createSim(getMission("lesson1"), 8);
   swipe.attention = "phone";

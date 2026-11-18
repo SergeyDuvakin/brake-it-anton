@@ -362,7 +362,7 @@ function drawPlay(ctx, state, sink) {
   const impactMs = session.impact?.ms || 0;
   const cabinId = session.phase === "impact" && impactMs >= 33
     ? "bams"
-    : cabinPoseId(sim, session.phase === "impact" ? "drive" : session.phase, state.pose);
+    : cabinPoseId(sim, session.phase, state.pose);
   const impactLine = session.phase === "impact" && impactMs >= 33
     ? "ОЙ!"
     : (pixel && session.phase === "result" && session.result && session.result.success !== true && !sim.infinite

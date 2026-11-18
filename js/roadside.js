@@ -116,10 +116,53 @@ export function blockLayout(block) {
     w: prop[0],
     h: prop[1],
   });
-  const gate = (hash32(block + 91) % 5) + 4;
-  items.push({ name: "fence", s: s + gate, kind: "fence", side: "left", gate: true });
-  items.push({ name: "fence", s: s + gate + 8, kind: "fence", side: "right", gate: true });
   return items;
+}
+
+function houseSpan(item) {
+  const spec = SPRITE[item.name];
+  if (!spec) return null;
+  const ay = spec[3];
+  const h = spec[1];
+  return [item.s - (h - ay) / PPM, item.s + ay / PPM];
+}
+
+/** One fence tile every 8 native px through the gaps, with one 2.6 m gate. */
+export function fenceTiles(sFrom, sTo) {
+  const tiles = [];
+  const first = Math.floor((sFrom - 8) / 32) - 1;
+  const last = Math.floor((sTo + 8) / 32) + 1;
+  const step = 8 / PPM;
+  for (let block = first; block <= last; block += 1) {
+    const houses = blockLayout(block).filter((item) => item.kind === "house");
+    for (const side of ["left", "right"]) {
+      const house = houses.find((item) => item.side === side);
+      const span = house ? houseSpan(house) : null;
+      const gate = block * 32 + 26;
+      const xPx = side === "left" ? 88 : 193;
+      const start = block * 32;
+      const count = Math.ceil(32 / step);
+      for (let i = 0; i <= count; i += 1) {
+        const s = start + i * step;
+        if (s < sFrom - 1 || s > sTo + 1) continue;
+        if (span && s >= span[0] && s <= span[1]) continue;
+        if (Math.abs(s - gate) < 1.3) continue;
+        tiles.push({
+          name: "fence",
+          s,
+          xPx,
+          ax: 0,
+          ay: 14,
+          kind: "fence",
+          side,
+          w: 8,
+          h: 16,
+          mirror: false,
+        });
+      }
+    }
+  }
+  return tiles;
 }
 
 function lampRows(sFrom, sTo) {
@@ -129,8 +172,23 @@ function lampRows(sFrom, sTo) {
   for (let k = first; k <= last; k += 1) {
     const s = k * 16 + 8;
     if (s < sFrom - 2 || s > sTo + 2) continue;
-    rows.push({ name: "lamp", s, xPx: 95, ax: 4, ay: 26, kind: "lamp", side: "left", w: 9, h: 29 });
-    rows.push({ name: "lamp", s, xPx: 183, ax: 4, ay: 26, kind: "lamp", side: "right", w: 9, h: 29, mirror: true });
+    // Pole columns 1–3 land on 96–98 when the foot is 99 (ax 4).
+    rows.push({ name: "lamp", s, xPx: 99, ax: 4, ay: 26, kind: "lamp", side: "left", w: 9, h: 29, mirror: false });
+    // Flipped pole lands on 188–190. The shadow stays unmirrored, light from the same side.
+    rows.push({
+      name: "lamp",
+      s,
+      xPx: 191,
+      ax: 4,
+      ay: 26,
+      kind: "lamp",
+      side: "right",
+      w: 9,
+      h: 29,
+      mirror: true,
+      leftEdge: 183,
+      shadowX: 190,
+    });
   }
   return rows;
 }
@@ -140,6 +198,7 @@ export function layoutBetween(sFrom, sTo) {
   const last = Math.floor((sTo + 8) / 32);
   const items = [];
   for (let block = first; block <= last; block += 1) items.push(...blockLayout(block));
+  items.push(...fenceTiles(sFrom, sTo));
   items.push(...lampRows(sFrom, sTo));
   return items;
 }
@@ -182,11 +241,11 @@ function propBox(item) {
 }
 
 function lampBox(item) {
-  const sign = item.side === "right" ? 1 : -1;
+  const centerPx = item.side === "right" ? 189 : 97;
   return {
     name: "lamp",
     s: item.s,
-    x: sign * 4.67,
+    x: pxToM(centerPx),
     halfW: 0.15,
     halfL: 0.15,
     solid: true,
@@ -195,53 +254,19 @@ function lampBox(item) {
   };
 }
 
-function fenceBoxes(item) {
+function fenceBox(item) {
   const sign = item.side === "right" ? 1 : -1;
-  const edge = sign * WALL_M;
-  const gate = 2.6;
-  const post = 0.15;
-  return [
-    {
-      name: "fence",
-      s: item.s - gate / 2 - 1.2,
-      x: edge + sign * 0.2,
-      halfW: 0.2,
-      halfL: 1.2,
-      solid: true,
-      side: item.side,
-      kind: "fence",
-    },
-    {
-      name: "fence-post",
-      s: item.s - gate / 2,
-      x: edge,
-      halfW: post,
-      halfL: post,
-      solid: true,
-      side: item.side,
-      kind: "fence",
-    },
-    {
-      name: "fence-post",
-      s: item.s + gate / 2,
-      x: edge,
-      halfW: post,
-      halfL: post,
-      solid: true,
-      side: item.side,
-      kind: "fence",
-    },
-    {
-      name: "fence",
-      s: item.s + gate / 2 + 1.2,
-      x: edge + sign * 0.2,
-      halfW: 0.2,
-      halfL: 1.2,
-      solid: true,
-      side: item.side,
-      kind: "fence",
-    },
-  ];
+  const halfW = 0.2;
+  return {
+    name: "fence",
+    s: item.s,
+    x: sign * (WALL_M + halfW),
+    halfW,
+    halfL: (8 / PPM) / 2,
+    solid: true,
+    side: item.side,
+    kind: "fence",
+  };
 }
 
 /** Solid (and flat) rectangles in metres. */
@@ -253,7 +278,7 @@ export function roadsideItems(sFrom, sTo) {
       const box = propBox(item);
       if (box) boxes.push(box);
     } else if (item.kind === "lamp") boxes.push(lampBox(item));
-    else if (item.kind === "fence") boxes.push(...fenceBoxes(item));
+    else if (item.kind === "fence") boxes.push(fenceBox(item));
   }
   return boxes;
 }
