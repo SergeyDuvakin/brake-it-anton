@@ -85,7 +85,7 @@ export const LESSONS = [
     length: 450,
     cargo: "cake",
     slippery: [],
-    blurb: ["Жёсткий тормоз на скорости роняет крем.", "Яму пусть объедет сам."],
+    blurb: ["Жёсткий тормоз на скорости роняет крем.", "Перед ямой остановись — тогда объедет."],
     gags: [],
     hazards: [
       H({ id: "hole", type: "pothole", s: 50, trust: true, halfW: 0.72, halfL: 1.15 }),

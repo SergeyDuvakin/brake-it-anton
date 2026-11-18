@@ -7,7 +7,8 @@ import { createAudio } from "./audio.js";
 import { pulse } from "./haptics.js";
 import { createReplay } from "./replay.js";
 import { expressionId } from "./physics.js";
-import { SAVE_KEY } from "./config.js";
+import { CFG, SAVE_KEY } from "./config.js";
+import { detourGap } from "./lat.js";
 import { whenCabinReady, cabinReady } from "./cabin.js";
 import { whenPixelReady } from "./pixel-assets.js";
 import { bumperFootGap, render, whenCarsReady } from "./draw.js";
@@ -719,7 +720,17 @@ window.__anton = {
       phase: session?.phase ?? null,
       countdown: session?.countdown ?? null,
       s: session?.sim.s ?? 0,
+      x: session?.sim.x ?? 0,
       v: session?.sim.v ?? 0,
+      bubble: session?.sim.bubbleT > 0 ? session.sim.bubble : null,
+      lat: session?.sim.lat ? {
+        mode: session.sim.lat.mode,
+        gap: session.sim.lat.gap,
+        cap: session.sim.lat.cruiseCap,
+        targetX: session.sim.targetX,
+        blocked: session.sim.lat.blocked === true,
+        holeId: session.sim.lat.holeId,
+      } : null,
       brake: session?.sim.brakeInput ?? 0,
       held: !!(session && (session.brakeHeld || session.keysDown.has("Space"))),
       patience: session?.sim.patience ?? null,
@@ -817,6 +828,48 @@ window.__anton = {
     if (!debug || !session) return;
     session.sim.body = Math.max(0, Math.min(100, Number(body) || 0));
     session.sim.stats.collisions = Math.max(0, Number(hits) || 0);
+  },
+  debugArmDetour() {
+    if (!debug || !session) return;
+    const sim = session.sim;
+    const hole = sim.hazards.find((h) => (
+      h.type === "pothole" && !h.resolved && h.category !== "decor" && h.solid !== false
+    ));
+    if (!hole) return;
+    const gap = 4;
+    const hs = hole.pose?.s ?? hole.s;
+    sim.s = (hs - hole.halfL) - CFG.carHalfFront - gap;
+    sim.prevS = sim.s;
+    sim.v = 0;
+    sim.x = CFG.defaultX;
+    sim.prevX = sim.x;
+    sim.brakeInput = 0;
+    sim.wasHeld = false;
+    sim.holdTime = 0;
+    sim.attention = "road";
+    sim.done = false;
+    sim.lat.mode = "lane";
+    sim.lat.stopped = true;
+    sim.lat.braked = true;
+    sim.lat.release = 0;
+    sim.lat.path = null;
+    sim.lat.holeId = null;
+    sim.lat.wantV = null;
+    sim.lat.gap = detourGap(sim, hole);
+    session.phase = "drive";
+    session.impact = null;
+    session.brakeHeld = false;
+    session.keysDown.delete("Space");
+  },
+  debugAttention(value) {
+    if (!debug || !session) return;
+    session.sim.attention = value || "road";
+    if (value === "asleep" || value === "drowsy") session.sim.sleepPlayed = true;
+    if (value === "phone") session.sim.phonePlayed = true;
+  },
+  debugSpeed(value) {
+    if (!debug || !session) return;
+    session.sim.v = Math.max(0, Number(value) || 0);
   },
   debugSeek(metres) {
     if (!debug || !session) return;

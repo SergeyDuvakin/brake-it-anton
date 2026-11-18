@@ -93,6 +93,25 @@ export const CFG = {
   weightsPlain: { body: 0.5, comfort: 0.2, mood: 0.3 },
   starThresholds: { three: 80, two: 60, one: 35 },
 
+  /**
+   * Pothole detour after a full stop. Dog and parked-car trust is unchanged.
+   * Speed is capped, not jumped, so a cake does not take a cargo hit from the gas.
+   */
+  detour: {
+    stopV: 0.3,
+    releaseHold: 0.25,
+    aimWindow: 8,
+    minGap: 0.2,
+    aimPause: 0.4,
+    speed: 2.5,
+    ramp: 0.6,
+    margin: 0.55,
+    enterLead: 1.5,
+    exitAfter: 3,
+    resumeCruise: 1.5,
+    blockSlack: 0.2,
+  },
+
   bodyPerMs: {
     pedestrian: 3.2,
     dog: 2.0,

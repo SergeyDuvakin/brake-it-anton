@@ -7,6 +7,15 @@
  */
 
 import { CFG } from "./config.js";
+import {
+  buildDetourPath,
+  clearsAt,
+  createLat,
+  detourBlocked,
+  detourGap,
+  lateralTargetX,
+  passX,
+} from "./lat.js";
 import { mulberry32 } from "./rng.js";
 import {
   brakeAccel,
@@ -105,6 +114,7 @@ export function createSim(mission, seed = 1) {
     lastPlayerDecel: 0,
     inSlip: false,
     targetX: CFG.defaultX,
+    lat: createLat(),
     skids: [],
     gags: (mission.gags || []).map((g) => ({ ...g, fired: false })),
     gagT: 0,
@@ -445,8 +455,10 @@ function round3(n) {
 
 function justified(sim) {
   for (const h of sim.hazards) {
-    if (h.resolved || h.trust) continue;
+    if (h.resolved) continue;
     const dist = h.s - sim.s;
+    if (h.type === "pothole" && isSolidHazard(h) && dist < h.telegraph && dist > -4) return true;
+    if (h.trust) continue;
     if (dist < h.telegraph && dist > -4) return true;
   }
   return false;
@@ -470,7 +482,7 @@ export function bodyCenterLimit() {
   return CFG.roadHalf - CFG.carHalfW;
 }
 
-function desiredX(sim) {
+function laneDesiredX(sim) {
   const h = nextHazard(sim);
   let x = CFG.defaultX;
   if (h && h.committed === "lunge" && h.dist > -4 && h.dist < 50) x = h.x;
@@ -486,8 +498,12 @@ function desiredX(sim) {
   if (sim.ignoresMarkings && !(h && (h.committed === "avoid" || h.committed === "lunge"))) {
     x += Math.sin(sim.s * 0.08) * 1.1;
   }
+  return x;
+}
+
+function desiredX(sim) {
   const limit = bodyCenterLimit();
-  return clamp(x, -limit, limit);
+  return clamp(lateralTargetX(sim, laneDesiredX(sim)), -limit, limit);
 }
 
 function outOfIt(sim) {
@@ -544,6 +560,8 @@ function advanceAttention(sim, dt) {
 function commitHazards(sim, held) {
   for (const h of sim.hazards) {
     if (h.resolved) continue;
+    // A pothole is a stop, then a detour. It never takes the cruise avoid or the lunge.
+    if (h.type === "pothole") continue;
     const dist = h.s - sim.s;
     if (h.committed === "asleep" && !outOfIt(sim) && dist > 14) {
       h.committed = "avoid";
@@ -804,10 +822,12 @@ function frontOf(s) {
 function markClear(sim, h, how) {
   h.resolved = "clear";
   sim.stats.clears += 1;
-  if (h.trust && h.committed === "avoid") sim.stats.trustClears += 1;
+  const detour = how === "detour";
+  const trustedAvoid = h.trust && h.committed === "avoid";
+  if (detour || trustedAvoid) sim.stats.trustClears += 1;
   if (!h.rewarded) {
     h.rewarded = true;
-    if (h.trust && h.committed === "avoid") sim.patience = Math.max(0, sim.patience - CFG.trustReward);
+    if (detour || trustedAvoid) sim.patience = Math.max(0, sim.patience - CFG.trustReward);
     else if (!h.trust && h.playerBraked) sim.patience = Math.max(0, sim.patience - CFG.saveReward);
   }
   if (how === "touch") say(sim, "ФУХ.");
@@ -910,7 +930,7 @@ function collide(sim, prevS) {
     }
     if (sim.s <= h.s + h.clearAfter) continue;
     if ((h.type === "pedestrian" || h.type === "cutin") && h.crossT >= 0 && h.crossT < dur) continue;
-    const how = h.committed === "avoid" ? "avoid" : h.yielded ? "yield" : "pass";
+    const how = h.detoured ? "detour" : h.committed === "avoid" ? "avoid" : h.yielded ? "yield" : "pass";
     if (how === "pass" && !h.trust && lateralOverlap(sim, h)) continue;
     const lateralGap = Math.abs(sim.x - hazardWorldX(h, sim)) - CFG.carHalfW - h.halfW;
     if (how === "pass" && lateralGap < 0.55 && sim.v > 8) noteNear(sim, h);
@@ -1019,6 +1039,259 @@ function fail(sim, reason) {
   sim.failCause = recent ? sim.lastHit.type : reason;
 }
 
+function openHole(h) {
+  return h && h.type === "pothole" && !h.resolved && isSolidHazard(h);
+}
+
+function upcomingHole(sim) {
+  let best = null;
+  let bestGap = Infinity;
+  for (const h of sim.hazards) {
+    if (!openHole(h)) continue;
+    const gap = detourGap(sim, h);
+    if (gap < CFG.detour.minGap) continue;
+    if (gap < bestGap) {
+      best = h;
+      bestGap = gap;
+    }
+  }
+  if (!best) return null;
+  for (const h of sim.hazards) {
+    if (h === best || h.resolved || !isSolidHazard(h)) continue;
+    if (h.s < best.s - 0.5 && h.s + h.halfL > sim.s - 2) return null;
+  }
+  return best;
+}
+
+function holeById(sim, id) {
+  if (!id) return null;
+  return sim.hazards.find((h) => h.id === id) || null;
+}
+
+function gatherHoles(sim, primary) {
+  const xPass = passX(primary);
+  if (xPass === null) return null;
+  const holes = [primary];
+  let guard = 0;
+  let built = null;
+  while (guard < 6) {
+    guard += 1;
+    built = buildDetourPath(holes);
+    if (!built) return null;
+    let added = false;
+    for (const h of sim.hazards) {
+      if (holes.includes(h) || !openHole(h)) continue;
+      const hs = h.pose?.s ?? h.s;
+      if (hs < sim.s - 2 || hs > built.sExit + 14) continue;
+      if (!clearsAt(xPass, h)) continue;
+      holes.push(h);
+      added = true;
+    }
+    if (!added) break;
+  }
+  return built ? { ...built, holes } : null;
+}
+
+function leaveDetour(lat, resume) {
+  lat.mode = "lane";
+  lat.path = null;
+  lat.holdX = null;
+  lat.cruiseCap = null;
+  lat.blocked = false;
+  lat.holeId = null;
+  lat.sExit = null;
+  lat.sEnter = null;
+  lat.pause = 0;
+  lat.ramp = 0;
+  lat.release = 0;
+  lat.said = false;
+  lat.stopped = false;
+  lat.braked = false;
+  lat.wantV = null;
+  lat.resumeLeft = resume ? CFG.detour.resumeCruise : 0;
+}
+
+function beginAim(sim, hole) {
+  const built = gatherHoles(sim, hole);
+  const lat = sim.lat;
+  if (!built) {
+    lat.wantV = 0;
+    lat.stopped = true;
+    return;
+  }
+  lat.mode = "aim";
+  lat.path = built.path;
+  lat.sEnter = built.sEnter;
+  lat.sExit = built.sExit;
+  lat.holeId = hole.id;
+  lat.holes = built.holes;
+  lat.pause = 0;
+  lat.ramp = 0;
+  lat.cruiseCap = CFG.detour.speed;
+  lat.holdX = null;
+  lat.wantV = 0;
+  if (!lat.said) {
+    sim.bubbleGap = 0;
+    say(sim, "ОБЪЕДУ");
+    lat.said = true;
+  }
+}
+
+function beginApproach(sim, hole) {
+  const lat = sim.lat;
+  lat.mode = "approach";
+  lat.holeId = hole.id;
+  lat.path = null;
+  lat.sExit = null;
+  lat.cruiseCap = CFG.detour.speed;
+  lat.ramp = 0;
+  lat.holdX = null;
+  lat.release = CFG.detour.releaseHold;
+}
+
+function crawlSpeed(lat) {
+  const u = clamp(lat.ramp / CFG.detour.ramp, 0, 1);
+  return CFG.detour.speed * u;
+}
+
+/**
+ * Full stop, release, then either crawl up to the hole or pause and take the S.
+ * lockSpeed never arms this. Sleep and the phone never arm it.
+ */
+function advanceDetour(sim, dt, held, lockSpeed) {
+  const lat = sim.lat;
+  if (!lat) return;
+  lat.wantV = null;
+  lat.blocked = false;
+  if (sim.drift?.active) {
+    if (lat.mode !== "lane") leaveDetour(lat, false);
+    return;
+  }
+  if (lockSpeed) return;
+
+  const spec = CFG.detour;
+  if (lat.mode === "lane") {
+    const hole = upcomingHole(sim);
+    lat.gap = hole ? detourGap(sim, hole) : null;
+    if (!hole || outOfIt(sim)) {
+      lat.stopped = false;
+      lat.release = 0;
+      return;
+    }
+    if (held) lat.braked = true;
+    if (!lat.braked) {
+      lat.stopped = false;
+      lat.release = 0;
+      return;
+    }
+    if (sim.v < spec.stopV) lat.stopped = true;
+    else if (sim.v > 0.8) lat.stopped = false;
+    if (!lat.stopped) {
+      lat.release = 0;
+      return;
+    }
+    if (held) {
+      lat.release = 0;
+      return;
+    }
+    lat.release += dt;
+    lat.wantV = 0;
+    if (lat.release < spec.releaseHold) return;
+    if (lat.gap > spec.aimWindow) beginApproach(sim, hole);
+    else beginAim(sim, hole);
+  }
+
+  if (lat.mode === "approach") {
+    const hole = holeById(sim, lat.holeId);
+    lat.gap = hole ? detourGap(sim, hole) : null;
+    lat.cruiseCap = spec.speed;
+    if (!hole || hole.resolved || outOfIt(sim)) {
+      leaveDetour(lat, false);
+      return;
+    }
+    if (held) {
+      lat.holdX = sim.x;
+      lat.wantV = 0;
+      lat.ramp = 0;
+      lat.release = 0;
+      return;
+    }
+    lat.holdX = null;
+    lat.release += dt;
+    if (lat.release < spec.releaseHold) {
+      lat.wantV = 0;
+      return;
+    }
+    if (lat.gap < spec.minGap) {
+      leaveDetour(lat, false);
+      return;
+    }
+    if (lat.gap <= spec.aimWindow) {
+      beginAim(sim, hole);
+    } else {
+      lat.ramp += dt;
+      lat.wantV = crawlSpeed(lat);
+      return;
+    }
+  }
+
+  if (lat.mode === "aim") {
+    const hole = holeById(sim, lat.holeId);
+    lat.gap = hole ? detourGap(sim, hole) : null;
+    lat.wantV = 0;
+    lat.cruiseCap = spec.speed;
+    lat.blocked = detourBlocked(sim);
+    if (!hole || hole.resolved) {
+      leaveDetour(lat, false);
+      return;
+    }
+    if (outOfIt(sim)) {
+      leaveDetour(lat, false);
+      return;
+    }
+    if (held || lat.blocked) {
+      if (held) lat.holdX = sim.x;
+      return;
+    }
+    lat.holdX = null;
+    lat.pause += dt;
+    if (lat.pause + 1e-6 < spec.aimPause) return;
+    lat.mode = "detour";
+    lat.ramp = 0;
+    lat.release = spec.releaseHold;
+    for (const item of lat.holes || [hole]) item.detoured = true;
+  }
+
+  if (lat.mode === "detour") {
+    const hole = holeById(sim, lat.holeId);
+    lat.gap = hole ? detourGap(sim, hole) : null;
+    lat.cruiseCap = spec.speed;
+    lat.blocked = detourBlocked(sim);
+    if (outOfIt(sim)) {
+      leaveDetour(lat, false);
+      return;
+    }
+    if (held) {
+      lat.holdX = sim.x;
+      lat.wantV = 0;
+      lat.ramp = 0;
+      lat.release = 0;
+      return;
+    }
+    lat.holdX = null;
+    lat.release += dt;
+    if (lat.release < spec.releaseHold || lat.blocked) {
+      lat.wantV = 0;
+      return;
+    }
+    lat.ramp += dt;
+    lat.wantV = crawlSpeed(lat);
+    if (sim.s >= (lat.sExit ?? sim.s) && Math.abs(sim.x - CFG.defaultX) < 0.1) {
+      leaveDetour(lat, true);
+    }
+  }
+}
+
 export function stepSim(sim, dt, input = {}) {
   if (sim.done) return sim;
   snapshotPose(sim);
@@ -1064,9 +1337,14 @@ export function stepSim(sim, dt, input = {}) {
   const slip = sim.inSlip ? CFG.slipMul : 1;
 
   commitHazards(sim, held);
+  advanceDetour(sim, dt, held, !!input.lockSpeed);
 
   const nearest = nextHazard(sim);
-  if (nearest && nearest.committed === "lunge") sim.intent = "lunge";
+  const holeHold = held && sim.lat?.stopped && (sim.lat.mode === "lane" || sim.lat.mode === "approach") && upcomingHole(sim);
+  if (sim.lat?.mode === "aim") sim.intent = "aim";
+  else if (sim.lat?.mode === "detour") sim.intent = "detour";
+  else if (holeHold) sim.intent = "hold";
+  else if (nearest && nearest.committed === "lunge") sim.intent = "lunge";
   else if (nearest && nearest.committed === "avoid" && nearest.dist < 50) sim.intent = "avoid";
   else if (nearest && !nearest.trust && nearest.dist < 34) sim.intent = "yield";
   else if (sim.outburstT > 0) sim.intent = "lunge";
@@ -1079,6 +1357,13 @@ export function stepSim(sim, dt, input = {}) {
   else if (sim.patience >= 40 && !held && sim.surgeT <= 0) {
     const burst = Math.sin(sim.t * 4.2 + (sim.seed % 7)) > 0.55;
     if (burst) cruise += 4.5;
+  }
+  if (sim.lat?.cruiseCap !== null && sim.lat?.cruiseCap !== undefined) cruise = Math.min(cruise, sim.lat.cruiseCap);
+  if (sim.lat?.resumeLeft > 0) {
+    const u = clamp(1 - sim.lat.resumeLeft / CFG.detour.resumeCruise, 0, 1);
+    const gentle = CFG.detour.speed + (cruiseBase - CFG.detour.speed) * u;
+    cruise = Math.min(cruise, gentle);
+    sim.lat.resumeLeft = Math.max(0, sim.lat.resumeLeft - dt);
   }
   // Catch-up gas only while the instructor is off the pedal. A held brake
   // must be able to beat Anton's throttle or every press feels the same.
@@ -1103,6 +1388,7 @@ export function stepSim(sim, dt, input = {}) {
     const cap = sim.infinite ? CFG.infiniteSpeedCap : CFG.storySpeedCap;
     const accel = netAccel(sim.v, throttle, physBrake * (sim.brakeMul || 1), CFG.drag, slip);
     sim.v = clamp(sim.v + accel * dt, 0, cap);
+    if (sim.lat?.wantV !== null && sim.lat?.wantV !== undefined) sim.v = sim.lat.wantV;
   }
   sim.stats.minV = Math.min(sim.stats.minV, sim.v);
   sim.stats.maxV = Math.max(sim.stats.maxV, sim.v);
@@ -1111,6 +1397,7 @@ export function stepSim(sim, dt, input = {}) {
   const steerH = nextHazard(sim);
   const params = steerParams(sim.patience, sim.outburstT > 0);
   let rate = params.rate;
+  if (sim.lat && sim.lat.mode !== "lane") rate = Math.max(rate, 8);
   if (
     steerH &&
     steerH.committed === "avoid" &&

@@ -585,7 +585,18 @@ test("real pedal carries the cake past distinct hazards", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+function holeBrake(state) {
+  const mode = state.lat?.mode;
+  if (mode === "approach" || mode === "aim" || mode === "detour") return false;
+  if (state.attention === "phone" || state.attention === "asleep") return false;
+  const hazard = state.hazard;
+  if (!hazard || hazard.type !== "pothole") return false;
+  if (hazard.dist > 32 || hazard.dist < 0.5) return false;
+  return state.v > 0.3;
+}
+
 function cakeBrake(state) {
+  if (holeBrake(state)) return true;
   const hazard = state.hazard;
   if (!hazard || hazard.trust) return false;
   if (hazard.dist > 50 || hazard.dist < -1) return false;
@@ -599,6 +610,7 @@ function cakeBrake(state) {
 }
 
 function lessonBrake(state) {
+  if (holeBrake(state)) return true;
   const hazard = state.hazard;
   if (!hazard || hazard.trust) return false;
   if (hazard.dist > 52 || hazard.dist < -1) return false;
@@ -2229,7 +2241,8 @@ test("e2e 6x: scripted careful lesson finishes and a panic cake trip fails", asy
   await page.waitForFunction(() => window.__anton.getState().phase === "result", null, { timeout: 45000 });
   const lost = await page.evaluate(() => window.__anton.getState());
   expect(lost.success).toBe(false);
-  expect(lost.fail).toBe("cargo");
+  // Panic never stops for the hole, so the following pedestrian ends the body.
+  expect(lost.fail).toBe("body");
   const failActions = await page.evaluate(() => ({
     labels: window.__anton.labels().map((item) => item.text),
     spots: window.__anton.hotspots().map((item) => item.id),
@@ -2578,4 +2591,44 @@ test("reduced motion does not shake the world during impact", async ({ page }) =
   await page.waitForTimeout(33);
   const second = await row();
   expect(second).toBe(first);
+});
+
+test("a full stop detours a pothole, and sleeping through it is a hit", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.debugArmDetour);
+  await page.evaluate(() => {
+    window.__anton.debugStart("lesson3");
+    window.__anton.setTimeScale(1);
+    window.__anton.debugArmDetour();
+  });
+  await page.waitForFunction(() => {
+    const state = window.__anton.getState();
+    return state.lat?.mode === "aim" && state.bubble === "ОБЪЕДУ";
+  });
+  await page.evaluate(() => window.__anton.setTimeScale(4));
+  await page.waitForFunction(() => {
+    const state = window.__anton.getState();
+    return state.lat?.mode === "detour" && state.x < 0;
+  });
+  await page.waitForFunction(() => {
+    const state = window.__anton.getState();
+    return state.lat?.mode === "lane" && Math.abs(state.x - 1.8) < 0.15 && state.collisions === 0;
+  });
+
+  await page.evaluate(() => {
+    window.__anton.debugStart("gennady-sleep");
+    window.__anton.debugSeek(250);
+    window.__anton.debugAttention("asleep");
+    window.__anton.debugSpeed(8);
+    window.__anton.setTimeScale(6);
+  });
+  await page.waitForFunction(() => {
+    const state = window.__anton.getState();
+    return state.collisions >= 1 && state.body < 100 && state.phase === "drive";
+  });
+  const asleep = await page.evaluate(() => window.__anton.getState());
+  expect(asleep.attention).toBe("asleep");
+  expect(asleep.lat?.mode === "detour").toBe(false);
 });
