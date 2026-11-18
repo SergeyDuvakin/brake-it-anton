@@ -745,5 +745,43 @@
  },
  "removed": {
   "mood_tile": "MOOD_TILE (1076,500,72,64) is not drawn in the pixel style (Sergey, 17.11)."
+ },
+
+ "taps": {
+  "asleep_tilt_l": { "file": "cabin/poses/asleep-tilt-l.png" },
+  "asleep_tilt_r": { "file": "cabin/poses/asleep-tilt-r.png" },
+  "drop_0": { "file": "cabin/poses/drop-0.png" },
+  "drop_1": { "file": "cabin/poses/drop-1.png" },
+  "drowsy": { "file": "cabin/poses/drowsy.png" },
+  "flinch_l": { "file": "cabin/poses/flinch-l.png" },
+  "flinch_r": { "file": "cabin/poses/flinch-r.png" },
+  "grope_0": { "file": "cabin/poses/grope-0.png" },
+  "grope_1": { "file": "cabin/poses/grope-1.png" },
+  "grope_2": { "file": "cabin/poses/grope-2.png" },
+  "shchas_0": { "file": "cabin/poses/shchas-0.png" },
+  "shchas_1": { "file": "cabin/poses/shchas-1.png" },
+  "sorry_0": { "file": "cabin/poses/sorry-0.png" },
+  "sorry_1": { "file": "cabin/poses/sorry-1.png" },
+  "stir": { "file": "cabin/poses/stir.png" },
+  "surface_empty": { "file": "cabin/poses/surface-empty.png" },
+  "surface": { "file": "cabin/poses/surface.png" },
+  "yawn_0": { "file": "cabin/poses/yawn-0.png" },
+  "yawn_1": { "file": "cabin/poses/yawn-1.png" },
+  "yaw_l": { "file": "car/learner-yaw-l.png" },
+  "yaw_r": { "file": "car/learner-yaw-r.png" },
+  "dog_run_l0": { "file": "world/sprites/dog-run-left-0.png" },
+  "dog_run_l1": { "file": "world/sprites/dog-run-left-1.png" },
+  "dog_run_r0": { "file": "world/sprites/dog-run-right-0.png" },
+  "dog_run_r1": { "file": "world/sprites/dog-run-right-1.png" },
+  "fence": { "file": "world/sprites/fence.png" },
+  "lamp": { "file": "world/sprites/lamp.png" },
+  "dog_run_l0_sh": { "file": "world/shadows/dog-run-left-0.png" },
+  "dog_run_l1_sh": { "file": "world/shadows/dog-run-left-1.png" },
+  "dog_run_r0_sh": { "file": "world/shadows/dog-run-right-0.png" },
+  "dog_run_r1_sh": { "file": "world/shadows/dog-run-right-1.png" },
+  "fence_sh": { "file": "world/shadows/fence.png" },
+  "lamp_sh": { "file": "world/shadows/lamp.png" },
+  "beep": { "file": "fx/beep.png" },
+  "honk_arcs": { "file": "fx/honk-arcs.png" }
  }
 }

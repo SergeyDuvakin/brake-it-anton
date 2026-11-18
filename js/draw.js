@@ -376,13 +376,9 @@ function drawPlay(ctx, state, sink) {
     if (!holdChrome) sink.spots.push({ id: "pause", x: 920, y: 40, w: 96, h: 88 });
   } else if (showHud) chrome = drawDriveChrome(ctx, state, sink, brake);
   if (driving) {
-    spots.push({
-      id: "anton",
-      x: DRIVER_PLATE.x + 48,
-      y: DRIVER_PLATE.y + 70,
-      w: DRIVER_PLATE.w - 96,
-      h: 360,
-    });
+    spots.push({ id: "anton", x: 1150, y: 150, w: 336, h: 272 });
+    spots.push({ id: "wheel", x: 1186, y: 426, w: 264, h: 104 });
+    if (sim.attention === "phone") spots.push({ id: "phone", x: 1330, y: 170, w: 160, h: 180 });
     spots.push(pedalHitBox());
   }
   if (session.phase === "countdown") {
@@ -402,7 +398,7 @@ function drawPlay(ctx, state, sink) {
     ctx.fill();
     ink(ctx, 4);
     ctx.stroke();
-    paintCenter(ctx, sim.attention === "phone" ? "Ткни в Антона" : "Разбуди — ткни в Антона", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
+    paintCenter(ctx, sim.attention === "phone" ? "Ткни или смахни телефон" : "Разбуди — ткни в Антона", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
   } else if (state.hint && driving) {
     roundRect(ctx, CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 12);
     ctx.fillStyle = P.YEL;

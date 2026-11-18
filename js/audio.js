@@ -199,6 +199,18 @@ export function createAudio() {
       tone(340, 0.12, "square", 0.04);
       tone(280, 0.16, "square", 0.03);
     },
+    bump() {
+      tone(90, 0.05, "triangle", 0.04);
+    },
+    poke() {
+      tone(180, 0.04, "square", 0.03);
+    },
+    squeal() {
+      tone(640, 0.08, "sawtooth", 0.03);
+    },
+    thud() {
+      tone(70, 0.09, "triangle", 0.05);
+    },
     near() {
       tone(720, 0.07, "square", 0.03);
       tone(540, 0.09, "triangle", 0.02);

@@ -25,6 +25,18 @@ export const CABIN_POSES = [
   "proud",
   "belted",
   "focused",
+  "asleep-tilt-l",
+  "asleep-tilt-r",
+  "stir",
+  "yawn",
+  "shchas",
+  "sorry",
+  "drop",
+  "grope",
+  "surface",
+  "surface-empty",
+  "flinch-l",
+  "flinch-r",
 ];
 
 const PAIRS = {

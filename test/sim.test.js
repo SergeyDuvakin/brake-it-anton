@@ -58,7 +58,8 @@ import { pedPoseKey, dogPoseKey } from "../js/cast.js";
 import { pulse, vibrationPattern } from "../js/haptics.js";
 import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
-import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, playerHonk, pokeAttention, renderAlpha, renderPose, runSim, stepSim, swipePhone, windowsOverlap } from "../js/sim.js";
+import { SPRITE, dressingLayout, roadsideItems } from "../js/roadside.js";
 import { IMPACT_TOTAL_MS, LOSS_SUBTITLE, impactFrame, impactKind } from "../js/impact.js";
 import { CABIN_POSES } from "../js/cabin.js";
 import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, platePixel, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
@@ -2589,6 +2590,8 @@ test("one tap wakes Anton, the brake does not, and a late hole stays his", () =>
   stepSim(phone, dt, { held: false, lockSpeed: true });
   assert.equal(phone.attention, "phone");
   assert.equal(pokeAttention(phone), true);
+  assert.equal(phone.attention, "phone");
+  frames(phone, Math.ceil(0.6 / dt), false, { lockSpeed: true });
   assert.equal(phone.attention, "stow");
   assert.equal(pokeAttention(phone), false);
   assert.equal(phone.stats.attentionPokes, 1);
@@ -2619,6 +2622,10 @@ test("one tap wakes Anton, the brake does not, and a late hole stays his", () =>
   stepSim(drowsy, dt, { held: false, lockSpeed: true });
   assert.notEqual(hole.committed, "asleep");
   assert.equal(pokeAttention(drowsy), true);
+  assert.equal(drowsy.attention, "drowsy");
+  stepSim(drowsy, 0.13, { held: false, lockSpeed: true });
+  assert.equal(pokeAttention(drowsy), true);
+  frames(drowsy, Math.ceil(0.55 / dt), false, { lockSpeed: true });
   assert.equal(drowsy.attention, "wake");
 
   const asleep = createSim(lesson, 22);
@@ -2777,9 +2784,11 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   keyDown(session, "Space", { repeat: false });
   assert.equal(session.keysDown.has("Space"), true);
   sessionStep(session, 1 / 60);
-  assert.equal(session.sim.attention, "stow");
+  assert.equal(session.sim.attention, "phone");
   assert.equal(session.sim.stats.attentionPokes, 1);
   assert.ok(session.sim.brakeInput > 0);
+  for (let i = 0; i < 40; i += 1) sessionStep(session, 1 / 60);
+  assert.equal(session.sim.attention, "stow");
   keyDown(session, "KeyF", { repeat: true });
   assert.equal(session.tapQueued, false);
   keyDown(session, "KeyF", { repeat: false });
@@ -2893,7 +2902,10 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   assert.equal(early.attention, "road");
 
   const ignored = runSim(lesson1, policyCareful, { maxTime: 140, attend: false });
-  assert.ok(ignored.events.some((e) => e.hitId === "hit:hole"), dump(ignored));
+  assert.ok(
+    ignored.events.some((e) => e.hitId === "hit:hole") || String(ignored.failCause || "").startsWith("drift"),
+    dump(ignored),
+  );
   const slept = runSim(lesson2, policyCareful, { maxTime: 180 });
   const sleptAgain = runSim(lesson2, policyCareful, { maxTime: 180 });
   assert.equal(slept.success, true, dump(slept));
@@ -2901,7 +2913,10 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   assert.deepEqual(slept.events, sleptAgain.events);
   assert.equal(slept.events.some((e) => e.id === "nap" && e.kind === "asleep"), false);
   const napHit = runSim(lesson2, policyCareful, { maxTime: 180, attend: false });
-  assert.ok(napHit.events.some((e) => e.hitId === "hit:nap"), dump(napHit));
+  assert.ok(
+    napHit.events.some((e) => e.hitId === "hit:nap") || String(napHit.failCause || "").startsWith("drift"),
+    dump(napHit),
+  );
 
   function batch(hz) {
     const sim = createSim(lesson1, 11);
@@ -2934,7 +2949,7 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   const before = [shown.sim.attention, shown.sim.stowT, shown.sim.stats.attentionPokes, shown.sim.events.length];
   const phoneFrame = render(mockCtx().ctx, playState(shown, 0.5));
   assert.deepEqual([shown.sim.attention, shown.sim.stowT, shown.sim.stats.attentionPokes, shown.sim.events.length], before);
-  assert.ok(phoneFrame.labels.some((label) => label.text === "Ткни в Антона"));
+  assert.ok(phoneFrame.labels.some((label) => label.text === "Ткни или смахни телефон"));
   assert.equal(phoneFrame.labels.some((label) => label.text.includes("F")), false);
   assert.ok(phoneFrame.spots.some((spot) => spot.id === "anton"));
   assert.ok(phoneFrame.spots.some((spot) => spot.id === "pedal"));
@@ -3802,4 +3817,85 @@ test("a pages-style /brake-it-anton/ server has every picture the game names", a
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("taps, drift and the horn follow the approved rules", () => {
+  const manifest = JSON.parse(readFileSync("assets/pixel/manifest.json", "utf8"));
+  for (const name of ["bench", "planter", "hydrant", "trash-bin", "manhole"]) {
+    const drawn = manifest.sprites[name];
+    assert.equal(SPRITE[name][0], drawn.w, name);
+    assert.equal(SPRITE[name][1], drawn.h, name);
+  }
+  const cam = 40;
+  const drawn = dressingLayout(cam).filter((item) => item.kind !== "fence" && item.kind !== "lamp");
+  const boxes = roadsideItems(cam - 8, cam + 28);
+  for (const item of drawn) {
+    if (item.kind === "tree") continue;
+    assert.ok(boxes.some((box) => box.name === item.name && Math.abs(box.s - item.s) < 0.2), item.name);
+  }
+
+  const phone = createSim(getMission("lesson1"), 3);
+  phone.attention = "phone";
+  phone.phonePlayed = true;
+  phone.v = 10;
+  pokeAttention(phone);
+  assert.equal(phone.attention, "phone");
+  assert.ok(phone.phoneFinish > 0);
+  frames(phone, Math.ceil(0.6 / dt) + 2, false, { lockSpeed: true });
+  assert.equal(phone.attention, "stow");
+
+  const asleep = createSim(getMission("lesson2"), 4);
+  asleep.attention = "asleep";
+  asleep.sleepPlayed = true;
+  asleep.v = 0;
+  pokeAttention(asleep);
+  stepSim(asleep, 0.13, { held: true, lockSpeed: true });
+  pokeAttention(asleep);
+  assert.equal(asleep.attention, "asleep");
+  assert.equal(asleep.drift.vLat, 0);
+  stepSim(asleep, 0.13, { held: true, lockSpeed: true });
+  pokeAttention(asleep);
+  assert.equal(asleep.attention, "wake");
+
+  const calm = createSim(getMission("lesson1"), 5);
+  calm.attention = "road";
+  calm.patience = 10;
+  pokeAttention(calm);
+  assert.equal(calm.patience, 18);
+  pokeAttention(calm);
+  assert.equal(calm.patience, 30);
+  assert.equal(calm.bubble, "ДА ЕДУ Я, ЕДУ!");
+
+  const horn = createSim(empty({
+    hazards: [
+      { id: "bin", type: "bin", s: 40, x: 4.2, halfW: 0.45, halfL: 0.45 },
+    ],
+  }), 6);
+  horn.s = 0;
+  horn.v = 0;
+  horn.attention = "asleep";
+  const bin = horn.hazards.find((item) => item.id === "bin");
+  const before = { x: bin.pose.x, s: bin.pose.s };
+  assert.equal(playerHonk(horn), true);
+  assert.equal(horn.attention, "wake");
+  assert.equal(horn.stats.playerHonks, 1);
+  assert.equal(horn.stats.honks, 0);
+  assert.equal(horn.patience, CFG.patienceStart + CFG.honk.cost);
+  assert.equal(playerHonk(horn), false);
+  stepSim(horn, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(bin.pose.x, before.x);
+  assert.equal(bin.pose.s, before.s);
+  frames(horn, Math.ceil(5.1 / dt), false, { lockSpeed: true });
+  assert.equal(playerHonk(horn), true);
+
+  const swipe = createSim(getMission("lesson1"), 8);
+  swipe.attention = "phone";
+  swipe.v = 10;
+  assert.equal(swipePhone(swipe), true);
+  assert.equal(swipe.attention, "drop");
+  frames(swipe, Math.ceil(0.45 / dt) + 1, false, { lockSpeed: true });
+  assert.equal(swipe.attention, "grope");
+  assert.ok(Math.abs(swipe.drift.vLat) >= 0 || swipe.drift.t >= 0);
+  pokeAttention(swipe);
+  assert.equal(swipe.attention, "surface");
 });

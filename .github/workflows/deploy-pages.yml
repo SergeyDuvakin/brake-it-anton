@@ -68,6 +68,8 @@ jobs:
           cp js/route.js .pages-dist/js/route.js
           cp js/session.js .pages-dist/js/session.js
           cp js/sim.js .pages-dist/js/sim.js
+          cp js/distract.js .pages-dist/js/distract.js
+          cp js/roadside.js .pages-dist/js/roadside.js
           cp js/storage.js .pages-dist/js/storage.js
           cp js/ui.js .pages-dist/js/ui.js
           cp js/viewport.js .pages-dist/js/viewport.js

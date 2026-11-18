@@ -11,6 +11,7 @@ import { patienceNeedleDegrees, pedalHingeDegrees } from "./ui.js";
 import { driveHitDecor, impactFrame, LOSS_SUBTITLE } from "./impact.js";
 import { hazardWorldX, isSolidHazard, pedColor, renderPose } from "./sim.js";
 import { notePixelSmoothing, pixelImage, usePixel } from "./pixel-assets.js";
+import { dressingLayout } from "./roadside.js";
 
 export const PIXEL_SCALE = 4;
 export const WORLD_W = 250;
@@ -33,8 +34,20 @@ export const PIXEL_POSE = {
   belted: "oy",
   phone: "phone",
   stow: "phone",
-  drowsy: "asleep",
+  drowsy: "drowsy",
   asleep: "asleep",
+  "asleep-tilt-l": "asleep-tilt-l",
+  "asleep-tilt-r": "asleep-tilt-r",
+  stir: "stir",
+  yawn: "yawn-0",
+  shchas: "shchas-0",
+  sorry: "sorry-0",
+  drop: "drop-0",
+  grope: "grope-0",
+  surface: "surface",
+  "surface-empty": "surface-empty",
+  "flinch-l": "flinch-l",
+  "flinch-r": "flinch-r",
   wake: "oy",
   earnest: "yasam",
   preen: "yasam",
@@ -103,8 +116,6 @@ export function pedalDropPx(brake) {
   return steps * 4;
 }
 
-const BUILDINGS_LEFT = ["house-red-gable", "house-orange-gable", "block-teal-tall", "shop-grey", "house-orange-tan"];
-const BUILDINGS_RIGHT = ["house-red-gable", "block-brown-brick", "shop-teal", "house-orange-tan", "block-teal-tall"];
 const SIDEWALK = ["bench", "trash-bin", "hydrant", "planter", "manhole"];
 
 let worldCanvas = null;
@@ -118,12 +129,6 @@ function worldCtx() {
   worldCanvas.width = WORLD_W;
   worldCanvas.height = WORLD_H;
   return worldCanvas.getContext("2d");
-}
-
-function hash(n) {
-  let x = Math.imul(n | 0, 0x9e3779b1);
-  x ^= x >>> 16;
-  return x >>> 0;
 }
 
 function spriteOf(name) {
@@ -151,6 +156,12 @@ function spriteOf(name) {
     "ped-blue-right-1": [10, 16, 4, 14],
     "dog-left": [14, 9, 6, 7],
     "dog-right": [14, 9, 6, 7],
+    "dog-run-left-0": [14, 9, 6, 7],
+    "dog-run-left-1": [14, 9, 6, 7],
+    "dog-run-right-0": [14, 9, 6, 7],
+    "dog-run-right-1": [14, 9, 6, 7],
+    fence: [8, 16, 0, 14],
+    lamp: [9, 29, 4, 26],
   }[name];
   if (!spec) return null;
   return {
@@ -225,24 +236,21 @@ export function sidewalkDressing() {
 
 function dressing(cam) {
   const items = [];
-  const first = Math.floor((cam - 8) / 32);
-  const last = Math.floor((cam + 28) / 32);
-  for (let block = first; block <= last; block += 1) {
-    const h = hash(block + 17);
-    const s = block * 32 + 10;
-    const leftName = BUILDINGS_LEFT[h % BUILDINGS_LEFT.length];
-    const left = spriteOf(leftName);
-    if (left) items.push({ spec: left, s, xPx: 94 - (left.w - left.ax), yOff: 0 });
-    const rightName = BUILDINGS_RIGHT[(h >>> 3) % BUILDINGS_RIGHT.length];
-    const right = spriteOf(rightName);
-    if (right && right.w <= 57) items.push({ spec: right, s: s + 6, xPx: 193 + right.ax });
-    const tree = spriteOf("tree");
-    const side = (h >>> 8) & 1;
-    items.push({ spec: tree, s: s + 18, xPx: side ? 30 : 220 });
-    const prop = spriteOf(SIDEWALK[(h >>> 12) % SIDEWALK.length]);
-    const walk = (h >>> 16) & 1;
-    const placed = dressProp(prop, !walk);
-    items.push({ spec: placed.spec, s: s + 4, xPx: placed.xPx });
+  for (const row of dressingLayout(cam)) {
+    if (row.kind === "fence") {
+      const spec = spriteOf("fence");
+      if (!spec) continue;
+      const xPx = row.side === "right" ? 193 : 88;
+      for (let i = -3; i <= 3; i += 1) {
+        if (i === 0 || i === 1) continue;
+        items.push({ spec, s: row.s + i * 0.9, xPx, mirror: row.side === "right" });
+      }
+      continue;
+    }
+    const spec = spriteOf(row.name);
+    if (!spec) continue;
+    const drawn = row.kind === "prop" ? { ...spec, ax: row.ax } : spec;
+    items.push({ spec: drawn, s: row.s, xPx: row.xPx, mirror: !!row.mirror });
   }
   return items;
 }
@@ -257,6 +265,11 @@ function pedName(h, sim, reduced) {
 }
 
 function dogName(h) {
+  if (h.motion === "flee") {
+    const faceLeft = (h.x || 0) >= 0;
+    const frame = Math.floor((h.motionT || 0) / 0.08) % 2;
+    return faceLeft ? `dog-run-left-${frame}` : `dog-run-right-${frame}`;
+  }
   const faceLeft = (h.x || 0) >= 0;
   return faceLeft ? "dog-left" : "dog-right";
 }
@@ -265,6 +278,9 @@ function learnerFile(sim, state) {
   const failed = state.session?.phase === "result" && state.session?.result && state.session.result.success === false;
   const hazard = sim.crashT > 0.05 || damageStage(sim.body) >= 2 || failed;
   const braking = sim.brakeInput > 0.05;
+  if (!hazard && sim.drift?.active && Math.abs(sim.drift.vLat) > 0.02) {
+    return sim.drift.dir < 0 ? "car/learner-yaw-l.png" : "car/learner-yaw-r.png";
+  }
   if (!hazard) return braking ? "car/learner-brake.png" : "car/learner-normal.png";
   const reduced = !!state.save?.settings?.reducedMotion;
   const on = reduced || Math.floor((state.now || 0) / 250) % 2 === 0;
@@ -485,7 +501,20 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
     const spec = item.spec;
     const y = yNative(item.s, pose.s);
     noteBox(Math.round(item.xPx - spec.ax), Math.round(y - spec.ay), spec.w, spec.h);
-    queue.push({ y, draw: () => blitSprite(nctx, spec, item.xPx, y) });
+    queue.push({
+      y,
+      draw: () => {
+        if (!item.mirror) {
+          blitSprite(nctx, spec, item.xPx, y);
+          return;
+        }
+        nctx.save();
+        nctx.translate(Math.round(item.xPx), 0);
+        nctx.scale(-1, 1);
+        blitSprite(nctx, spec, 0, y);
+        nctx.restore();
+      },
+    });
   }
   for (const h of sim.hazards || []) {
     if (h.resolved && (h.pose?.s ?? h.s) - pose.s < -12) continue;
@@ -543,6 +572,13 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
       const file = scene?.carSprite || learnerFile(sim, state);
       const img = pixelImage(file);
       if (img) nctx.drawImage(img, carX - 13, carTop);
+      if (sim.honkFlashT > 0) {
+        const beep = pixelImage("fx/beep.png");
+        const arcs = pixelImage("fx/honk-arcs.png");
+        const frame = Math.floor((0.4 - sim.honkFlashT) / 0.066) % 2;
+        if (beep) nctx.drawImage(beep, frame * 48, 0, 48, 22, carX - 24, carTop - 24, 48, 22);
+        if (arcs) nctx.drawImage(arcs, frame * 12, 0, 12, 10, carX + 8, carTop + 6, 12, 10);
+      }
     },
   });
   queue.sort((a, b) => a.y - b.y);
@@ -791,7 +827,9 @@ export function drawPixelCabin(ctx, sim, state, cabinId, opts = {}) {
   const hint = callout && state.hint && phase === "drive";
   const needs = sim?.attention === "phone" || sim?.attention === "drowsy" || sim?.attention === "asleep";
   if (hint || (callout && phase === "drive" && needs)) {
-    const label = needs ? (sim.attention === "phone" ? "Ткни в Антона" : "Разбуди — ткни в Антона") : "Он газует. Ты жмёшь тормоз.";
+    const label = needs
+      ? (sim.attention === "phone" ? "Ткни или смахни телефон" : "Разбуди — ткни в Антона")
+      : "Он газует. Ты жмёшь тормоз.";
     const glyph = thresholdText(label, 2);
     ctx.fillStyle = "#FFF6E4";
     ctx.fillRect(1080, 576, 472, 48);
