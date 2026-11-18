@@ -1,0 +1,123 @@
+{
+ "pose_bams_0": {
+  "file": "cabin/poses/bams-0.png",
+  "size": [
+   125,
+   150
+  ]
+ },
+ "pose_bams_1": {
+  "file": "cabin/poses/bams-1.png",
+  "size": [
+   125,
+   150
+  ]
+ },
+ "learner_crash": {
+  "file": "car/learner-crash.png",
+  "size": [
+   26,
+   44
+  ]
+ },
+ "npc_white_crash": {
+  "file": "car/npc-white-up-crash.png",
+  "size": [
+   26,
+   44
+  ]
+ },
+ "npc_blue_crash": {
+  "file": "car/npc-blue-up-crash.png",
+  "size": [
+   26,
+   44
+  ]
+ },
+ "stars": {
+  "file": "fx/stars.png",
+  "frame": [
+   30,
+   14
+  ],
+  "frames": 3,
+  "layout": "horizontal strip, no gaps, frame i at x=i*w"
+ },
+ "steam": {
+  "file": "fx/steam.png",
+  "frame": [
+   14,
+   14
+  ],
+  "frames": 4,
+  "layout": "horizontal strip, no gaps, frame i at x=i*w"
+ },
+ "bams": {
+  "file": "fx/bams.png",
+  "frame": [
+   96,
+   46
+  ],
+  "frames": 2,
+  "layout": "horizontal strip, no gaps, frame i at x=i*w"
+ },
+ "opa": {
+  "file": "fx/opa.png",
+  "frame": [
+   64,
+   32
+  ],
+  "frames": 2,
+  "layout": "horizontal strip, no gaps, frame i at x=i*w"
+ },
+ "gav": {
+  "file": "fx/gav.png",
+  "frame": [
+   60,
+   30
+  ],
+  "frames": 2,
+  "layout": "horizontal strip, no gaps, frame i at x=i*w"
+ },
+ "anger": {
+  "file": "fx/anger.png",
+  "size": [
+   5,
+   5
+  ]
+ },
+ "alarm": {
+  "file": "fx/alarm.png",
+  "size": [
+   3,
+   7
+  ]
+ },
+ "ped_blue_react": {
+  "file": "world/sprites/ped-blue-react.png",
+  "frame": [
+   12,
+   20
+  ],
+  "frames": 5,
+  "layout": "horizontal strip, no gaps, frame i at x=i*w"
+ },
+ "ped_pink_react": {
+  "file": "world/sprites/ped-pink-react.png",
+  "frame": [
+   12,
+   20
+  ],
+  "frames": 5,
+  "layout": "horizontal strip, no gaps, frame i at x=i*w"
+ },
+ "dog_react": {
+  "file": "world/sprites/dog-react.png",
+  "frame": [
+   16,
+   12
+  ],
+  "frames": 3,
+  "layout": "horizontal strip, no gaps, frame i at x=i*w"
+ }
+}
