@@ -296,6 +296,18 @@ function ink(ctx, width = 6) {
   ctx.lineCap = "round";
 }
 
+const COUNTDOWN_DIGIT = { x: 640, y: 150, w: 120, h: 84 };
+/** «ПОЕХАЛИ!» advances 53 font px. Digit scale is 8, so the line is 424 px. */
+const COUNTDOWN_WORD_W = 440;
+
+/** Digits keep the small bubble. The word beat is wide enough to stay at that scale. */
+export function countdownBubble(label) {
+  if (String(label).length <= 1) return COUNTDOWN_DIGIT;
+  const w = COUNTDOWN_WORD_W;
+  const cx = COUNTDOWN_DIGIT.x + COUNTDOWN_DIGIT.w / 2;
+  return { x: cx - w / 2, y: COUNTDOWN_DIGIT.y, w, h: COUNTDOWN_DIGIT.h };
+}
+
 function roundRect(ctx, x, y, w, h, r) {
   const radius = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
@@ -411,15 +423,16 @@ function drawPlay(ctx, state, sink) {
     spots.push(pedalHitBox());
   }
   if (session.phase === "countdown") {
-    roundRect(ctx, 640, 150, 120, 84, 14);
+    const beat = session.countdown;
+    const label = typeof beat === "string" ? beat : String(beat || 1);
+    const bubble = countdownBubble(label);
+    roundRect(ctx, bubble.x, bubble.y, bubble.w, bubble.h, 14);
     ctx.fillStyle = P.PAPER;
     ctx.fill();
     ink(ctx, 6);
     ctx.stroke();
-    const beat = session.countdown;
-    const label = typeof beat === "string" ? beat : String(beat || 1);
-    if (pixel) drawAtlasCentered(ctx, label, 640, 150, 120, 84, 8);
-    else paintCenter(ctx, String(session.countdown || 1), 640, 150, 120, 84, 42, P.INK, true, false);
+    if (pixel) drawAtlasCentered(ctx, label, bubble.x, bubble.y, bubble.w, bubble.h, 8);
+    else paintCenter(ctx, label, bubble.x, bubble.y, bubble.w, bubble.h, 42, P.INK, true, false);
   }
   const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
   if (pixel) {

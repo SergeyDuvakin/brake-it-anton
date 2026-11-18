@@ -29,6 +29,7 @@ import {
   PLAN_ART,
   bumperFootGap,
   carDrawOrigin,
+  countdownBubble,
   pedestrianFootShift,
   planBlitBox,
   planMetresPerPixel,
@@ -4015,6 +4016,44 @@ test("fence posts sit on one 8 px grid and a scared dog uses the gate", () => {
   assert.equal(crossed, true);
   assert.equal(pup.motion, "off");
   assert.ok(Math.abs(pup.pose.x) > WALL_M);
+});
+
+test("the ПОЕХАЛИ bubble stays at digit scale, and the dog runs forward", () => {
+  const font = JSON.parse(readFileSync("assets/pixel/start/font9-ink.json", "utf8"));
+  const adv = [..."ПОЕХАЛИ!"].reduce((sum, ch) => sum + font.glyphs[ch].adv, 0);
+  const digit = countdownBubble(3);
+  const word = countdownBubble("ПОЕХАЛИ!");
+  assert.equal(digit.w, 120);
+  assert.ok(word.w >= adv * 8, `word bubble ${word.w} is narrower than ${adv * 8}`);
+  assert.equal(word.x + word.w / 2, digit.x + digit.w / 2);
+  assert.equal(word.h, digit.h);
+
+  const lesson = createSim(getMission("lesson2"), 22);
+  const pup = lesson.hazards.find((item) => item.type === "dog");
+  lesson.s = pup.s - 20;
+  lesson.v = 8;
+  pup.motion = "curb";
+  const behind = nearestGateS(pup.s, "right");
+  const gate = nearestGateS(pup.s, "right", Math.max(pup.s, lesson.s));
+  assert.ok(behind < pup.s, "the nearer gate is behind the lesson 2 dog");
+  assert.ok(gate >= pup.s);
+  assert.ok(gate > lesson.s);
+  stepSim(lesson, dt, { held: false, lockSpeed: true, honk: true });
+  assert.equal(pup.honkMode, "flee");
+  const dist = Math.abs(gate - pup.s);
+  const fleeT = Math.max(CFG.honk.dogFlee, dist / 10 + 0.27);
+  assert.ok(dist / (fleeT - 0.27) <= 10.01);
+  let minS = pup.pose.s;
+  let steps = 0;
+  while (pup.motion !== "off" && steps < 400) {
+    stepSim(lesson, 0.02, { held: false, lockSpeed: true });
+    minS = Math.min(minS, pup.pose.s);
+    steps += 1;
+  }
+  assert.equal(pup.motion, "off");
+  assert.ok(minS >= pup.s - 0.05, `dog ran back to ${minS}`);
+  const elapsed = steps * 0.02;
+  assert.ok(elapsed + dt >= fleeT - 0.03 && elapsed < fleeT + 0.08, `elapsed ${elapsed} flee ${fleeT}`);
 });
 
 test("the start screen picks the next unfinished lesson", () => {
