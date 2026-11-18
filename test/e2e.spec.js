@@ -128,9 +128,9 @@ test("ПОЕХАЛИ stays as tall as the countdown digits", async ({ page }) =>
   const ink = await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
     const ctx = canvas.getContext("2d");
-    const x = 480;
+    const x = 464;
     const y = 150;
-    const w = 440;
+    const w = 472;
     const h = 84;
     const data = ctx.getImageData(x, y, w, h).data;
     let top = h;

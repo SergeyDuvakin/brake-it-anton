@@ -283,7 +283,7 @@ function pedName(h, sim, reduced) {
 
 function dogName(h) {
   if (h.motion === "flee") {
-    const faceLeft = (h.x || 0) >= 0;
+    const faceLeft = (h.x || 0) < 0;
     const frame = Math.floor((h.motionT || 0) / 0.08) % 2;
     return faceLeft ? `dog-run-left-${frame}` : `dog-run-right-${frame}`;
   }

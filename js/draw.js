@@ -297,8 +297,8 @@ function ink(ctx, width = 6) {
 }
 
 const COUNTDOWN_DIGIT = { x: 640, y: 150, w: 120, h: 84 };
-/** «ПОЕХАЛИ!» advances 53 font px. Digit scale is 8, so the line is 424 px. */
-const COUNTDOWN_WORD_W = 440;
+/** «ПОЕХАЛИ!» advances 53 font px. Digit scale is 8, so the line is 424 px, plus padding. */
+const COUNTDOWN_WORD_W = 472;
 
 /** Digits keep the small bubble. The word beat is wide enough to stay at that scale. */
 export function countdownBubble(label) {

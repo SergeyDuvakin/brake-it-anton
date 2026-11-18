@@ -4025,8 +4025,10 @@ test("the ПОЕХАЛИ bubble stays at digit scale, and the dog runs forward",
   const word = countdownBubble("ПОЕХАЛИ!");
   assert.equal(digit.w, 120);
   assert.ok(word.w >= adv * 8, `word bubble ${word.w} is narrower than ${adv * 8}`);
+  assert.equal(word.w, 472);
   assert.equal(word.x + word.w / 2, digit.x + digit.w / 2);
   assert.equal(word.h, digit.h);
+  assert.ok(word.y >= 40 + 88, "the word bubble meets the pause button");
 
   const lesson = createSim(getMission("lesson2"), 22);
   const pup = lesson.hazards.find((item) => item.type === "dog");
@@ -4041,8 +4043,8 @@ test("the ПОЕХАЛИ bubble stays at digit scale, and the dog runs forward",
   stepSim(lesson, dt, { held: false, lockSpeed: true, honk: true });
   assert.equal(pup.honkMode, "flee");
   const dist = Math.abs(gate - pup.s);
-  const fleeT = Math.max(CFG.honk.dogFlee, dist / 10 + 0.27);
-  assert.ok(dist / (fleeT - 0.27) <= 10.01);
+  const fleeT = Math.max(CFG.honk.dogFlee, dist / 16 + 0.27);
+  assert.ok(dist / (fleeT - 0.27) <= 16.01);
   let minS = pup.pose.s;
   let steps = 0;
   while (pup.motion !== "off" && steps < 400) {
@@ -4054,6 +4056,33 @@ test("the ПОЕХАЛИ bubble stays at digit scale, and the dog runs forward",
   assert.ok(minS >= pup.s - 0.05, `dog ran back to ${minS}`);
   const elapsed = steps * 0.02;
   assert.ok(elapsed + dt >= fleeT - 0.03 && elapsed < fleeT + 0.08, `elapsed ${elapsed} flee ${fleeT}`);
+});
+
+test("a honked dog still leaves through the gate after the car has passed", () => {
+  for (const id of ["lesson2", "exam"]) {
+    const ride = createSim(getMission(id), 4);
+    const pup = ride.hazards.find((item) => item.type === "dog");
+    ride.s = pup.s - 14;
+    ride.v = 10;
+    pup.motion = "curb";
+    stepSim(ride, dt, { held: false, lockSpeed: true, honk: true });
+    assert.equal(pup.honkMode, "flee", id);
+    const gate = pup.fleeGate;
+    const saved = ride.s;
+    ride.s = pup.s + 1;
+    assert.notEqual(nextHazard(ride)?.id, pup.id, id);
+    ride.s = saved;
+    let acc = dt;
+    while (acc < 4) {
+      stepSim(ride, dt, { held: false, lockSpeed: true });
+      acc += dt;
+    }
+    assert.equal(pup.motion, "off", id);
+    assert.ok(Math.abs(pup.pose.x) > WALL_M, `${id} x=${pup.pose.x}`);
+    assert.ok(Math.abs(pup.pose.s - gate) <= 1.3, `${id} s=${pup.pose.s} gate=${gate}`);
+    const clear = ride.events.find((event) => event.kind === "clear" && event.id === pup.id);
+    assert.equal(clear?.how, "honk", id);
+  }
 });
 
 test("the start screen picks the next unfinished lesson", () => {

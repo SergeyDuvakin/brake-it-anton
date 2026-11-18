@@ -174,6 +174,8 @@ export function nextHazard(sim) {
   let best = null;
   for (const h of sim.hazards) {
     if (h.resolved) continue;
+    // A dog already running away, and behind the car, must not steer or brake.
+    if (h.type === "dog" && h.honkMode === "flee" && Math.min(h.s, h.pose?.s ?? h.s) <= sim.s) continue;
     const dist = h.s - sim.s;
     if (dist < -6) continue;
     if (!best || dist < best.dist) best = { ...h, dist };
@@ -393,7 +395,7 @@ function advanceAnimal(h, sim, dt, dist) {
       const side = h.x >= 0 ? "right" : "left";
       h.fleeGate = nearestGateS(h.s, side, Math.max(h.s, sim.s));
       const dist = Math.abs(h.fleeGate - h.s);
-      h.fleeT = Math.max(CFG.honk.dogFlee, dist / 10 + 0.27);
+      h.fleeT = Math.max(CFG.honk.dogFlee, dist / 16 + 0.27);
     }
     const gate = h.fleeGate;
     const fleeT = h.fleeT;
@@ -406,8 +408,6 @@ function advanceAnimal(h, sim, dt, dist) {
     if (h.motionT >= fleeT) {
       h.motion = "off";
       h.honkMode = null;
-      h.fleeGate = null;
-      h.fleeT = null;
       h.pose.x = away;
       h.pose.s = gate;
       markClear(sim, h, "honk");
@@ -998,6 +998,8 @@ function collide(sim, prevS) {
 
   for (const h of sim.hazards) {
     if (h.resolved) continue;
+    // Passing the dog's start must not freeze a run that has not reached the gate.
+    if (h.type === "dog" && h.honkMode === "flee") continue;
     const dur = h.crossDur || 0;
     const crossed = dur > 0 && h.crossT >= dur && !lateralOverlap(sim, h);
     if (crossed && sim.s + 12 > h.s) {
