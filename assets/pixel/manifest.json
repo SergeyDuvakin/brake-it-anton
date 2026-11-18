@@ -726,6 +726,23 @@
    "license": "fonts/OFL-LICENSE.txt"
   }
  },
+ "crash": {
+  "pose_bams_0": { "file": "cabin/poses/bams-0.png" },
+  "pose_bams_1": { "file": "cabin/poses/bams-1.png" },
+  "learner_crash": { "file": "car/learner-crash.png" },
+  "npc_white_crash": { "file": "car/npc-white-up-crash.png" },
+  "npc_blue_crash": { "file": "car/npc-blue-up-crash.png" },
+  "stars": { "file": "fx/stars.png" },
+  "steam": { "file": "fx/steam.png" },
+  "bams": { "file": "fx/bams.png" },
+  "opa": { "file": "fx/opa.png" },
+  "gav": { "file": "fx/gav.png" },
+  "anger": { "file": "fx/anger.png" },
+  "alarm": { "file": "fx/alarm.png" },
+  "ped_blue_react": { "file": "world/sprites/ped-blue-react.png" },
+  "ped_pink_react": { "file": "world/sprites/ped-pink-react.png" },
+  "dog_react": { "file": "world/sprites/dog-react.png" }
+ },
  "removed": {
   "mood_tile": "MOOD_TILE (1076,500,72,64) is not drawn in the pixel style (Sergey, 17.11)."
  }

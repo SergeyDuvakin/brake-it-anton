@@ -2431,3 +2431,151 @@ test("pixel world, cabin and pedal render, and blits stay unsmoothed", async ({ 
   expect(painted.pedal).toBeGreaterThan(30);
   await page.screenshot({ path: "/opt/cursor/artifacts/pixel-1600.png" });
 });
+
+test("a pedestrian crash plays impact, then ЕЩЁ РАЗ starts a clean ride", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await page.evaluate(() => window.__anton.setTimeScale(1));
+  await clickId(page, "start");
+  let sawDrive = false;
+  let sawImpact = false;
+  let impactStart = 0;
+  let resultAt = 0;
+  const started = Date.now();
+  while (Date.now() - started < 25000 && !resultAt) {
+    const state = await page.evaluate(() => window.__anton.getState());
+    if (state.phase === "drive") sawDrive = true;
+    if (state.phase === "impact") {
+      if (!sawImpact) impactStart = Date.now();
+      sawImpact = true;
+      expect(state.impact.kind).toBe("ped");
+    }
+    if (sawImpact && state.phase === "result") resultAt = Date.now();
+    await page.waitForTimeout(30);
+  }
+  expect(sawDrive).toBe(true);
+  expect(sawImpact).toBe(true);
+  expect(resultAt - impactStart).toBeGreaterThan(1100);
+  expect(resultAt - impactStart).toBeLessThan(1800);
+  const card = await page.evaluate(() => ({
+    labels: window.__anton.labels().map((item) => item.text),
+    spots: window.__anton.hotspots().map((item) => item.id),
+  }));
+  expect(card.labels).toContain("ЕЩЁ РАЗ");
+  expect(card.labels).toContain("В ГАРАЖ");
+  expect(card.labels.some((text) => text.includes("Пешеход цел"))).toBe(true);
+  expect(card.spots).toContain("retry");
+  expect(card.spots).toContain("to-garage");
+  expect(card.spots).not.toContain("pause");
+  expect(card.spots).not.toContain("pedal");
+  expect(card.spots).not.toContain("anton");
+  const moment = await page.evaluate(() => window.__anton.hotspots().find((item) => item.id === "moment"));
+  expect(moment).toBeTruthy();
+  const boxes = {
+    cabin: { x: 1056, y: 24, w: 520, h: 620 },
+    bubble: { x: 1096, y: 92, w: 480, h: 80 },
+    card: { x: 228, y: 204, w: 600, h: 448 },
+  };
+  const hits = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  expect(hits(moment, boxes.cabin)).toBe(false);
+  expect(hits(moment, boxes.bubble)).toBe(false);
+  expect(hits(moment, boxes.card)).toBe(false);
+  await page.screenshot({ path: shot("crash-card") });
+  await clickId(page, "retry");
+  const again = await page.evaluate(() => window.__anton.getState());
+  expect(again.phase).toBe("drive");
+  expect(again.s).toBeLessThan(5);
+  expect(again.collisions).toBe(0);
+  await page.waitForFunction(() => window.__anton.getState().phase === "impact", null, { timeout: 20000 });
+  expect((await page.evaluate(() => window.__anton.getState())).impact.kind).toBe("ped");
+});
+
+test("impact can be skipped after half a second, and R restarts the card", async ({ page }) => {
+  test.setTimeout(30000);
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.debugImpact);
+  await page.evaluate(() => {
+    window.__anton.debugStart("lesson1");
+    window.__anton.setTimeScale(1);
+  });
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.evaluate(() => window.__anton.debugImpact("ped"));
+  await page.waitForFunction(() => window.__anton.getState().phase === "impact");
+  const during = await page.evaluate(() => window.__anton.hotspots().map((item) => item.id));
+  expect(during).not.toContain("pause");
+  expect(during).not.toContain("pedal");
+  expect(during).not.toContain("anton");
+  await page.mouse.click(400, 300);
+  expect((await page.evaluate(() => window.__anton.getState())).phase).toBe("impact");
+  await page.waitForFunction(() => window.__anton.getState().impact.ms >= 500);
+  await page.keyboard.press("Space");
+  await page.waitForFunction(() => window.__anton.getState().phase === "result");
+  await page.keyboard.press("KeyR");
+  const restarted = await page.evaluate(() => window.__anton.getState());
+  expect(restarted.phase).toBe("drive");
+  expect(restarted.collisions).toBe(0);
+  expect(restarted.brake).toBe(0);
+});
+
+test("debug crashes reach the matching loss subtitles", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.debugImpact);
+  await page.evaluate(() => window.__anton.debugStart("lesson1"));
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.evaluate(() => {
+    window.__anton.setTimeScale(1);
+    window.__anton.debugImpact("car");
+  });
+  await page.waitForFunction(() => window.__anton.getState().phase === "impact");
+  await page.waitForFunction(() => (window.__anton.getState().impact?.ms || 0) >= 80);
+  await page.screenshot({ path: shot("crash-car") });
+  await page.evaluate(() => window.__anton.setTimeScale(8));
+  await page.waitForFunction(() => window.__anton.getState().phase === "result");
+  expect((await page.evaluate(() => window.__anton.labels().map((item) => item.text))).some((text) => text.includes("Поцеловали"))).toBe(true);
+
+  await page.evaluate(() => {
+    window.__anton.debugStart("lesson1");
+    window.__anton.setTimeScale(8);
+    window.__anton.debugImpact("dog");
+  });
+  await page.waitForFunction(() => window.__anton.getState().phase === "result", null, { timeout: 20000 });
+  expect((await page.evaluate(() => window.__anton.labels().map((item) => item.text))).some((text) => text.includes("Пёс цел"))).toBe(true);
+  await page.screenshot({ path: shot("crash-dog-card") });
+});
+
+test("reduced motion does not shake the world during impact", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("brake-it-anton-save-v1", JSON.stringify({
+      v: 1,
+      unlocked: 1,
+      infinite: false,
+      best: {},
+      bestMeters: {},
+      settings: {
+        sound: false, music: false, voice: false, vibration: false, shake: false, reducedMotion: true, largeUi: false,
+      },
+      notice: null,
+    }));
+  });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.debugImpact);
+  await page.evaluate(() => {
+    window.__anton.debugStart("lesson1");
+    window.__anton.setTimeScale(1);
+  });
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.evaluate(() => window.__anton.debugImpact("car"));
+  await page.waitForFunction(() => window.__anton.getState().phase === "impact");
+  const row = () => page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    const data = canvas.getContext("2d").getImageData(80, 420, 240, 1).data;
+    return Array.from(data).join(",");
+  });
+  const first = await row();
+  await page.waitForTimeout(33);
+  const second = await row();
+  expect(second).toBe(first);
+});

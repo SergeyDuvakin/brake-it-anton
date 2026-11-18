@@ -395,6 +395,10 @@ function finishPress(event, fire) {
   releasePointer(session, event.pointerId);
   const pressed = uiPointer.pressed;
   uiPointer.pressed = null;
+  if (pressed === "skip-impact") {
+    if (fire) skipImpact();
+    return;
+  }
   if (!fire || !pressed) return;
   if (hit(eventPoint(event)) === pressed) activate(pressed);
 }
@@ -404,8 +408,19 @@ canvas.addEventListener("pointermove", (event) => {
   trackPointer(event);
 });
 
+function skipImpact() {
+  if (session?.phase !== "impact") return false;
+  if ((session.impact?.ms || 0) < 500) return false;
+  session.phase = "result";
+  return true;
+}
+
 canvas.addEventListener("pointerdown", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
+  if (session?.phase === "impact") {
+    uiPointer.pressed = "skip-impact";
+    return;
+  }
   if (session?.phase === "replay") {
     finishReplay();
     return;
@@ -441,6 +456,14 @@ window.addEventListener("keydown", (event) => {
   if (session?.phase === "replay" && (event.code === "Escape" || event.code === "Space" || event.code === "Enter")) {
     event.preventDefault();
     finishReplay();
+    return;
+  }
+  if (session?.phase === "impact") {
+    if (event.code === "Escape") return;
+    if ((event.code === "Enter" || event.code === "Space") && !event.repeat) {
+      event.preventDefault();
+      skipImpact();
+    }
     return;
   }
   audio.unlock();
@@ -709,6 +732,8 @@ window.__anton = {
       infinite: save.infinite,
       pauseReason: session?.pauseReason ?? null,
       collisions: session?.sim.stats.collisions ?? 0,
+      missionId: session?.mission?.id ?? null,
+      impact: session?.impact ? { kind: session.impact.kind, cause: session.impact.cause, ms: session.impact.ms } : null,
       cargoType: session?.sim.cargoType ?? null,
       hazard: hazardState(),
       stopGap: gapState(),
@@ -798,6 +823,52 @@ window.__anton = {
     const s = Math.max(0, Number(metres) || 0);
     session.sim.s = s;
     session.sim.prevS = s;
+  },
+  debugPothole() {
+    if (!debug || !session) return;
+    const sim = session.sim;
+    session.phase = "drive";
+    session.impact = null;
+    sim.done = false;
+    sim.attention = "road";
+    sim.lastHit = { id: "hole", type: "pothole", t: sim.t, x: sim.x, color: null };
+    sim.crashT = 0.22;
+    sim.bubble = "ОЙ!";
+    sim.bubbleT = 1;
+  },
+  debugImpact(kind) {
+    if (!debug || !session) return;
+    const cause = kind === "ped" ? "pedestrian" : kind === "dog" ? "dog" : kind === "drift-phone" ? "drift-phone" : "stopped";
+    const sim = session.sim;
+    sim.lastHit = {
+      id: "debug",
+      type: cause,
+      t: sim.t,
+      x: sim.x,
+      color: cause === "pedestrian" ? "pink" : null,
+    };
+    if (cause === "stopped" || cause === "cutin") {
+      const s = sim.s + 4.2;
+      sim.hazards.push({
+        id: "debug",
+        type: cause,
+        s,
+        x: sim.x,
+        halfW: 0.95,
+        halfL: 2.1,
+        pose: { s, x: sim.x },
+        prevPose: { s, x: sim.x },
+        motion: "rest",
+        family: "car",
+        resolved: "hit",
+      });
+    }
+    sim.done = true;
+    sim.success = false;
+    sim.failReason = "body";
+    sim.failCause = cause;
+    sim.body = 0;
+    session.phase = "drive";
   },
   debugStart(id) {
     if (!debug) return;

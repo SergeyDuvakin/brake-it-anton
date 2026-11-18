@@ -1,3 +1,4 @@
+import { IMPACT_CAUSES, IMPACT_TOTAL_MS, impactKind } from "./impact.js";
 import { grade } from "./physics.js";
 import { createSim, snapRenderPose, stepSim } from "./sim.js";
 
@@ -72,6 +73,7 @@ export function restartSession(session) {
   session.pauseReason = null;
   session.result = null;
   session.recorded = false;
+  session.impact = null;
   session.armBrake = true;
   clearControls(session);
   if (session.sim.v < 1) session.sim.v = session.mission.roll ?? 10;
@@ -143,8 +145,28 @@ export function keyUp(session, code) {
   session.keysDown.delete(code);
 }
 
+function beginImpact(session) {
+  const cause = session.sim.failCause;
+  session.phase = "impact";
+  session.impact = {
+    kind: impactKind(cause),
+    cause,
+    ms: 0,
+    hitX: session.sim.lastHit?.x ?? session.sim.x,
+    hitColor: session.sim.lastHit?.color ?? null,
+  };
+  session.result = grade(session.sim);
+  clearControls(session);
+  snapRenderPose(session.sim);
+}
+
 export function sessionStep(session, dt) {
   if (!session || session.phase === "pause" || session.phase === "result") return;
+  if (session.phase === "impact") {
+    session.impact.ms += dt * 1000;
+    if (session.impact.ms >= IMPACT_TOTAL_MS) session.phase = "result";
+    return;
+  }
   if (session.phase === "countdown") {
     session.countdownAcc += dt;
     if (session.countdownAcc >= 3) {
@@ -162,9 +184,13 @@ export function sessionStep(session, dt) {
   session.tapQueued = false;
   stepSim(session.sim, dt, { held, tap });
   if (session.sim.done) {
-    session.phase = "result";
-    session.result = grade(session.sim);
-    clearControls(session);
-    snapRenderPose(session.sim);
+    const cause = session.sim.failCause;
+    if (!session.sim.success && IMPACT_CAUSES.includes(cause)) beginImpact(session);
+    else {
+      session.phase = "result";
+      session.result = grade(session.sim);
+      clearControls(session);
+      snapRenderPose(session.sim);
+    }
   }
 }
