@@ -1,0 +1,255 @@
+{
+ "cabin/asleep-tilt-l.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/asleep-tilt-l.png"
+ },
+ "cabin/asleep-tilt-r.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/asleep-tilt-r.png"
+ },
+ "cabin/drop-0.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/drop-0.png"
+ },
+ "cabin/drop-1.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/drop-1.png"
+ },
+ "cabin/drowsy.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/drowsy.png"
+ },
+ "cabin/flinch-l.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/flinch-l.png"
+ },
+ "cabin/flinch-r.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/flinch-r.png"
+ },
+ "cabin/grope-0.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/grope-0.png"
+ },
+ "cabin/grope-1.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/grope-1.png"
+ },
+ "cabin/grope-2.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/grope-2.png"
+ },
+ "cabin/shchas-0.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/shchas-0.png"
+ },
+ "cabin/shchas-1.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/shchas-1.png"
+ },
+ "cabin/sorry-0.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/sorry-0.png"
+ },
+ "cabin/sorry-1.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/sorry-1.png"
+ },
+ "cabin/stir.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/stir.png"
+ },
+ "cabin/surface-empty.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/surface-empty.png"
+ },
+ "cabin/surface.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/surface.png"
+ },
+ "cabin/yawn-0.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/yawn-0.png"
+ },
+ "cabin/yawn-1.png": {
+  "size": [
+   125,
+   150
+  ],
+  "copy_to": "assets/pixel/cabin/poses/yawn-1.png"
+ },
+ "car/learner-yaw-l.png": {
+  "size": [
+   28,
+   44
+  ],
+  "copy_to": "assets/pixel/car/learner-yaw-l.png"
+ },
+ "car/learner-yaw-r.png": {
+  "size": [
+   28,
+   44
+  ],
+  "copy_to": "assets/pixel/car/learner-yaw-r.png"
+ },
+ "world/dog-run-left-0.png": {
+  "size": [
+   14,
+   9
+  ],
+  "copy_to": "assets/pixel/world/sprites/dog-run-left-0.png"
+ },
+ "world/dog-run-left-1.png": {
+  "size": [
+   14,
+   9
+  ],
+  "copy_to": "assets/pixel/world/sprites/dog-run-left-1.png"
+ },
+ "world/dog-run-right-0.png": {
+  "size": [
+   14,
+   9
+  ],
+  "copy_to": "assets/pixel/world/sprites/dog-run-right-0.png"
+ },
+ "world/dog-run-right-1.png": {
+  "size": [
+   14,
+   9
+  ],
+  "copy_to": "assets/pixel/world/sprites/dog-run-right-1.png"
+ },
+ "world/fence.png": {
+  "size": [
+   8,
+   16
+  ],
+  "copy_to": "assets/pixel/world/sprites/fence.png"
+ },
+ "world/lamp.png": {
+  "size": [
+   9,
+   29
+  ],
+  "copy_to": "assets/pixel/world/sprites/lamp.png"
+ },
+ "world/shadows/dog-run-left-0.png": {
+  "size": [
+   14,
+   9
+  ],
+  "copy_to": "assets/pixel/world/shadows/dog-run-left-0.png"
+ },
+ "world/shadows/dog-run-left-1.png": {
+  "size": [
+   14,
+   9
+  ],
+  "copy_to": "assets/pixel/world/shadows/dog-run-left-1.png"
+ },
+ "world/shadows/dog-run-right-0.png": {
+  "size": [
+   14,
+   9
+  ],
+  "copy_to": "assets/pixel/world/shadows/dog-run-right-0.png"
+ },
+ "world/shadows/dog-run-right-1.png": {
+  "size": [
+   14,
+   9
+  ],
+  "copy_to": "assets/pixel/world/shadows/dog-run-right-1.png"
+ },
+ "world/shadows/fence.png": {
+  "size": [
+   8,
+   16
+  ],
+  "copy_to": "assets/pixel/world/shadows/fence.png"
+ },
+ "world/shadows/lamp.png": {
+  "size": [
+   9,
+   29
+  ],
+  "copy_to": "assets/pixel/world/shadows/lamp.png"
+ },
+ "fx/beep.png": {
+  "size": [
+   96,
+   22
+  ],
+  "copy_to": "assets/pixel/fx/beep.png",
+  "frames": 2,
+  "frame_w": 48,
+  "frame_h": 22,
+  "ms": 66
+ },
+ "fx/honk-arcs.png": {
+  "size": [
+   24,
+   10
+  ],
+  "copy_to": "assets/pixel/fx/honk-arcs.png",
+  "frames": 2,
+  "frame_w": 12,
+  "frame_h": 10,
+  "ms": 100
+ }
+}
