@@ -351,15 +351,18 @@ function drawPlay(ctx, state, sink) {
   const brake = driving ? sim.brakeInput : 0;
 
   const pixel = usePixel(state);
+  const pixelLoss = pixel && session.phase === "result" && session.result && session.result.success !== true && !sim.infinite;
+  const holdChrome = session.phase === "impact" || pixelLoss;
+  const showHud = driving || session.phase === "countdown" || holdChrome;
   ctx.save();
   if (mag && !pixel) ctx.translate((hash(sim.t * 60) - 0.5) * mag, (hash(sim.t * 40) - 0.5) * mag * 0.5);
-  if (pixel) drawPixelWorld(ctx, sim, state, { hud: driving || session.phase === "countdown" });
+  if (pixel) drawPixelWorld(ctx, sim, state, { hud: showHud });
   else drawWorld(ctx, sim, boil, motion, state.alpha ?? 1, !!state.save.settings.reducedMotion, !!state.legacyAnchors);
   ctx.restore();
   const impactMs = session.impact?.ms || 0;
-  const cabinId = session.phase === "impact"
+  const cabinId = session.phase === "impact" && impactMs >= 33
     ? "bams"
-    : cabinPoseId(sim, session.phase, state.pose);
+    : cabinPoseId(sim, session.phase === "impact" ? "drive" : session.phase, state.pose);
   const impactLine = session.phase === "impact" && impactMs >= 33
     ? "ОЙ!"
     : (pixel && session.phase === "result" && session.result && session.result.success !== true && !sim.infinite
@@ -367,11 +370,10 @@ function drawPlay(ctx, state, sink) {
       : null);
   if (pixel) drawPixelCabin(ctx, sim, state, cabinId, { impactMs, line: impactLine });
   else drawCabin(ctx, sim, state);
-  const showHud = driving || session.phase === "countdown";
   let chrome = null;
   if (showHud && pixel) {
-    chrome = pixelChrome(ctx, sim, state, brake);
-    sink.spots.push({ id: "pause", x: 920, y: 40, w: 96, h: 88 });
+    chrome = pixelChrome(ctx, sim, state, holdChrome ? 0 : brake);
+    if (!holdChrome) sink.spots.push({ id: "pause", x: 920, y: 40, w: 96, h: 88 });
   } else if (showHud) chrome = drawDriveChrome(ctx, state, sink, brake);
   if (driving) {
     spots.push({
@@ -409,12 +411,11 @@ function drawPlay(ctx, state, sink) {
     ctx.stroke();
     paintCenter(ctx, "Он газует. Ты жмёшь тормоз.", CALLOUT.x, CALLOUT.y, CALLOUT.w, CALLOUT.h, 18, P.INK, false, true);
   }
-  const pixelLoss = pixel && session.phase === "result" && session.result && session.result.success !== true && !sim.infinite;
   if (session.phase === "pause") drawPauseScreen(ctx, state, sink);
   if (session.phase === "result" && !pixelLoss) drawResultScreen(ctx, state, sink);
   if (pixelLoss) {
     drawPixelLossCard(ctx, sim, sink);
-    momentButton(ctx, sink, state);
+    momentButton(ctx, sink, state, { x: 848, y: 708, w: 168, h: 60 });
   }
   const needle = chrome?.needle;
   return {

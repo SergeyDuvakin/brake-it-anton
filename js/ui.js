@@ -473,18 +473,19 @@ export function resultKeyAction(session, save, code) {
   return "retry";
 }
 
-export function momentButton(ctx, sink, state) {
+export function momentButton(ctx, sink, state, rect) {
   if (!state.replayReady) return;
+  const box = rect || { x: 1248, y: 108, w: 320, h: 84 };
   drawButton(ctx, sink, {
     id: "moment",
-    x: 1248,
-    y: 108,
-    w: 320,
-    h: 84,
+    x: box.x,
+    y: box.y,
+    w: box.w,
+    h: box.h,
     text: "МОМЕНТ",
     kind: "teal",
     pointer: state.pointer,
-    size: 26,
+    size: 22,
   });
 }
 

@@ -2468,6 +2468,20 @@ test("a pedestrian crash plays impact, then ЕЩЁ РАЗ starts a clean ride", 
   expect(card.labels.some((text) => text.includes("Пешеход цел"))).toBe(true);
   expect(card.spots).toContain("retry");
   expect(card.spots).toContain("to-garage");
+  expect(card.spots).not.toContain("pause");
+  expect(card.spots).not.toContain("pedal");
+  expect(card.spots).not.toContain("anton");
+  const moment = await page.evaluate(() => window.__anton.hotspots().find((item) => item.id === "moment"));
+  expect(moment).toBeTruthy();
+  const boxes = {
+    cabin: { x: 1056, y: 24, w: 520, h: 620 },
+    bubble: { x: 1096, y: 92, w: 480, h: 80 },
+    card: { x: 228, y: 204, w: 600, h: 448 },
+  };
+  const hits = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  expect(hits(moment, boxes.cabin)).toBe(false);
+  expect(hits(moment, boxes.bubble)).toBe(false);
+  expect(hits(moment, boxes.card)).toBe(false);
   await page.screenshot({ path: shot("crash-card") });
   await clickId(page, "retry");
   const again = await page.evaluate(() => window.__anton.getState());
@@ -2489,6 +2503,10 @@ test("impact can be skipped after half a second, and R restarts the card", async
   await page.waitForFunction(() => window.__anton.getState().phase === "drive");
   await page.evaluate(() => window.__anton.debugImpact("ped"));
   await page.waitForFunction(() => window.__anton.getState().phase === "impact");
+  const during = await page.evaluate(() => window.__anton.hotspots().map((item) => item.id));
+  expect(during).not.toContain("pause");
+  expect(during).not.toContain("pedal");
+  expect(during).not.toContain("anton");
   await page.mouse.click(400, 300);
   expect((await page.evaluate(() => window.__anton.getState())).phase).toBe("impact");
   await page.waitForFunction(() => window.__anton.getState().impact.ms >= 500);

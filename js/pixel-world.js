@@ -628,11 +628,23 @@ function ditherWorld(nctx, level) {
 function paintStrip(nctx, bit, originX, originY, flip) {
   const img = pixelImage(bit.sheet);
   if (!img) return;
-  const dx0 = flip ? (26 - bit.dx - bit.fw) : bit.dx;
+  const mirror = flip && !bit.text;
+  const dx0 = mirror ? (26 - bit.dx - bit.fw) : bit.dx;
   let x = Math.round(originX + dx0);
   const y = Math.round(originY + bit.dy);
-  if (bit.clampX !== undefined && bit.clampX !== null) x = Math.max(bit.clampX, x);
-  nctx.drawImage(img, bit.frame * bit.fw, 0, bit.fw, bit.fh, x, y, bit.fw, bit.fh);
+  if (!mirror && bit.clampX !== undefined && bit.clampX !== null) x = Math.max(bit.clampX, x);
+  const sx = bit.frame * bit.fw;
+  if (!mirror) {
+    nctx.drawImage(img, sx, 0, bit.fw, bit.fh, x, y, bit.fw, bit.fh);
+    return;
+  }
+  const pivot = x + bit.fw;
+  nctx.save();
+  nctx.imageSmoothingEnabled = false;
+  nctx.translate(pivot, 0);
+  nctx.scale(-1, 1);
+  nctx.drawImage(img, sx, 0, bit.fw, bit.fh, 0, y, bit.fw, bit.fh);
+  nctx.restore();
 }
 
 function paintSceneBits(nctx, originX, originY, scene, driveFx) {
@@ -791,14 +803,15 @@ export function drawPixelCabin(ctx, sim, state, cabinId, opts = {}) {
   ctx.restore();
 }
 
+// 7×7 clockwise arrow: open ring, head at the upper right.
 const RETRY_GLYPH = [
-  ".ooo...",
-  "o...o..",
-  "....o..",
-  "o..ooo.",
-  ".o.o...",
-  "..o....",
-  "...o...",
+  "..##.#.",
+  "#...###",
+  "#....#.",
+  "#....#.",
+  "#....#.",
+  ".#...#.",
+  "..###..",
 ];
 
 function hardLabel(text, fontPx) {
@@ -819,6 +832,33 @@ function hardLabel(text, fontPx) {
   for (let i = 3; i < data.data.length; i += 4) data.data[i] = data.data[i] >= 128 ? 255 : 0;
   nctx.putImageData(data, 0, 0);
   return native;
+}
+
+// Pixeloid draws «Ё» as «Е»: the diaeresis is below the ink threshold.
+// The second wide cap-bar in «ЕЩЁ РАЗ» is that letter.
+function yoDotColumn(label) {
+  const { width, height } = label;
+  const data = label.getContext("2d").getImageData(0, 0, width, height).data;
+  let top = -1;
+  for (let y = 0; y < height && top < 0; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (data[(y * width + x) * 4 + 3] > 128) { top = y; break; }
+    }
+  }
+  if (top < 0) return null;
+  const runs = [];
+  let start = -1;
+  for (let x = 0; x <= width; x += 1) {
+    const on = x < width && data[(top * width + x) * 4 + 3] > 128;
+    if (on && start < 0) start = x;
+    else if (!on && start >= 0) {
+      runs.push([start, x]);
+      start = -1;
+    }
+  }
+  const caps = runs.filter((run) => run[1] - run[0] >= 8);
+  if (caps.length < 2) return null;
+  return Math.round((caps[1][0] + caps[1][1] - 1) / 2);
 }
 
 function paintNativePlate(nctx, x, y, w, h, fill) {
@@ -883,14 +923,24 @@ export function drawPixelLossCard(ctx, sim, sink) {
   nctx.fillRect(16, 80, 115, 24);
   for (let j = 0; j < RETRY_GLYPH.length; j += 1) {
     for (let i = 0; i < RETRY_GLYPH[j].length; i += 1) {
-      if (RETRY_GLYPH[j][i] === "o") {
+      if (RETRY_GLYPH[j][i] === "#") {
         nctx.fillStyle = "#1C181C";
         nctx.fillRect(14 + 7 + i, 78 + 8 + j, 1, 1);
       }
     }
   }
-  const again = hardLabel("ЕЩЁ РАЗ", 9);
-  if (again) nctx.drawImage(again, Math.round(14 + (119 - again.width) / 2), 84);
+  const again = hardLabel("ЕЩЁ РАЗ", 18);
+  const textX = 14 + 7 + 7 + 4;
+  const textY = 84;
+  if (again) {
+    nctx.drawImage(again, textX, textY);
+    const yo = yoDotColumn(again);
+    if (yo !== null) {
+      nctx.fillStyle = "#1C181C";
+      nctx.fillRect(textX + yo - 3, textY - 3, 2, 2);
+      nctx.fillRect(textX + yo + 1, textY - 3, 2, 2);
+    }
+  }
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   notePixelSmoothing(false);

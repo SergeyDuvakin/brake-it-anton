@@ -847,6 +847,22 @@ window.__anton = {
       x: sim.x,
       color: cause === "pedestrian" ? "pink" : null,
     };
+    if (cause === "stopped" || cause === "cutin") {
+      const s = sim.s + 4.2;
+      sim.hazards.push({
+        id: "debug",
+        type: cause,
+        s,
+        x: sim.x,
+        halfW: 0.95,
+        halfL: 2.1,
+        pose: { s, x: sim.x },
+        prevPose: { s, x: sim.x },
+        motion: "rest",
+        family: "car",
+        resolved: "hit",
+      });
+    }
     sim.done = true;
     sim.success = false;
     sim.failReason = "body";

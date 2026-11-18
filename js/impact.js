@@ -150,6 +150,7 @@ export function impactFrame(kind, ms, opts = {}) {
         dx: -96,
         dy: -38,
         clampX: 4,
+        text: true,
       });
     }
     if (kind === "car" && ms >= 66) {
@@ -180,6 +181,7 @@ export function impactFrame(kind, ms, opts = {}) {
         fh: 32,
         dx: -56,
         dy: -34,
+        text: true,
       });
     }
     if (kind === "dog" && ms >= 400 && ms < 850) {
@@ -190,6 +192,7 @@ export function impactFrame(kind, ms, opts = {}) {
         fh: 30,
         dx: 38,
         dy: -44,
+        text: true,
       });
     }
     const body = kind === "ped" ? pedReact(ms, reduced) : kind === "dog" ? dogReact(ms, reduced) : null;
