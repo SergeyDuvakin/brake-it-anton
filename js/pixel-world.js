@@ -210,16 +210,17 @@ function tintShadow(file) {
   return buffer;
 }
 
-function blitSprite(nctx, spec, xFoot, yFoot) {
+function blitSprite(nctx, spec, xFoot, yFoot, cropH) {
   if (!spec) return;
   const x = Math.round(xFoot - spec.ax);
   const y = Math.round(yFoot - spec.ay);
+  const h = cropH || spec.h;
   if (spec.shadow) {
     const shadow = tintShadow(spec.shadow);
-    if (shadow) nctx.drawImage(shadow, x, y);
+    if (shadow) nctx.drawImage(shadow, 0, 0, spec.w, h, x, y, spec.w, h);
   }
   const img = pixelImage(spec.file);
-  if (img) nctx.drawImage(img, x, y);
+  if (img) nctx.drawImage(img, 0, 0, spec.w, h, x, y, spec.w, h);
 }
 
 /** Sidewalk slabs on road-straight-strip.png, inclusive native pixels. */
@@ -265,6 +266,7 @@ function dressing(cam) {
       mirror: !!row.mirror,
       leftEdge: row.leftEdge,
       shadowX: row.shadowX,
+      cropH: row.trimBottom ? 13 : 0,
     });
   }
   return items;
@@ -515,12 +517,13 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
   for (const item of dressing(pose.s)) {
     const spec = item.spec;
     const y = yNative(item.s, pose.s);
-    noteBox(Math.round(item.xPx - spec.ax), Math.round(y - spec.ay), spec.w, spec.h);
+    const drawH = item.cropH || spec.h;
+    noteBox(Math.round(item.xPx - spec.ax), Math.round(y - spec.ay), spec.w, drawH);
     queue.push({
       y,
       draw: () => {
         if (!item.mirror) {
-          blitSprite(nctx, spec, item.xPx, y);
+          blitSprite(nctx, spec, item.xPx, y, item.cropH);
           return;
         }
         const img = pixelImage(spec.file);
@@ -605,7 +608,7 @@ export function drawPixelWorld(ctx, sim, state, opts = {}) {
       }
       if (sim.curbBumpT > 0 && !state.save?.settings?.reducedMotion) {
         const steam = pixelImage("fx/steam.png");
-        const puff = Math.floor((0.2 - sim.curbBumpT) / 0.05) % 4;
+        const puff = Math.floor((0.2 - sim.curbBumpT) / 0.05) % 2;
         if (steam) {
           nctx.drawImage(steam, puff * 14, 0, 14, 14, carX - 18, carTop + 28, 14, 14);
           nctx.drawImage(steam, puff * 14, 0, 14, 14, carX + 8, carTop + 28, 14, 14);

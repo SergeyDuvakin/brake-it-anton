@@ -7,6 +7,7 @@
  */
 
 import { CFG } from "./config.js";
+import { nearestGateS } from "./roadside.js";
 import {
   buildDetourPath,
   clearsAt,
@@ -388,13 +389,18 @@ function advanceAnimal(h, sim, dt, dist) {
     h.motion = "flee";
     h.motionT = (h.motionT || 0) + dt;
     const away = sideX(h, 6.2);
+    const gate = nearestGateS(h.s, h.x >= 0 ? "right" : "left");
     const u = Math.min(1, h.motionT / CFG.honk.dogFlee);
-    h.pose.x = curb + (away - curb) * u;
-    h.pose.s = h.s;
+    // Along the sidewalk first. Crossing the fence only happens inside the gate.
+    const along = Math.min(1, u / 0.55);
+    const out = u <= 0.55 ? 0 : (u - 0.55) / 0.45;
+    h.pose.s = h.s + (gate - h.s) * along;
+    h.pose.x = curb + (away - curb) * out;
     if (u >= 1) {
       h.motion = "off";
       h.honkMode = null;
       h.pose.x = away;
+      h.pose.s = gate;
       markClear(sim, h, "honk");
     }
     return;

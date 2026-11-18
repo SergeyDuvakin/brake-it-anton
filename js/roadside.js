@@ -127,42 +127,108 @@ function houseSpan(item) {
   return [item.s - (h - ay) / PPM, item.s + ay / PPM];
 }
 
-/** One fence tile every 8 native px through the gaps, with one 2.6 m gate. */
-export function fenceTiles(sFrom, sTo) {
-  const tiles = [];
+function rangesTouch(a0, a1, b0, b1) {
+  return a0 <= b1 + 1e-6 && b0 <= a1 + 1e-6;
+}
+
+const FENCE_STEP = 8 / PPM;
+const FENCE_UP = 14 / PPM;
+const FENCE_DOWN = 2 / PPM;
+const GATE_HALF = 1.3;
+
+function housesOn(sFrom, sTo, side) {
   const first = Math.floor((sFrom - 8) / 32) - 1;
   const last = Math.floor((sTo + 8) / 32) + 1;
-  const step = 8 / PPM;
+  const items = [];
   for (let block = first; block <= last; block += 1) {
-    const houses = blockLayout(block).filter((item) => item.kind === "house");
-    for (const side of ["left", "right"]) {
-      const house = houses.find((item) => item.side === side);
-      const span = house ? houseSpan(house) : null;
-      const gate = block * 32 + 26;
-      const xPx = side === "left" ? 88 : 193;
-      const start = block * 32;
-      const count = Math.ceil(32 / step);
-      for (let i = 0; i <= count; i += 1) {
-        const s = start + i * step;
-        if (s < sFrom - 1 || s > sTo + 1) continue;
-        if (span && s >= span[0] && s <= span[1]) continue;
-        if (Math.abs(s - gate) < 1.3) continue;
-        tiles.push({
-          name: "fence",
-          s,
-          xPx,
-          ax: 0,
-          ay: 14,
-          kind: "fence",
-          side,
-          w: 8,
-          h: 16,
-          mirror: false,
-        });
-      }
+    for (const item of blockLayout(block)) {
+      if (item.kind === "house" && (!side || item.side === side)) items.push(item);
+    }
+  }
+  return items;
+}
+
+function gateCovers(lo, hi) {
+  const mid = (lo + hi) / 2;
+  const block = Math.round((mid - 26) / 32);
+  for (let b = block - 1; b <= block + 1; b += 1) {
+    const gate = b * 32 + 26;
+    if (rangesTouch(lo, hi, gate - GATE_HALF, gate + GATE_HALF)) return true;
+  }
+  return false;
+}
+
+/**
+ * One post every 8 native px on a single grid, s = k·(8/PPM).
+ * A tile is dropped when its drawn rect (14 px up, 2 px down) touches a
+ * house on that side or the 2.6 m gate. The first tile of a run drops the
+ * rail under the post so the gap ends on a post.
+ */
+export function fenceTiles(sFrom, sTo) {
+  const tiles = [];
+  const k0 = Math.floor((sFrom - 1) / FENCE_STEP) - 2;
+  const k1 = Math.ceil((sTo + 1) / FENCE_STEP) + 2;
+  for (const side of ["left", "right"]) {
+    const houses = housesOn(sFrom - 8, sTo + 8, side);
+    const spans = houses.map(houseSpan);
+    const xPx = side === "left" ? 88 : 193;
+    const kept = [];
+    for (let k = k0; k <= k1; k += 1) {
+      const s = k * FENCE_STEP;
+      if (s < sFrom - 1 || s > sTo + 1) continue;
+      const lo = s - FENCE_DOWN;
+      const hi = s + FENCE_UP;
+      if (spans.some((span) => span && rangesTouch(lo, hi, span[0], span[1]))) continue;
+      if (gateCovers(lo, hi)) continue;
+      kept.push({ k, s, lo, hi });
+    }
+    for (let i = 0; i < kept.length; i += 1) {
+      const tile = kept[i];
+      const prev = kept[i - 1];
+      const trimBottom = !prev || prev.k !== tile.k - 1;
+      // Rows 0–12 stay. The rail (rows 13–15) would hang into the gap.
+      const sLo = trimBottom ? tile.s + 1 / PPM : tile.lo;
+      tiles.push({
+        name: "fence",
+        s: tile.s,
+        k: tile.k,
+        sLo,
+        sHi: tile.hi,
+        trimBottom,
+        xPx,
+        ax: 0,
+        ay: 14,
+        kind: "fence",
+        side,
+        w: 8,
+        h: trimBottom ? 13 : 16,
+        mirror: false,
+      });
     }
   }
   return tiles;
+}
+
+/** Centre of the nearest 2.6 m gate that is not buried in a house. */
+export function nearestGateS(s, side) {
+  const block = Math.round((s - 26) / 32);
+  let best = null;
+  let bestD = Infinity;
+  for (let b = block - 3; b <= block + 3; b += 1) {
+    const gate = b * 32 + 26;
+    const houses = blockLayout(b).filter((item) => item.kind === "house" && item.side === side);
+    const buried = houses.some((house) => {
+      const span = houseSpan(house);
+      return span && rangesTouch(gate - GATE_HALF, gate + GATE_HALF, span[0], span[1]);
+    });
+    if (buried) continue;
+    const dist = Math.abs(gate - s);
+    if (dist < bestD) {
+      best = gate;
+      bestD = dist;
+    }
+  }
+  return best ?? block * 32 + 26;
 }
 
 function lampRows(sFrom, sTo) {
@@ -257,15 +323,19 @@ function lampBox(item) {
 function fenceBox(item) {
   const sign = item.side === "right" ? 1 : -1;
   const halfW = 0.2;
+  const sLo = item.sLo ?? item.s - 2 / PPM;
+  const sHi = item.sHi ?? item.s + 14 / PPM;
   return {
     name: "fence",
-    s: item.s,
+    s: (sLo + sHi) / 2,
     x: sign * (WALL_M + halfW),
     halfW,
-    halfL: (8 / PPM) / 2,
+    halfL: (sHi - sLo) / 2,
     solid: true,
     side: item.side,
     kind: "fence",
+    sLo,
+    sHi,
   };
 }
 

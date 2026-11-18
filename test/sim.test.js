@@ -59,7 +59,7 @@ import { pulse, vibrationPattern } from "../js/haptics.js";
 import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
 import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, playerHonk, pokeAttention, renderAlpha, renderPose, runSim, stepSim, swipePhone, windowsOverlap } from "../js/sim.js";
-import { SPRITE, dressingLayout, roadsideItems } from "../js/roadside.js";
+import { PPM, SPRITE, WALL_M, blockLayout, dressingLayout, fenceTiles, nearestGateS, roadsideItems } from "../js/roadside.js";
 import { IMPACT_TOTAL_MS, LOSS_SUBTITLE, impactFrame, impactKind } from "../js/impact.js";
 import { CABIN_POSES } from "../js/cabin.js";
 import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, platePixel, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
@@ -3935,4 +3935,78 @@ test("taps, drift and the horn follow the approved rules", () => {
   assert.ok(Math.abs(swipe.drift.vLat) >= 0 || swipe.drift.t >= 0);
   pokeAttention(swipe);
   assert.equal(swipe.attention, "surface");
+});
+
+test("fence posts sit on one 8 px grid and a scared dog uses the gate", () => {
+  const step = 8 / PPM;
+  const tiles = fenceTiles(0, 96);
+  const left = tiles.filter((item) => item.side === "left");
+  assert.ok(left.length > 10);
+  const seen = new Set();
+  for (const tile of left) {
+    assert.equal(seen.has(tile.k), false);
+    seen.add(tile.k);
+    assert.ok(Math.abs(tile.s - tile.k * step) < 1e-9);
+  }
+  assert.equal(left[0].trimBottom, true);
+  for (let i = 1; i < left.length; i += 1) {
+    const gap = left[i].k - left[i - 1].k;
+    assert.ok(gap >= 1);
+    assert.equal(left[i].trimBottom, gap !== 1);
+  }
+  const mid = left.find((tile) => !tile.trimBottom);
+  const end = left.find((tile) => tile.trimBottom);
+  assert.ok(mid && end);
+  assert.ok(Math.abs((mid.sHi - mid.sLo) - (end.sHi - end.sLo) - 3 / PPM) < 1e-6);
+
+  const houses = [];
+  for (let block = -1; block <= 5; block += 1) {
+    for (const item of blockLayout(block)) {
+      if (item.kind === "house") houses.push(item);
+    }
+  }
+  for (const tile of tiles) {
+    for (const house of houses) {
+      if (house.side !== tile.side) continue;
+      const spec = SPRITE[house.name];
+      const a = house.s - (spec[1] - spec[3]) / PPM;
+      const b = house.s + spec[3] / PPM;
+      assert.equal(tile.sLo <= b + 1e-6 && a <= tile.sHi + 1e-6, false, `${tile.side} ${tile.k}`);
+    }
+    const block = Math.round((tile.s - 26) / 32);
+    for (const g of [block - 1, block, block + 1]) {
+      const gate = g * 32 + 26;
+      assert.equal(tile.sLo <= gate + 1.3 + 1e-6 && gate - 1.3 <= tile.sHi + 1e-6, false);
+    }
+  }
+
+  const boxes = roadsideItems(0, 96).filter((box) => box.kind === "fence");
+  assert.equal(boxes.length, tiles.length);
+  for (let i = 0; i < tiles.length; i += 1) {
+    assert.ok(Math.abs(boxes[i].sLo - tiles[i].sLo) < 1e-9);
+    assert.ok(Math.abs(boxes[i].sHi - tiles[i].sHi) < 1e-9);
+    assert.ok(Math.abs(Math.abs(boxes[i].x) - boxes[i].halfW - WALL_M) < 1e-9);
+  }
+
+  const ride = createSim(empty({
+    hazards: [{ id: "pup", type: "dog", s: 20, x: 3.9, halfW: 0.35, halfL: 0.35 }],
+  }), 9);
+  ride.s = 5;
+  ride.v = 6;
+  const pup = ride.hazards[0];
+  pup.motion = "curb";
+  const gate = nearestGateS(20, "right");
+  stepSim(ride, dt, { held: false, lockSpeed: true, honk: true });
+  assert.equal(pup.honkMode, "flee");
+  let crossed = false;
+  for (let n = 0; n < 45; n += 1) {
+    stepSim(ride, 0.02, { held: false, lockSpeed: true });
+    if (Math.abs(pup.pose.x) > WALL_M) {
+      crossed = true;
+      assert.ok(Math.abs(pup.pose.s - gate) <= 1.3, `s ${pup.pose.s} gate ${gate}`);
+    }
+  }
+  assert.equal(crossed, true);
+  assert.equal(pup.motion, "off");
+  assert.ok(Math.abs(pup.pose.x) > WALL_M);
 });
