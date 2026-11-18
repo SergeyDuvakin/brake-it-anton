@@ -258,10 +258,10 @@ async function pedalPoint(page) {
 test("title and garage text is centered, present, and locked lessons are not starred", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(gameURL());
-  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "Brake It, Anton"));
+  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "ПОЕХАЛИ!"));
   const titleLabels = await page.evaluate(() => window.__anton.labels());
   expect(titleLabels.map((item) => item.text)).toEqual(
-    expect.arrayContaining(["Brake It, Anton", "Он газует. Ты жмёшь тормоз.", "В урок", "Гараж"]),
+    expect.arrayContaining(["Brake It, Anton", "Он газует. Ты жмёшь тормоз.", "ПОЕХАЛИ!", "ГАРАЖ"]),
   );
   assertLabels(titleLabels);
   await page.screenshot({ path: shot("title") });
@@ -294,7 +294,7 @@ test("title and garage text is centered, present, and locked lessons are not sta
 
   await page.setViewportSize({ width: 844, height: 390 });
   await page.goto(gameURL());
-  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "Brake It, Anton"));
+  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "ПОЕХАЛИ!"));
   await page.screenshot({ path: shot("title-844") });
   await clickId(page, "garage");
   await page.waitForFunction(() => window.__anton.labels().some((item) => item.text === "ПОЕХАЛИ"));
@@ -395,16 +395,16 @@ test("an address-bar collapse settles, and a 1px flicker does not slide the canv
 test("title scenery and wheels stay still while people may idle", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(gameURL());
-  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "В урок"));
+  await page.waitForFunction(() => window.__anton?.labels().some((item) => item.text === "ПОЕХАЛИ!"));
   const changed = await page.evaluate(async () => {
     const canvas = document.querySelector("canvas");
     const ctx = canvas.getContext("2d");
     const sx = canvas.width / 1600;
     const sy = canvas.height / 900;
     const regions = {
-      buttons: { x: 1072, y: 674, w: 488, h: 186 },
-      tree: { x: 140, y: 280, w: 240, h: 320 },
-      wheel: { x: 640, y: 670, w: 140, h: 140 },
+      buttons: { x: 36, y: 20, w: 400, h: 160 },
+      tree: { x: 8, y: 8, w: 80, h: 80 },
+      wheel: { x: 480, y: 560, w: 80, h: 64 },
     };
     const read = (rect) => {
       const x = Math.max(0, Math.round(rect.x * sx));
@@ -1267,6 +1267,11 @@ test("one tap and the brake are different fingers", async ({ page }) => {
       const data = ctx.getImageData(x, y, 1, 1).data;
       return [data[0], data[1], data[2]];
     }
+    function faceInk() {
+      // The old single point sits on flat skin that asleep and wake share.
+      // The cluster covers the eye, which is where those poses differ.
+      return [[400, 400], [430, 480], [442, 505], [500, 520]].flatMap(([x, y]) => pixel(x, y));
+    }
     function regionStats(sx, sy, sw, sh) {
       const [x, y] = screenOf(sx, sy);
       const w = Math.max(1, Math.round(sw * scale));
@@ -1315,7 +1320,7 @@ test("one tap and the brake are different fingers", async ({ page }) => {
       out.drawImage(canvas, 1056, 24, 520, 640, index * 225, 652, 225, phoneH);
       skin[attention] = {
         sky: pixel(160, 70),
-        face: pixel(500, 520),
+        face: faceInk(),
         hands: regionStats(360, 800, 400, 180),
       };
     });
@@ -2700,4 +2705,253 @@ test("the horn wakes Anton and a second press inside five seconds does not", asy
     const state = window.__anton.getState();
     return state.attention === "wake" || state.attention === "sorry" || state.pokes >= 3;
   });
+});
+
+test("the ready start screen matches the approved mockup", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.pixelProgress?.().ready);
+  await page.evaluate(() => {
+    window.__anton.attractFreeze(true);
+    window.__anton.setLoadCaption("ГОТОВО · 91/91");
+  });
+  await page.evaluate(() => window.__anton.warmStartPixels());
+  await page.waitForTimeout(50);
+  const diff = await page.evaluate(async () => {
+    const canvas = document.querySelector("canvas");
+    const ctx = canvas.getContext("2d");
+    const mock = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("mockup"));
+      img.src = "docs/stage4/ref/start-mockup-native-400x225.png";
+    });
+    const native = document.createElement("canvas");
+    native.width = 400;
+    native.height = 225;
+    const nctx = native.getContext("2d");
+    nctx.imageSmoothingEnabled = false;
+    nctx.drawImage(canvas, 0, 0, 1600, 900, 0, 0, 400, 225);
+    const got = nctx.getImageData(0, 0, 400, 225).data;
+    const refc = document.createElement("canvas");
+    refc.width = 400;
+    refc.height = 225;
+    const rctx = refc.getContext("2d");
+    rctx.drawImage(mock, 0, 0);
+    const ref = rctx.getImageData(0, 0, 400, 225).data;
+    let bad = 0;
+    let first = null;
+    for (let i = 0; i < got.length; i += 4) {
+      if (got[i] !== ref[i] || got[i + 1] !== ref[i + 1] || got[i + 2] !== ref[i + 2]) {
+        bad += 1;
+        if (!first) first = { i: i / 4, got: [got[i], got[i + 1], got[i + 2]], ref: [ref[i], ref[i + 1], ref[i + 2]] };
+      }
+    }
+    return { bad, first, canvas: [canvas.width, canvas.height] };
+  });
+  expect(diff.canvas).toEqual([1600, 900]);
+  expect(diff.bad, JSON.stringify(diff.first)).toBe(0);
+});
+
+test("a moving start frame matches the mockup outside the actors", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.pixelProgress?.().ready);
+  await page.evaluate(() => {
+    window.__anton.setLoadCaption("ГОТОВО · 91/91");
+    window.__anton.stepTitle(0.3);
+    window.__anton.holdStartExhaust();
+    window.__anton.setTimeScale(0);
+  });
+  await page.evaluate(() => window.__anton.warmStartPixels());
+  await page.waitForTimeout(50);
+  const diff = await page.evaluate(async () => {
+    const canvas = document.querySelector("canvas");
+    const ctx = canvas.getContext("2d");
+    const mock = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("mockup"));
+      img.src = "docs/stage4/ref/start-mockup-native-400x225.png";
+    });
+    const native = document.createElement("canvas");
+    native.width = 400;
+    native.height = 225;
+    const nctx = native.getContext("2d");
+    nctx.imageSmoothingEnabled = false;
+    nctx.drawImage(canvas, 0, 0, 1600, 900, 0, 0, 400, 225);
+    const got = nctx.getImageData(0, 0, 400, 225).data;
+    const refc = document.createElement("canvas");
+    refc.width = 400;
+    refc.height = 225;
+    refc.getContext("2d").drawImage(mock, 0, 0);
+    const ref = refc.getContext("2d").getImageData(0, 0, 400, 225).data;
+    const boxes = window.__anton.startMoverBoxes();
+    const inside = (px, py) => boxes.some((box) => px >= box.x && px < box.x + box.w && py >= box.y && py < box.y + box.h);
+    let bad = 0;
+    let first = null;
+    for (let y = 0; y < 225; y += 1) {
+      for (let x = 0; x < 400; x += 1) {
+        if (inside(x, y)) continue;
+        const i = (y * 400 + x) * 4;
+        if (got[i] !== ref[i] || got[i + 1] !== ref[i + 1] || got[i + 2] !== ref[i + 2]) {
+          bad += 1;
+          if (!first) first = { x, y, got: [got[i], got[i + 1], got[i + 2]], ref: [ref[i], ref[i + 1], ref[i + 2]] };
+        }
+      }
+    }
+    return { bad, first, moved: boxes.length };
+  });
+  expect(diff.moved).toBeGreaterThan(0);
+  expect(diff.bad, JSON.stringify(diff.first)).toBe(0);
+});
+
+test("the load bar grows and the start button waits until the pack is ready", async ({ page }) => {
+  let n = 0;
+  await page.route("**/*.png", async (route) => {
+    const i = n;
+    n += 1;
+    await new Promise((resolve) => setTimeout(resolve, 8 + (i % 5) * 25));
+    await route.continue();
+  });
+  await page.goto(gameURL("e2e=1"));
+  const seen = [];
+  const started = Date.now();
+  while (Date.now() - started < 20000) {
+    const state = await page.evaluate(() => ({
+      progress: window.__anton?.pixelProgress?.(),
+      start: window.__anton?.hotspots?.().some((spot) => spot.id === "start") || false,
+    }));
+    if (state.progress) seen.push(state.progress.done);
+    if (state.progress && !state.progress.ready) expect(state.start).toBe(false);
+    if (state.progress?.ready && state.start) break;
+    await page.waitForTimeout(30);
+  }
+  expect(Math.max(...seen)).toBeGreaterThan(Math.min(...seen));
+  expect(await page.evaluate(() => window.__anton.hotspots().some((spot) => spot.id === "start"))).toBe(true);
+});
+
+test("a failed picture can be retried, then the classic title remains", async ({ page }) => {
+  const file = "**/cabin/poses/drive.png";
+  let hits = 0;
+  await page.route(file, async (route) => {
+    hits += 1;
+    await route.fulfill({ status: 500, body: "no" });
+  });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.labels?.().some((item) => item.text.includes("НЕ ЗАГРУЗИЛОСЬ")));
+  const before = hits;
+  await clickId(page, "reload");
+  await page.waitForTimeout(200);
+  expect(hits).toBeGreaterThan(before);
+  await clickId(page, "reload");
+  await page.waitForFunction(() => window.__anton?.labels?.().some((item) => item.text === "В урок"), null, { timeout: 10000 });
+});
+
+test("ПОЕХАЛИ starts the next unfinished lesson, and Enter does too", async ({ page }) => {
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots?.().some((spot) => spot.id === "start"));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive" || window.__anton.getState().phase === "countdown");
+  expect(await page.evaluate(() => window.__anton.getState().missionId)).toBe("lesson1");
+
+  await page.evaluate(() => {
+    localStorage.setItem("brake-it-anton-save-v1", JSON.stringify({
+      v: 1, unlocked: 2, infinite: false, best: { lesson1: 3 }, bestMeters: {},
+      settings: { sound: true, music: false, voice: false, vibration: false, shake: true, reducedMotion: false, largeUi: false },
+      notice: null,
+    }));
+  });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots?.().some((spot) => spot.id === "start"));
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => window.__anton.getState().missionId === "lesson2");
+});
+
+test("garage opens and the sound chip persists", async ({ page }) => {
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots?.().some((spot) => spot.id === "sound"));
+  expect(await page.evaluate(() => window.__anton.getState().sound)).toBe(true);
+  await clickId(page, "sound");
+  await page.waitForFunction(() => window.__anton.getState().sound === false);
+  await page.reload();
+  await page.waitForFunction(() => window.__anton?.hotspots?.().some((spot) => spot.id === "garage") && window.__anton.getState().sound === false);
+  await clickId(page, "garage");
+  await page.waitForFunction(() => window.__anton.getState().screen === "garage");
+});
+
+test("start hitboxes stay at least 44 CSS px on a phone landscape", async ({ page }) => {
+  await page.setViewportSize({ width: 896, height: 414 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots?.().some((spot) => spot.id === "start"));
+  const sizes = await page.evaluate(() => {
+    const rect = document.querySelector("canvas").getBoundingClientRect();
+    return window.__anton.hotspots().filter((spot) => ["start", "garage", "sound"].includes(spot.id)).map((spot) => ({
+      id: spot.id,
+      h: spot.h * (rect.height / 900),
+      w: spot.w * (rect.width / 1600),
+    }));
+  });
+  for (const spot of sizes) {
+    expect(spot.h, spot.id).toBeGreaterThanOrEqual(44);
+    expect(spot.w, spot.id).toBeGreaterThanOrEqual(44);
+  }
+  await page.evaluate(() => {
+    document.getElementById("wrap").style.padding = "0px 47px 21px 47px";
+    window.dispatchEvent(new Event("resize"));
+  });
+  const inside = await page.evaluate(() => {
+    const wrap = document.getElementById("wrap");
+    const canvas = document.querySelector("canvas");
+    const style = getComputedStyle(wrap);
+    const pad = {
+      top: parseFloat(style.paddingTop) || 0,
+      right: parseFloat(style.paddingRight) || 0,
+      bottom: parseFloat(style.paddingBottom) || 0,
+      left: parseFloat(style.paddingLeft) || 0,
+    };
+    const wrapRect = wrap.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    return canvasRect.left >= wrapRect.left + pad.left - 0.5
+      && canvasRect.right <= wrapRect.right - pad.right + 0.5
+      && canvasRect.top >= wrapRect.top + pad.top - 0.5
+      && canvasRect.bottom <= wrapRect.bottom - pad.bottom + 0.5;
+  });
+  expect(inside).toBe(true);
+});
+
+test("reduced motion holds the start street still", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.pixelProgress?.().ready);
+  const read = () => page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    const data = canvas.getContext("2d").getImageData(200, 400, 120, 40).data;
+    return Array.from(data).join(",");
+  });
+  const first = await read();
+  await page.waitForTimeout(1000);
+  expect(await read()).toBe(first);
+});
+
+test("classic art keeps the old title", async ({ page }) => {
+  await page.goto(gameURL("e2e=1&art=classic"));
+  await page.waitForFunction(() => window.__anton?.labels?.().some((item) => item.text === "В урок"));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "countdown" || window.__anton.getState().phase === "drive");
+});
+
+test("static start scenery does not move while actors may", async ({ page }) => {
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.pixelProgress?.().ready);
+  const read = () => page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    const data = canvas.getContext("2d").getImageData(40, 24, 80, 60).data;
+    return Array.from(data).join(",");
+  });
+  const first = await read();
+  await page.waitForTimeout(2000);
+  expect(await read()).toBe(first);
 });

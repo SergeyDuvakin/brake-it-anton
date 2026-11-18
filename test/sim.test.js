@@ -16,7 +16,8 @@ import { letterboxRect, logicalPoint } from "../js/geom.js";
 import { FUTURE_CARS, STUDENTS } from "../js/future.js";
 import { createReplay } from "../js/replay.js";
 import { LESSONS, buildInfinite, futureMissions, getMission } from "../js/missions.js";
-import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, nextLessonOpen, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint, resultKeyAction } from "../js/ui.js";
+import { GAUGE, PEDAL_PAD, PEDAL_ZONE, controlState, nextLessonOpen, patienceNeedleDegrees, pedalArtRect, pedalHingeDegrees, pedalPadPoint, resultKeyAction, startLesson } from "../js/ui.js";
+import { atlasWidth, attractStaticPlaces, loadSlots, startLayout, stepAttract } from "../js/pixel-start.js";
 import { CALLOUT, DRIVER_PLATE, MOOD_TILE, PAUSE_BUTTON, platesSeparated } from "../js/layout.js";
 import {
   CAR_BODY_H,
@@ -64,6 +65,7 @@ import { IMPACT_TOTAL_MS, LOSS_SUBTITLE, impactFrame, impactKind } from "../js/i
 import { CABIN_POSES } from "../js/cabin.js";
 import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, platePixel, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
 import {
+  COUNTDOWN_TOTAL,
   createSession,
   keyDown,
   keyUp,
@@ -867,7 +869,7 @@ test("the crash scene keeps its clock, and a soft bin stays a bump", () => {
   function ended(cause, success = false) {
     const session = createSession(getMission("lesson1"), { seed: 11 });
     session.phase = "drive";
-    session.countdownAcc = 3;
+    session.countdownAcc = COUNTDOWN_TOTAL;
     session.sim.done = true;
     session.sim.success = success;
     session.sim.failCause = cause;
@@ -1240,6 +1242,10 @@ test("the opening countdown holds the car, and retry is an immediate clean ride"
   sessionStep(session, 1.4);
   assert.equal(session.phase, "countdown");
   sessionStep(session, 0.7);
+  assert.equal(session.phase, "countdown");
+  assert.equal(session.countdown, "ПОЕХАЛИ!");
+  assert.equal(session.sim.s, 0);
+  sessionStep(session, 0.6);
   assert.equal(session.phase, "drive");
   assert.equal(session.countdown, 0);
   sessionStep(session, 1.2);
@@ -1262,7 +1268,7 @@ test("the opening countdown holds the car, and retry is an immediate clean ride"
 
   assert.equal(session.phase, "drive");
   assert.equal(session.countdown, 0);
-  assert.equal(session.countdownAcc, 3);
+  assert.equal(session.countdownAcc, COUNTDOWN_TOTAL);
   assert.equal(session.seed, seed);
   assert.equal(session.mission, mission);
   assert.equal(session.result, null);
@@ -1311,7 +1317,7 @@ test("the opening countdown holds the car, and retry is an immediate clean ride"
 
 test("pause, blur and hide clear the pedal and the held keys", () => {
   const session = createSession(getMission("lesson1"), { seed: 11 });
-  sessionStep(session, 3);
+  sessionStep(session, COUNTDOWN_TOTAL);
   assert.equal(session.phase, "drive");
   session.brakeHeld = true;
   keyDown(session, "Space");
@@ -2239,7 +2245,7 @@ function simFingerprint(sim) {
 test("render samples the last step only and does not touch the sim", () => {
   const session = createSession(getMission("lesson1"), { seed: 11 });
   session.phase = "drive";
-  session.countdownAcc = 3;
+  session.countdownAcc = COUNTDOWN_TOTAL;
   sessionStep(session, dt);
   const sim = session.sim;
   assert.ok(sim.s > sim.prevS);
@@ -2307,7 +2313,7 @@ test("pause, blur, hide, retry, countdown and finish drop the stale pose", () =>
   assert.equal(session.phase, "countdown");
   assert.equal(session.sim.s, 0);
   assert.equal(renderPose(session.sim, 0.4).s, 0);
-  sessionStep(session, 2.1);
+  sessionStep(session, 3.1);
   assert.equal(session.phase, "drive");
   assert.equal(session.sim.prevS, session.sim.s);
 
@@ -2357,7 +2363,7 @@ test("drawing between frames does not change 30/60/90/120 or the stall cap", () 
   function ride(hz, seconds, draw) {
     const session = createSession(getMission("lesson1"), { seed: 11 });
     session.phase = "drive";
-    session.countdownAcc = 3;
+    session.countdownAcc = COUNTDOWN_TOTAL;
     let acc = 0;
     let steps = 0;
     const shown = [];
@@ -2401,10 +2407,10 @@ test("drawing between frames does not change 30/60/90/120 or the stall cap", () 
 
   const stalled = createSession(getMission("lesson1"), { seed: 11 });
   stalled.phase = "drive";
-  stalled.countdownAcc = 3;
+  stalled.countdownAcc = COUNTDOWN_TOTAL;
   const twin = createSession(getMission("lesson1"), { seed: 11 });
   twin.phase = "drive";
-  twin.countdownAcc = 3;
+  twin.countdownAcc = COUNTDOWN_TOTAL;
   const burst = drainFrame(0, 0.5, 1);
   assert.equal(burst.steps, 6);
   assert.equal(burst.raw, 0.1);
@@ -2571,7 +2577,7 @@ test("pedestrian and dog feet follow distance, and a stride boundary does not fl
 
   const session = createSession(walkMission(), { seed: 1 });
   session.phase = "drive";
-  session.countdownAcc = 3;
+  session.countdownAcc = COUNTDOWN_TOTAL;
   const livePed = session.sim.hazards.find((h) => h.id === "ped");
   livePed.crossT = 0.1 * livePed.crossDur;
   session.sim.v = 0;
@@ -2693,7 +2699,7 @@ test("one tap wakes Anton, the brake does not, and a late hole stays his", () =>
 
   const session = createSession(getMission("lesson1"), { seed: 11 });
   session.phase = "drive";
-  session.countdownAcc = 3;
+  session.countdownAcc = COUNTDOWN_TOTAL;
   assert.equal(pointerDown(session, "screen", 4), "ignore");
   assert.equal(pointerDown(session, "pedal", 1), "brake");
   assert.equal(pointerDown(session, "anton", 2), "wake");
@@ -2748,7 +2754,7 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
 
   const session = createSession(lesson1, { seed: 11 });
   session.phase = "drive";
-  session.countdownAcc = 3;
+  session.countdownAcc = COUNTDOWN_TOTAL;
   assert.equal(pointerDown(session, "pedal", 1), "brake");
   assert.equal(pointerDown(session, "anton", 1), "ignore");
   assert.equal(session.wakeId, null);
@@ -2802,7 +2808,7 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   for (const state of ["phone", "stow", "drowsy", "asleep", "wake"]) {
     const ride = createSession(lesson1, { seed: 11 });
     ride.phase = "drive";
-    ride.countdownAcc = 3;
+    ride.countdownAcc = COUNTDOWN_TOTAL;
     ride.sim.attention = state;
     ride.sim.phonePlayed = true;
     ride.sim.sleepPlayed = true;
@@ -2946,7 +2952,7 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
 
   const shown = createSession(lesson1, { seed: 11 });
   shown.phase = "drive";
-  shown.countdownAcc = 3;
+  shown.countdownAcc = COUNTDOWN_TOTAL;
   shown.sim.attention = "phone";
   shown.sim.phonePlayed = true;
   shown.sim.stowT = 0.3;
@@ -3346,7 +3352,7 @@ test("patience needle and pedal hinge follow the live input", () => {
   function ride(phase, patience, brake, success, rideSave = save) {
     const session = createSession(getMission("lesson1"), { seed: 11 });
     session.phase = phase;
-    session.countdownAcc = 3;
+    session.countdownAcc = COUNTDOWN_TOTAL;
     session.sim.patience = patience;
     session.sim.brakeInput = brake;
     if (phase === "result") {
@@ -3586,7 +3592,7 @@ test("the drive HUD has no lesson plaque, and the gauge stays off the lane", () 
   }
   const session = createSession(getMission("lesson1"), { seed: 11 });
   session.phase = "drive";
-  session.countdownAcc = 3;
+  session.countdownAcc = COUNTDOWN_TOTAL;
   session.sim.s = 40;
   const frame = render(mockCtx().ctx, {
     screen: "play",
@@ -4009,4 +4015,75 @@ test("fence posts sit on one 8 px grid and a scared dog uses the gate", () => {
   assert.equal(crossed, true);
   assert.equal(pup.motion, "off");
   assert.ok(Math.abs(pup.pose.x) > WALL_M);
+});
+
+test("the start screen picks the next unfinished lesson", () => {
+  assert.equal(startLesson(null), "lesson1");
+  assert.equal(startLesson({}), "lesson1");
+  assert.equal(startLesson({ unlocked: 0 }), "lesson1");
+  assert.equal(startLesson({ unlocked: 1, best: {} }), "lesson1");
+  assert.equal(startLesson({ unlocked: 2, best: { lesson1: 3 } }), "lesson2");
+  assert.equal(startLesson({ unlocked: 3, best: { lesson1: 3, lesson2: 2, lesson3: 1 } }), "lesson3");
+  assert.equal(startLesson({ unlocked: 4, best: { lesson1: 1, lesson2: 1, lesson3: 1, lesson4: 2 } }), "lesson4");
+  const fresh = { unlocked: 1, best: {} };
+  assert.equal(startLesson(fresh), "lesson1");
+});
+
+test("the load bar and the start layout match the approved sheet", () => {
+  assert.equal(loadSlots(0, 10), 0);
+  assert.equal(loadSlots(91, 91), 36);
+  assert.equal(loadSlots(10, 0), 0);
+  let prev = 0;
+  for (let done = 0; done <= 40; done += 1) {
+    const slots = loadSlots(done, 40);
+    assert.ok(slots >= prev);
+    prev = slots;
+  }
+  const font = JSON.parse(readFileSync("assets/pixel/start/font9-ink.json", "utf8"));
+  assert.equal(atlasWidth("ГОТОВО · 91/91", font), 88);
+  const layout = startLayout();
+  assert.deepEqual(layout.native, [400, 225]);
+  const boxes = ["start", "garage", "sound"].map((id) => {
+    const [x0, y0, x1, y1] = layout.hitboxes[id];
+    return { id, x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  });
+  for (const box of boxes) {
+    assert.ok(box.h >= 26, box.id);
+    assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.w <= 400 && box.y + box.h <= 225, box.id);
+  }
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  assert.equal(overlaps(boxes[1], boxes[2]), false);
+  const pngSize = (file) => {
+    const buf = readFileSync(file);
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  };
+  for (const item of Object.values(layout.elements)) {
+    const size = pngSize(`assets/pixel/${item.file}`);
+    assert.equal(size.w, item.w, item.file);
+    assert.equal(size.h, item.h, item.file);
+    assert.ok(item.x >= 0 && item.y >= 0 && item.x + item.w <= 400 && item.y + item.h <= 225, item.file);
+  }
+  const before = attractStaticPlaces();
+  stepAttract(10, false);
+  assert.deepEqual(attractStaticPlaces(), before);
+  const manifest = JSON.parse(readFileSync("assets/pixel/manifest.json", "utf8"));
+  const startFiles = new Set();
+  const walk = (value) => {
+    if (typeof value === "string" && value.endsWith(".png")) startFiles.add(value);
+    else if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") Object.values(value).forEach(walk);
+  };
+  walk(manifest.start);
+  const needed = new Set([
+    "cabin/poses/yasam.png",
+    "car/learner-normal-right.png",
+    "car/npc-white-left.png",
+    "car/npc-blue-left.png",
+  ]);
+  for (const [file] of layout.scene) needed.add(file);
+  const unused = new Set(["start/icon-speaker.png", "start/loadbar-label-ref.png"]);
+  for (const item of Object.values(layout.elements)) {
+    if (!unused.has(item.file)) needed.add(item.file);
+  }
+  for (const file of needed) assert.ok(startFiles.has(file), file);
 });
