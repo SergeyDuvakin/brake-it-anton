@@ -3854,4 +3854,24 @@ test("the load bar and the start layout match the approved sheet", () => {
   const before = attractStaticPlaces();
   stepAttract(10, false);
   assert.deepEqual(attractStaticPlaces(), before);
+  const manifest = JSON.parse(readFileSync("assets/pixel/manifest.json", "utf8"));
+  const startFiles = new Set();
+  const walk = (value) => {
+    if (typeof value === "string" && value.endsWith(".png")) startFiles.add(value);
+    else if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") Object.values(value).forEach(walk);
+  };
+  walk(manifest.start);
+  const needed = new Set([
+    "cabin/poses/yasam.png",
+    "car/learner-normal-right.png",
+    "car/npc-white-left.png",
+    "car/npc-blue-left.png",
+  ]);
+  for (const [file] of layout.scene) needed.add(file);
+  const unused = new Set(["start/icon-speaker.png", "start/loadbar-label-ref.png"]);
+  for (const item of Object.values(layout.elements)) {
+    if (!unused.has(item.file)) needed.add(item.file);
+  }
+  for (const file of needed) assert.ok(startFiles.has(file), file);
 });

@@ -7,7 +7,7 @@ import { CFG, PALETTE as P } from "./config.js";
 import { damageStage } from "./physics.js";
 import { cabinPoseId, drawPassenger, paintCabin } from "./cabin.js";
 import { classicArtForced, pixelProgress, usePixel } from "./pixel-assets.js";
-import { drawAtlasText, drawPixelStart } from "./pixel-start.js";
+import { drawAtlasCentered, drawPixelStart } from "./pixel-start.js";
 import { drawPixelCabin, drawPixelLossCard, drawPixelWorld, pixelBumperBodyGap, pixelChrome } from "./pixel-world.js";
 import { CALLOUT, DRIVER_PLATE, NOTICE_BOX } from "./layout.js";
 import {
@@ -362,8 +362,7 @@ function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
   const previewState = { ...state, pose: "preen", session: { phase: "drive", sim: state.preview }, alpha: 1 };
   if (!classicArtForced(state) && !pixelProgress().gaveUp) {
-    drawPixelStart(ctx, state, { spots, labels });
-    return;
+    if (drawPixelStart(ctx, state, { spots, labels }) !== false) return;
   }
   drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
   paintCabin(ctx, state.preview, previewState);
@@ -421,7 +420,7 @@ function drawPlay(ctx, state, sink) {
     ctx.fill();
     ink(ctx, 6);
     ctx.stroke();
-    if (pixel) drawAtlasText(ctx, String(session.countdown || 1), 164, 42);
+    if (pixel) drawAtlasCentered(ctx, String(session.countdown || 1), 640, 150, 120, 84, 2);
     else paintCenter(ctx, String(session.countdown || 1), 640, 150, 120, 84, 42, P.INK, true, false);
   }
   const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";

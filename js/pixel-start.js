@@ -6,22 +6,51 @@
  */
 
 import { mulberry32 } from "./rng.js";
+import { notePixelSmoothing, pixelImage, pixelProgress, retryPixelLoad } from "./pixel-assets.js";
 
 async function readJson(url) {
   if (url.protocol === "file:") {
     const { readFileSync } = await import("node:fs");
     return JSON.parse(readFileSync(url, "utf8"));
   }
-  return (await globalThis.fetch(url)).json();
+  const response = await globalThis.fetch(url);
+  if (!response.ok) throw new Error(`start json ${response.status}`);
+  return response.json();
 }
 
 function pixelUrl(...parts) {
   return new URL(["..", "assets", "pixel", ...parts].join("/"), import.meta.url);
 }
 
-const layout = await readJson(pixelUrl("start", "start-layout.json"));
-const font = await readJson(pixelUrl("start", "font9-ink.json"));
-import { notePixelSmoothing, pixelImage, pixelProgress, retryPixelLoad } from "./pixel-assets.js";
+let layout = null;
+let font = null;
+let startFailed = false;
+
+function adoptStartJson(lay, fnt) {
+  layout = lay;
+  font = fnt;
+}
+
+// Node tests read the files now. The browser must not reject the module:
+// a missing start-layout.json would reject the module and leave a blank page.
+if (pixelUrl("start", "start-layout.json").protocol === "file:") {
+  try {
+    const fsMod = await import("node:fs");
+    adoptStartJson(
+      JSON.parse(fsMod.readFileSync(pixelUrl("start", "start-layout.json"), "utf8")),
+      JSON.parse(fsMod.readFileSync(pixelUrl("start", "font9-ink.json"), "utf8")),
+    );
+  } catch {
+    startFailed = true;
+  }
+} else {
+  readJson(pixelUrl("start", "start-layout.json"))
+    .then((lay) => readJson(pixelUrl("start", "font9-ink.json")).then((fnt) => adoptStartJson(lay, fnt)))
+    .catch((error) => {
+      startFailed = true;
+      console.warn("Start layout failed; using the classic title.", error);
+    });
+}
 
 const SCALE = 4;
 const CREAM = "#FFF6E4";
@@ -201,6 +230,7 @@ export function stepAttract(dt, reduced) {
 }
 
 function sceneSprites(reduced) {
+  if (!layout) return [];
   const still = attract.frozen || reduced;
   const pinkFrame = still ? 0 : Math.floor(attract.t / 0.25) % 2;
   const blueFrame = still ? 1 : Math.floor(attract.t / 0.25) % 2;
@@ -273,6 +303,9 @@ function blitOver(ctx, file, nx, ny, nw, nh) {
   if (!ready) {
     decodePng(file).then((bitmap) => {
       rawCache.set(file, bitmap);
+      fastBake = null;
+      exactCache = null;
+      dimSoundChip = null;
     });
     blit(ctx, file, nx, ny, nw, nh);
     return;
@@ -349,8 +382,8 @@ function loadCaption(progress) {
   return `${progress.done}/${progress.total || 0}`;
 }
 
-function drawLoadBar(ctx, progress) {
-  blitElement(ctx, "loadbar-frame");
+function drawLoadBar(ctx, progress, skipFrame) {
+  if (!skipFrame) blitElement(ctx, "loadbar-frame");
   const slots = captionOverride ? 36 : loadSlots(progress.done, progress.total);
   const seg = layout.elements["loadbar-segment"];
   const img = pixelImage(seg.file);
@@ -383,25 +416,57 @@ function drawLoadBar(ctx, progress) {
   return { text, x, y: 212, w: x1 - x0 + 1, h: 9 };
 }
 
-function drawDim(ctx, file, x, y, w, h) {
-  const img = pixelImage(file);
-  if (!img) return;
-  const sw = w * SCALE;
-  const sh = h * SCALE;
-  const chip = document.createElement("canvas");
-  chip.width = sw;
-  chip.height = sh;
-  const g = chip.getContext("2d");
-  g.imageSmoothingEnabled = false;
-  g.drawImage(img, 0, 0, sw, sh);
-  const data = g.getImageData(0, 0, sw, sh);
-  for (let i = 0; i < data.data.length; i += 4) {
-    data.data[i] = Math.round(data.data[i] * 0.55);
-    data.data[i + 1] = Math.round(data.data[i + 1] * 0.55);
-    data.data[i + 2] = Math.round(data.data[i + 2] * 0.55);
+const GRASS = [92, 184, 122];
+let dimSoundChip = null;
+
+function isChipGrass(r, g, b, a) {
+  return a === 0 || (a === 255 && r === GRASS[0] && g === GRASS[1] && b === GRASS[2]);
+}
+
+/** Dim the chip once. Grass baked into the corners stays the lawn colour. */
+function dimmedSoundCanvas() {
+  if (dimSoundChip) return dimSoundChip;
+  const sound = layout.elements["chip-sound"];
+  const decoded = rawCache.get(sound.file);
+  if (!decoded || typeof decoded.then === "function") return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = sound.w * SCALE;
+  canvas.height = sound.h * SCALE;
+  const img = canvas.getContext("2d").createImageData(canvas.width, canvas.height);
+  const src = decoded.pixels;
+  for (let j = 0; j < sound.h; j += 1) {
+    for (let i = 0; i < sound.w; i += 1) {
+      const si = (j * sound.w + i) * 4;
+      const r = src[si];
+      const g = src[si + 1];
+      const b = src[si + 2];
+      const a = src[si + 3];
+      const keep = isChipGrass(r, g, b, a);
+      const pr = keep ? r : Math.round(r * 0.55);
+      const pg = keep ? g : Math.round(g * 0.55);
+      const pb = keep ? b : Math.round(b * 0.55);
+      for (let dy = 0; dy < SCALE; dy += 1) {
+        for (let dx = 0; dx < SCALE; dx += 1) {
+          const ii = ((j * SCALE + dy) * canvas.width + i * SCALE + dx) * 4;
+          img.data[ii] = pr;
+          img.data[ii + 1] = pg;
+          img.data[ii + 2] = pb;
+          img.data[ii + 3] = a;
+        }
+      }
+    }
   }
-  g.putImageData(data, 0, 0);
+  const gctx = canvas.getContext("2d");
+  gctx.putImageData(img, 0, 0);
+  dimSoundChip = canvas;
+  return canvas;
+}
+
+function drawDim(ctx, _file, x, y) {
+  const chip = dimmedSoundCanvas();
+  if (!chip) return;
   ctx.imageSmoothingEnabled = false;
+  notePixelSmoothing(false);
   ctx.drawImage(chip, x * SCALE, y * SCALE);
 }
 
@@ -420,7 +485,7 @@ function pushSpot(sink, id, rect) {
   });
 }
 
-export function drawPixelStart(ctx, state, sink) {
+function paintExact(ctx, state) {
   const reduced = !!state.save?.settings?.reducedMotion;
   const progress = pixelProgress();
   const ready = progress.ready || !!captionOverride;
@@ -449,26 +514,168 @@ export function drawPixelStart(ctx, state, sink) {
     blitElement(ctx, "btn-start-base");
     blitElement(ctx, "btn-start-label");
     blitElement(ctx, "icon-hand-tap");
-    pushSpot(sink, "start", layout.hitboxes.start);
-    pushLabel(sink, "ПОЕХАЛИ!", 40, 182, 183, 28);
   }
-  const caption = drawLoadBar(ctx, progress);
-  pushLabel(sink, caption.text, caption.x, caption.y, caption.w, caption.h);
-  if (progress.error) pushSpot(sink, "reload", [40, 211, 220, 221]);
+  drawLoadBar(ctx, progress);
   if (ready) {
     blitElement(ctx, "chip-garage");
     const sound = layout.elements["chip-sound"];
-    if (state.save?.settings?.sound === false) drawDim(ctx, sound.file, sound.x, sound.y, sound.w, sound.h);
+    if (state.save?.settings?.sound === false) drawDim(ctx, sound.file, sound.x, sound.y);
     else blitElement(ctx, "chip-sound");
+  }
+}
+
+function spriteBox(item) {
+  const img = pixelImage(item.file);
+  const h = img?.naturalHeight || 16;
+  const w = img?.naturalWidth || 16;
+  return { ...item, w, h, bottom: item.y + h };
+}
+
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+let fastBake = null;
+
+function buildFastBake(ready, soundOff) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1600;
+  canvas.height = 900;
+  const g = canvas.getContext("2d", { willReadFrequently: true });
+  g.imageSmoothingEnabled = false;
+  const ground = layout.elements["street-ground"];
+  blit(g, ground.file, ground.x, ground.y, ground.w, ground.h);
+  const statics = sceneSprites(false).filter((item) => !item.moving).map(spriteBox).sort((a, b) => a.bottom - b.bottom);
+  for (const item of statics) blit(g, item.file, item.x, item.y);
+  const pose = layout["cabin-pose"];
+  blit(g, pose.file, pose.x, pose.y);
+  const keys = ["logo-plate", "logo-title", "logo-badge", "logo-tagline", "cabin-frame", "bubble-poekhali", "loadbar-frame"];
+  if (ready) keys.push("btn-start-base", "btn-start-label", "icon-hand-tap", "chip-garage", "chip-sound");
+  for (const key of keys) {
+    if (key === "chip-sound" && soundOff) {
+      const sound = layout.elements["chip-sound"];
+      drawDim(g, sound.file, sound.x, sound.y);
+    } else blitElement(g, key);
+  }
+  return { canvas, ready, soundOff };
+}
+
+function drawFast(ctx, state) {
+  const reduced = !!state.save?.settings?.reducedMotion;
+  const progress = pixelProgress();
+  const ready = progress.ready || !!captionOverride;
+  const soundOff = state.save?.settings?.sound === false;
+  if (!fastBake || fastBake.ready !== ready || fastBake.soundOff !== soundOff) {
+    fastBake = buildFastBake(ready, soundOff);
+  }
+  ctx.imageSmoothingEnabled = false;
+  notePixelSmoothing(false);
+  ctx.drawImage(fastBake.canvas, 0, 0);
+  const sprites = sceneSprites(reduced).map(spriteBox).sort((a, b) => a.bottom - b.bottom);
+  const movers = sprites.filter((item) => item.moving);
+  for (const item of movers) blit(ctx, item.file, item.x, item.y);
+  for (const item of sprites) {
+    if (item.moving) continue;
+    if (movers.some((mover) => mover.bottom < item.bottom && rectsOverlap(mover, item))) blit(ctx, item.file, item.x, item.y);
+  }
+  const frame = layout.elements["cabin-frame"];
+  const underFrame = movers.some((mover) => rectsOverlap(mover, frame));
+  if (underFrame) blitElement(ctx, "cabin-frame");
+  const exhaustOn = attract.frozen || reduced || Math.floor(attract.t / 0.4) % 2 === 0;
+  if (exhaustOn) blitElement(ctx, "exhaust-0");
+  drawLoadBar(ctx, progress, true);
+}
+
+let exactCache = null;
+
+function drawExactCached(ctx, state) {
+  const progress = pixelProgress();
+  const ready = progress.ready || !!captionOverride;
+  const soundOff = state.save?.settings?.sound === false;
+  const caption = loadCaption(progress);
+  const exhaustOn = attract.frozen || !!state.save?.settings?.reducedMotion || Math.floor(attract.t / 0.4) % 2 === 0;
+  const key = `${ready}|${soundOff}|${caption}|${exhaustOn}`;
+  if (!exactCache || exactCache.key !== key) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 900;
+    const g = canvas.getContext("2d", { willReadFrequently: true });
+    paintExact(g, state);
+    exactCache = { key, canvas };
+  }
+  ctx.imageSmoothingEnabled = false;
+  notePixelSmoothing(false);
+  ctx.drawImage(exactCache.canvas, 0, 0);
+}
+
+function pushChrome(sink, state) {
+  const progress = pixelProgress();
+  const ready = progress.ready || !!captionOverride;
+  if (ready) {
+    pushSpot(sink, "start", layout.hitboxes.start);
+    pushLabel(sink, "ПОЕХАЛИ!", 40, 182, 183, 28);
     pushSpot(sink, "garage", layout.hitboxes.garage);
     pushSpot(sink, "sound", layout.hitboxes.sound);
     pushLabel(sink, "ГАРАЖ", 270, 186, 48, 17);
     pushLabel(sink, state.save?.settings?.sound === false ? "Звук: выкл" : "Звук: вкл", 322, 186, 49, 17);
   }
+  const caption = loadCaption(progress);
+  const lw = atlasWidth(caption);
+  const x = 40 + Math.floor((180 - lw) / 2);
+  pushLabel(sink, caption, x - 3, 212, Math.floor((180 + lw) / 2) + 2 - (x - 3) + 1, 9);
+  if (progress.error) pushSpot(sink, "reload", [40, 211, 220, 221]);
   pushLabel(sink, "Brake It, Anton", 17, 7, 110, 49);
   pushLabel(sink, "Он газует. Ты жмёшь тормоз.", 14, 59, 185, 12);
 }
 
+export function drawPixelStart(ctx, state, sink) {
+  if (startFailed) return false;
+  if (!layout || !font) return true;
+  const still = attract.frozen || !!state.save?.settings?.reducedMotion;
+  if (still) drawExactCached(ctx, state);
+  else drawFast(ctx, state);
+  pushChrome(sink, state);
+  return true;
+}
+
+export function drawAtlasCentered(ctx, text, x, y, w, h, mul) {
+  if (!font || !layout) return false;
+  const img = pixelImage(layout.loadbar.label_font);
+  if (!img) return false;
+  const fit = Math.max(1, mul | 0);
+  const scale = SCALE * fit;
+  const textW = atlasWidth(text) * scale;
+  const textH = 9 * scale;
+  if ((textW > w || textH > h) && fit > 1) return drawAtlasCentered(ctx, text, x, y, w, h, fit - 1);
+  let pen = x + Math.round((w - textW) / 2);
+  const top = y + Math.round((h - textH) / 2);
+  ctx.imageSmoothingEnabled = false;
+  for (const ch of text) {
+    if (ch === " ") {
+      pen += font.space_adv * scale;
+      continue;
+    }
+    const glyph = font.glyphs[ch];
+    if (!glyph) continue;
+    ctx.drawImage(
+      img,
+      glyph.x,
+      0,
+      font.cell_w,
+      font.cell_h,
+      pen,
+      top + font.cell_y_offset * scale,
+      font.cell_w * scale,
+      font.cell_h * scale,
+    );
+    pen += glyph.adv * scale;
+  }
+  return true;
+}
+
 export function reloadStartArt() {
+  fastBake = null;
+  exactCache = null;
+  dimSoundChip = null;
   return retryPixelLoad();
 }
