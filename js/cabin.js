@@ -25,6 +25,18 @@ export const CABIN_POSES = [
   "proud",
   "belted",
   "focused",
+  "asleep-tilt-l",
+  "asleep-tilt-r",
+  "stir",
+  "yawn",
+  "shchas",
+  "sorry",
+  "drop",
+  "grope",
+  "surface",
+  "surface-empty",
+  "flinch-l",
+  "flinch-r",
 ];
 
 const PAIRS = {
@@ -125,7 +137,12 @@ export function cabinPoseId(sim, phase, forced) {
   const face = expressionId(sim || {});
   if (phase === "drive" && (sim?.t || 0) < 1.15 && face === "calm") return "belted";
   if (face === "calm") return "drive";
-  if (CABIN_POSES.includes(face)) return face;
+  if (phase === "impact") {
+    const bare = expressionId({ ...(sim || {}), react: null, drift: null });
+    if (bare === "oy" || bare === "grumble" || CABIN_POSES.includes(bare)) return bare === "calm" ? "drive" : bare;
+    return "drive";
+  }
+  if (face === "oy" || face === "grumble" || CABIN_POSES.includes(face)) return face;
   return "drive";
 }
 

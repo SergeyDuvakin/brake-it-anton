@@ -114,6 +114,10 @@ function preening(sim) {
 }
 
 export function expressionId(sim) {
+  if (sim.react?.id) return sim.react.id;
+  if (sim.drift?.active && (sim.attention === "asleep" || sim.attention === "drowsy")) {
+    return sim.drift.dir < 0 ? "asleep-tilt-l" : "asleep-tilt-r";
+  }
   if (sim.attention && sim.attention !== "road") return sim.attention;
   if (sim.beltT > 0 || sim.cargoFlash > 0) return "belted";
   if (sim.outburstT > 0 || sim.patience >= 100) return "furious";
@@ -148,6 +152,7 @@ export function grade(sim) {
     sim.stats.playerBrakeTime < 3.6 &&
     sim.stats.harshFull <= 2 &&
     skilled &&
+    !(sim.stats.rudeHonks > 0) &&
     (!sim.cargoType || sim.cargo >= 70);
   return {
     body,

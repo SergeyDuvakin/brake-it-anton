@@ -22,6 +22,9 @@ export function createSession(mission, opts = {}) {
     pointerId: null,
     wakeId: null,
     tapQueued: false,
+    swipeQueued: false,
+    honkQueued: false,
+    gesture: null,
     keysDown: new Set(),
     pauseReason: null,
     result: null,
@@ -36,6 +39,9 @@ export function clearControls(session) {
   session.pointerId = null;
   session.wakeId = null;
   session.tapQueued = false;
+  session.swipeQueued = false;
+  session.honkQueued = false;
+  session.gesture = null;
   session.keysDown.clear();
   const sim = session.sim;
   if (!sim) return;
@@ -91,7 +97,7 @@ export function onBlur(session) {
  * Pedal and Anton are different fingers. A tap does not press the brake,
  * and the brake does not wake him. Ending one pointer releases only that finger.
  */
-export function pointerDown(session, id, pointerId) {
+export function pointerDown(session, id, pointerId, point) {
   if (!session || session.phase !== "drive") return "ignore";
   if (pointerId === null || pointerId === undefined) return "ignore";
   // One finger cannot own both targets. A second down from that finger,
@@ -102,22 +108,51 @@ export function pointerDown(session, id, pointerId) {
     session.brakeHeld = true;
     return "brake";
   }
-  if (id === "anton" && (session.wakeId === null || session.wakeId === undefined)) {
+  const touch = id === "anton" || id === "phone" || id === "wheel";
+  if (touch && (session.wakeId === null || session.wakeId === undefined)) {
     if (session.pointerId === pointerId) return "ignore";
     session.wakeId = pointerId;
-    session.tapQueued = true;
+    session.gesture = {
+      id,
+      x: point?.x || 0,
+      y: point?.y || 0,
+      t: typeof performance !== "undefined" ? performance.now() : 0,
+      swiped: false,
+    };
+    if (id === "anton") session.tapQueued = true;
     return "wake";
   }
   return "ignore";
 }
 
-export function releasePointer(session, pointerId) {
+export function pointerMove(session, point, pointerId) {
+  const gesture = session?.gesture;
+  if (!gesture || session.wakeId !== pointerId || gesture.id !== "phone" || gesture.swiped) return;
+  const dx = (point?.x || 0) - gesture.x;
+  const dy = (point?.y || 0) - gesture.y;
+  const elapsed = (typeof performance !== "undefined" ? performance.now() : 0) - gesture.t;
+  if (Math.abs(dx) >= 64 && Math.abs(dx) > 1.5 * Math.abs(dy) && elapsed <= 400) {
+    gesture.swiped = true;
+    session.swipeQueued = true;
+  }
+}
+
+export function releasePointer(session, pointerId, fire = true) {
   if (!session) return;
   if (session.pointerId === pointerId) {
     session.pointerId = null;
     session.brakeHeld = false;
   }
-  if (session.wakeId === pointerId) session.wakeId = null;
+  if (session.wakeId === pointerId) {
+    const gesture = session.gesture;
+    session.wakeId = null;
+    session.gesture = null;
+    if (!fire || !gesture || gesture.swiped || gesture.id === "anton") return;
+    const elapsed = (typeof performance !== "undefined" ? performance.now() : 0) - gesture.t;
+    if (gesture.id === "wheel") session.honkQueued = true;
+    else if (gesture.id === "phone" && elapsed >= 600) session.swipeQueued = true;
+    else session.tapQueued = true;
+  }
 }
 
 export function onVisibility(session, hidden) {
@@ -133,6 +168,16 @@ export function keyDown(session, code, opts = {}) {
   if (code === "KeyF" && session.phase === "drive") {
     if (opts.repeat) return;
     session.tapQueued = true;
+    return;
+  }
+  if (code === "KeyH" && session.phase === "drive") {
+    if (opts.repeat) return;
+    session.honkQueued = true;
+    return;
+  }
+  if (code === "KeyG" && session.phase === "drive") {
+    if (opts.repeat) return;
+    session.swipeQueued = true;
     return;
   }
   if (code === "Space" && session.phase === "drive") {
@@ -184,8 +229,12 @@ export function sessionStep(session, dt) {
   }
   const held = session.brakeHeld || session.keysDown.has("Space");
   const tap = session.tapQueued;
+  const swipe = session.swipeQueued;
+  const honk = session.honkQueued;
   session.tapQueued = false;
-  stepSim(session.sim, dt, { held, tap });
+  session.swipeQueued = false;
+  session.honkQueued = false;
+  stepSim(session.sim, dt, { held, tap, swipe, honk });
   if (session.sim.done) {
     const cause = session.sim.failCause;
     if (!session.sim.success && IMPACT_CAUSES.includes(cause)) beginImpact(session);

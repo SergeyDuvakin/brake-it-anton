@@ -85,6 +85,38 @@ test("normal 1x: click start, brake, pause and resume without console errors", a
   expect(errors).toEqual([]);
 });
 
+test("pause keys stay readable on a 896×414 phone", async ({ page }) => {
+  await page.setViewportSize({ width: 896, height: 414 });
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.hotspots().some((spot) => spot.id === "start"));
+  await clickId(page, "start");
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__anton.labels().some((item) => String(item.text).startsWith("F тычок")));
+  const ink = await page.evaluate(() => {
+    const label = window.__anton.labels().find((item) => item.text.startsWith("F тычок"));
+    const canvas = document.querySelector("canvas");
+    const ctx = canvas.getContext("2d");
+    const w = Math.round(label.w);
+    const h = Math.round(label.h);
+    const data = ctx.getImageData(Math.round(label.x), Math.round(label.y), w, h).data;
+    let top = h;
+    let bot = 0;
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        const i = (y * w + x) * 4;
+        if (data[i] < 80 && data[i + 1] < 80 && data[i + 2] < 80 && data[i + 3] > 200) {
+          if (y < top) top = y;
+          if (y > bot) bot = y;
+        }
+      }
+    }
+    return { span: bot - top + 1, boxH: h };
+  });
+  expect(ink.span).toBeGreaterThanOrEqual(18);
+  await page.screenshot({ path: shot("pause-phone") });
+});
+
 test("letterbox at 1280x720 and a mismatched landscape viewport", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(gameURL());
@@ -2631,11 +2663,48 @@ test("a full stop detours a pothole, and sleeping through it is a hit", async ({
   });
   await page.waitForFunction(() => {
     const state = window.__anton.getState();
-    return state.collisions >= 1 && state.body < 100 && state.phase === "drive";
+    const hole = state.collisions >= 1 && state.body < 100 && state.phase === "drive";
+    const drifted = state.phase === "impact" && state.impact?.cause === "drift-sleep";
+    return hole || drifted;
   });
   const asleep = await page.evaluate(() => window.__anton.getState());
-  expect(asleep.attention).toBe("asleep");
+  expect(asleep.attention === "asleep" || asleep.impact?.cause === "drift-sleep").toBe(true);
   expect(asleep.lat?.mode === "detour").toBe(false);
+});
+
+test("the horn wakes Anton and a second press inside five seconds does not", async ({ page }) => {
+  await page.goto(gameURL("e2e=1"));
+  await page.waitForFunction(() => window.__anton?.debugStart);
+  await page.evaluate(() => {
+    window.__anton.debugStart("lesson2");
+    window.__anton.setTimeScale(4);
+  });
+  await page.waitForFunction(() => window.__anton.getState().phase === "drive");
+  await page.evaluate(() => {
+    window.__anton.debugAttention("asleep");
+    window.__anton.setTimeScale(1);
+  });
+  await page.waitForFunction(() => window.__anton.getState().attention === "asleep");
+  await page.keyboard.press("KeyH");
+  await page.waitForFunction(() => {
+    const state = window.__anton.getState();
+    return state.honk?.playerHonks === 1 && (state.attention === "wake" || state.attention === "sorry");
+  });
+  await page.keyboard.press("KeyH");
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => window.__anton.getState().honk.playerHonks)).toBe(1);
+  await page.evaluate(() => {
+    window.__anton.debugAttention("asleep");
+    window.__anton.setTimeScale(1);
+  });
+  for (let i = 0; i < 3; i += 1) {
+    await page.evaluate(() => window.__anton.debugPoke());
+    await page.waitForTimeout(200);
+  }
+  await page.waitForFunction(() => {
+    const state = window.__anton.getState();
+    return state.attention === "wake" || state.attention === "sorry" || state.pokes >= 3;
+  });
 });
 
 test("the ready start screen matches the approved mockup", async ({ page }) => {

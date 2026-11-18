@@ -7,6 +7,7 @@
  */
 
 import { CFG } from "./config.js";
+import { nearestGateS } from "./roadside.js";
 import {
   buildDetourPath,
   clearsAt,
@@ -17,6 +18,17 @@ import {
   passX,
 } from "./lat.js";
 import { mulberry32 } from "./rng.js";
+import {
+  applyRoadside,
+  bootDistraction,
+  inDanger,
+  playerHonk,
+  pokeAttention as pokeDistraction,
+  registerPoke,
+  steerWithDrift,
+  strikeRoadside,
+  swipePhone,
+} from "./distract.js";
 import {
   brakeAccel,
   cargoImpulse,
@@ -54,7 +66,7 @@ export function createSim(mission, seed = 1) {
     hopped: false,
   }));
   for (const hazard of hazards) initEntity(hazard);
-  return {
+  const sim = {
     missionId: mission.id,
     infinite: !!mission.infinite,
     length: mission.length,
@@ -153,6 +165,9 @@ export function createSim(mission, seed = 1) {
     },
     events: [],
   };
+  bootDistraction(sim);
+  sim.say = (text, force) => say(sim, text, force);
+  return sim;
 }
 
 export function nextHazard(sim) {
@@ -294,6 +309,32 @@ function advanceEntity(h, sim, dt) {
 function advancePedestrian(h, sim, dt, dist) {
   const curb = sideX(h, WAIT_X.pedestrian);
   const lane = h.x;
+  if (h.honkMode === "wait") {
+    h.motion = "curb";
+    h.pose.x = curb;
+    h.pose.s = h.s;
+    h.crossT = -1;
+    if (dist < -2) {
+      h.honkMode = null;
+      markClear(sim, h, "honk");
+    }
+    return;
+  }
+  if (h.honkMode === "hopback") {
+    h.motionT = (h.motionT || 0) + dt;
+    const u = Math.min(1, h.motionT / 0.35);
+    h.motion = "enter";
+    h.pose.x = lane + (curb - lane) * u;
+    h.pose.s = h.s;
+    if (u >= 1) {
+      h.honkMode = "wait";
+      h.motion = "curb";
+      h.motionT = 0;
+      h.pose.x = curb;
+    }
+    return;
+  }
+  if (h.honkMode === "hurry") dt *= CFG.honk.hurry;
   const far = -Math.sign(h.x || 1) * 5.35;
   if (h.motion === "curb" && h.crossT >= 0) {
     h.motion = "enter";
@@ -344,6 +385,26 @@ function advancePedestrian(h, sim, dt, dist) {
 function advanceAnimal(h, sim, dt, dist) {
   const curb = sideX(h, WAIT_X.dog);
   const lane = h.x;
+  if (h.honkMode === "flee") {
+    h.motion = "flee";
+    h.motionT = (h.motionT || 0) + dt;
+    const away = sideX(h, 6.2);
+    const gate = nearestGateS(h.s, h.x >= 0 ? "right" : "left");
+    const u = Math.min(1, h.motionT / CFG.honk.dogFlee);
+    // Along the sidewalk first. Crossing the fence only happens inside the gate.
+    const along = Math.min(1, u / 0.55);
+    const out = u <= 0.55 ? 0 : (u - 0.55) / 0.45;
+    h.pose.s = h.s + (gate - h.s) * along;
+    h.pose.x = curb + (away - curb) * out;
+    if (u >= 1) {
+      h.motion = "off";
+      h.honkMode = null;
+      h.pose.x = away;
+      h.pose.s = gate;
+      markClear(sim, h, "honk");
+    }
+    return;
+  }
   if (h.motion === "curb") {
     h.pose.x = curb + Math.sin(h.s) * 0.15;
     h.pose.s = h.s;
@@ -375,6 +436,17 @@ function advanceAnimal(h, sim, dt, dist) {
 function advanceCutin(h, sim, dt, dist) {
   const curb = sideX(h, WAIT_X.cutin);
   const lane = h.x;
+  if (h.honkHold) {
+    h.motion = "curb";
+    h.pose.x = curb;
+    h.pose.s = h.s;
+    h.crossT = -1;
+    if (dist < -4) {
+      h.honkHold = false;
+      markClear(sim, h, "honk");
+    }
+    return;
+  }
   const onTop = dist < h.halfL + CFG.carHalfFront && dist > -(h.halfL + CFG.carHalfBack);
   if (h.motion === "curb" && onTop) {
     h.motion = "lane";
@@ -442,8 +514,8 @@ function log(sim, entry) {
   if (sim.events.length > 80) sim.events.shift();
 }
 
-function say(sim, text) {
-  if (sim.bubble && sim.bubbleGap > 0.4) return;
+function say(sim, text, force) {
+  if (!force && sim.bubble && sim.bubbleGap > 0.4) return;
   sim.bubble = text;
   sim.bubbleT = 1.15;
   sim.bubbleGap = 2.3;
@@ -507,28 +579,15 @@ function desiredX(sim) {
 }
 
 function outOfIt(sim) {
-  return sim.attention === "phone" || sim.attention === "asleep";
+  return sim.attention === "phone" || sim.attention === "asleep" || sim.attention === "grope";
 }
 
-/** One tap puts the phone away or wakes him. A second tap in the same state does nothing. */
+/** A counted poke. Phone takes one, a doze takes two, sleep takes three. */
 export function pokeAttention(sim) {
-  if (!sim) return false;
-  if (sim.attention === "phone") {
-    sim.attention = "stow";
-    sim.stowT = 0;
-    sim.wokeFrom = "phone";
-    sim.stats.attentionPokes += 1;
-    return true;
-  }
-  if (sim.attention === "drowsy" || sim.attention === "asleep") {
-    sim.attention = "wake";
-    sim.wakeT = 0;
-    sim.wokeFrom = "sleep";
-    sim.stats.attentionPokes += 1;
-    return true;
-  }
-  return false;
+  return pokeDistraction(sim);
 }
+
+export { registerPoke, swipePhone, playerHonk };
 
 function advanceAttention(sim, dt) {
   if (sim.attention === "road" && sim.phoneAt !== null && sim.phoneAt !== undefined && !sim.phonePlayed && sim.s >= sim.phoneAt) {
@@ -548,7 +607,15 @@ function advanceAttention(sim, dt) {
   }
   if (sim.attention === "wake") {
     sim.wakeT += dt;
-    if (sim.wakeT >= 0.62) sim.attention = "earnest";
+    if (sim.wakeT >= 0.62) {
+      if (sim.sorryAfterWake) {
+        sim.sorryAfterWake = false;
+        sim.attention = "sorry";
+        sim.sorryT = 1;
+        sim.react = { id: "sorry", until: sim.t + 1 };
+        say(sim, "ИЗВИНИ!");
+      } else sim.attention = "earnest";
+    }
   }
   if (sim.attention === "earnest") {
     const linkedId = sim.wokeFrom === "sleep" ? sim.sleepFor : sim.phoneFor;
@@ -1292,11 +1359,53 @@ function advanceDetour(sim, dt, held, lockSpeed) {
   }
 }
 
+function dangerOf(sim) {
+  let nearest = null;
+  let moving = false;
+  for (const h of sim.hazards) {
+    if (h.resolved) continue;
+    const dist = h.s - sim.s;
+    if (dist > 0 && (nearest === null || dist < nearest)) nearest = dist;
+    if ((h.type === "pedestrian" || h.type === "dog") && dist < CFG.flinch.pedDanger && dist > -2) {
+      if (h.motion === "enter" || h.motion === "linger" || h.motion === "dart") moving = true;
+    }
+  }
+  const ahead = nextHazard(sim);
+  let dir = null;
+  if (ahead) {
+    const hx = hazardWorldX(ahead, sim);
+    if (Math.abs(hx - sim.x) >= 0.3) dir = -Math.sign(hx - sim.x) || 1;
+  }
+  return { hot: inDanger(sim, nearest, moving), dir };
+}
+
+function honkActors(sim) {
+  for (const h of sim.hazards) {
+    if (h.resolved || h.family === "static" || h.type === "bin" || h.type === "roller" || h.type === "pothole" || h.type === "stopped") continue;
+    const dist = h.s - sim.s;
+    if (!(dist > 0 && dist <= CFG.honk.radius)) continue;
+    if (h.type === "pedestrian") {
+      if (h.motion === "enter" || h.motion === "linger") sim.stats.rudeHonks += 1;
+      if (h.motion === "curb") h.honkMode = "wait";
+      else if (h.motion === "enter" && dist >= CFG.honk.hopMin) {
+        h.honkMode = "hopback";
+        h.motionT = 0;
+      } else h.honkMode = "hurry";
+    } else if (h.type === "dog" && (h.motion === "curb" || h.motion === "dart")) {
+      h.honkMode = "flee";
+      h.motionT = 0;
+    } else if (h.type === "cutin" && (h.motion === "curb" || h.motion === "enter")) h.honkHold = true;
+  }
+}
+
 export function stepSim(sim, dt, input = {}) {
   if (sim.done) return sim;
   snapshotPose(sim);
   advanceAttention(sim, dt);
-  if (input.tap) pokeAttention(sim);
+  const danger = dangerOf(sim);
+  if (input.tap) registerPoke(sim, danger);
+  if (input.swipe) swipePhone(sim, danger);
+  if (input.honk && playerHonk(sim, danger)) honkActors(sim);
   const held = !!input.held;
 
   if (input.snapBrake && held) sim.brakeInput = 1;
@@ -1408,8 +1517,7 @@ export function stepSim(sim, dt, input = {}) {
   }
   const want = desiredX(sim);
   sim.targetX = want;
-  sim.x += clamp(want - sim.x, -rate * dt, rate * dt);
-  sim.x = clamp(sim.x, -bodyCenterLimit(), bodyCenterLimit());
+  steerWithDrift(sim, dt, want, rate);
   sim.stats.minX = Math.min(sim.stats.minX, sim.x);
   sim.stats.maxX = Math.max(sim.stats.maxX, sim.x);
 
@@ -1424,6 +1532,14 @@ export function stepSim(sim, dt, input = {}) {
   advanceActors(sim, dt);
   playGags(sim);
   collide(sim, prevS);
+  const drifting = sim.drift?.active || sim.drift?.offroad || sim.flinch;
+  if (!sim.done && drifting) {
+    const box = strikeRoadside(sim, prevS);
+    if (box) {
+      const cause = applyRoadside(sim, box);
+      if (cause && cause !== "tuk") fail(sim, "body");
+    }
+  }
 
   const fair = justified(sim);
   const stoppedHard =

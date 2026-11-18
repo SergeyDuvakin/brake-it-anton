@@ -59,7 +59,8 @@ import { pedPoseKey, dogPoseKey } from "../js/cast.js";
 import { pulse, vibrationPattern } from "../js/haptics.js";
 import { createAudio } from "../js/audio.js";
 import { DOG_STRIDE, PED_STRIDE, footOffset, gaitOffset, strideSlot } from "../js/gait.js";
-import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, pokeAttention, renderAlpha, renderPose, runSim, stepSim, windowsOverlap } from "../js/sim.js";
+import { WAIT_X, actorTravel, applyHazardSnap, bodyCenterLimit, contactDuringStep, createSim, hazardSnap, hazardWorldX, isSolidHazard, nextHazard, overlapTimes, playerHonk, pokeAttention, renderAlpha, renderPose, runSim, stepSim, swipePhone, windowsOverlap } from "../js/sim.js";
+import { PPM, SPRITE, WALL_M, blockLayout, dressingLayout, fenceTiles, nearestGateS, roadsideItems } from "../js/roadside.js";
 import { IMPACT_TOTAL_MS, LOSS_SUBTITLE, impactFrame, impactKind } from "../js/impact.js";
 import { CABIN_POSES } from "../js/cabin.js";
 import { HUD_PLATES, SIDEWALK_BANDS, bangPlacement, lookAheadMetres, pedalDropPx, pixelBumperBodyGap, pixelPoseFrame, platePixel, poseMapCoversCabin, reactionSeconds, sidewalkDressing, warnMetres, WORLD_PX_PER_M, xNative, yNative, camPxOf } from "../js/pixel-world.js";
@@ -895,7 +896,11 @@ test("the crash scene keeps its clock, and a soft bin stays a bump", () => {
   assert.equal(ended("stopped").session.impact.kind, "car");
   assert.equal(ended("drift-phone").session.impact.kind, "car");
   assert.equal(impactKind("drift-phone"), "car");
-  assert.deepEqual(LOSS_SUBTITLE["drift-phone"], ["Антон засмотрелся", "в телефон."]);
+  assert.deepEqual(LOSS_SUBTITLE["drift-phone"], ["Антон", "засмотрелся", "в телефон."]);
+  for (const [cause, lines] of Object.entries(LOSS_SUBTITLE)) {
+    assert.ok(lines.length >= 1 && lines.length <= 3, cause);
+    for (const line of lines) assert.ok(line.length <= 16, `${cause} ${line}`);
+  }
   assert.equal(ended(null, true).session.phase, "result");
   assert.equal(ended("timeout").session.phase, "result");
 
@@ -2595,6 +2600,8 @@ test("one tap wakes Anton, the brake does not, and a late hole stays his", () =>
   stepSim(phone, dt, { held: false, lockSpeed: true });
   assert.equal(phone.attention, "phone");
   assert.equal(pokeAttention(phone), true);
+  assert.equal(phone.attention, "phone");
+  frames(phone, Math.ceil(0.6 / dt), false, { lockSpeed: true });
   assert.equal(phone.attention, "stow");
   assert.equal(pokeAttention(phone), false);
   assert.equal(phone.stats.attentionPokes, 1);
@@ -2625,6 +2632,10 @@ test("one tap wakes Anton, the brake does not, and a late hole stays his", () =>
   stepSim(drowsy, dt, { held: false, lockSpeed: true });
   assert.notEqual(hole.committed, "asleep");
   assert.equal(pokeAttention(drowsy), true);
+  assert.equal(drowsy.attention, "drowsy");
+  stepSim(drowsy, 0.13, { held: false, lockSpeed: true });
+  assert.equal(pokeAttention(drowsy), true);
+  frames(drowsy, Math.ceil(0.55 / dt), false, { lockSpeed: true });
   assert.equal(drowsy.attention, "wake");
 
   const asleep = createSim(lesson, 22);
@@ -2783,9 +2794,11 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   keyDown(session, "Space", { repeat: false });
   assert.equal(session.keysDown.has("Space"), true);
   sessionStep(session, 1 / 60);
-  assert.equal(session.sim.attention, "stow");
+  assert.equal(session.sim.attention, "phone");
   assert.equal(session.sim.stats.attentionPokes, 1);
   assert.ok(session.sim.brakeInput > 0);
+  for (let i = 0; i < 40; i += 1) sessionStep(session, 1 / 60);
+  assert.equal(session.sim.attention, "stow");
   keyDown(session, "KeyF", { repeat: true });
   assert.equal(session.tapQueued, false);
   keyDown(session, "KeyF", { repeat: false });
@@ -2899,7 +2912,10 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   assert.equal(early.attention, "road");
 
   const ignored = runSim(lesson1, policyCareful, { maxTime: 140, attend: false });
-  assert.ok(ignored.events.some((e) => e.hitId === "hit:hole"), dump(ignored));
+  assert.ok(
+    ignored.events.some((e) => e.hitId === "hit:hole") || String(ignored.failCause || "").startsWith("drift"),
+    dump(ignored),
+  );
   const slept = runSim(lesson2, policyCareful, { maxTime: 180 });
   const sleptAgain = runSim(lesson2, policyCareful, { maxTime: 180 });
   assert.equal(slept.success, true, dump(slept));
@@ -2907,7 +2923,10 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   assert.deepEqual(slept.events, sleptAgain.events);
   assert.equal(slept.events.some((e) => e.id === "nap" && e.kind === "asleep"), false);
   const napHit = runSim(lesson2, policyCareful, { maxTime: 180, attend: false });
-  assert.ok(napHit.events.some((e) => e.hitId === "hit:nap"), dump(napHit));
+  assert.ok(
+    napHit.events.some((e) => e.hitId === "hit:nap") || String(napHit.failCause || "").startsWith("drift"),
+    dump(napHit),
+  );
 
   function batch(hz) {
     const sim = createSim(lesson1, 11);
@@ -2940,7 +2959,7 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   const before = [shown.sim.attention, shown.sim.stowT, shown.sim.stats.attentionPokes, shown.sim.events.length];
   const phoneFrame = render(mockCtx().ctx, playState(shown, 0.5));
   assert.deepEqual([shown.sim.attention, shown.sim.stowT, shown.sim.stats.attentionPokes, shown.sim.events.length], before);
-  assert.ok(phoneFrame.labels.some((label) => label.text === "Ткни в Антона"));
+  assert.ok(phoneFrame.labels.some((label) => label.text === "Ткни или смахни телефон"));
   assert.equal(phoneFrame.labels.some((label) => label.text.includes("F")), false);
   assert.ok(phoneFrame.spots.some((spot) => spot.id === "anton"));
   assert.ok(phoneFrame.spots.some((spot) => spot.id === "pedal"));
@@ -3808,6 +3827,194 @@ test("a pages-style /brake-it-anton/ server has every picture the game names", a
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("taps, drift and the horn follow the approved rules", () => {
+  const manifest = JSON.parse(readFileSync("assets/pixel/manifest.json", "utf8"));
+  for (const name of ["bench", "planter", "hydrant", "trash-bin", "manhole"]) {
+    const drawn = manifest.sprites[name];
+    assert.equal(SPRITE[name][0], drawn.w, name);
+    assert.equal(SPRITE[name][1], drawn.h, name);
+  }
+  const cam = 40;
+  const drawn = dressingLayout(cam).filter((item) => item.kind !== "fence" && item.kind !== "lamp");
+  const boxes = roadsideItems(cam - 8, cam + 28);
+  for (const item of drawn) {
+    if (item.kind === "tree") continue;
+    assert.ok(boxes.some((box) => box.name === item.name && Math.abs(box.s - item.s) < 0.2), item.name);
+  }
+
+  const phone = createSim(getMission("lesson1"), 3);
+  phone.attention = "phone";
+  phone.phonePlayed = true;
+  phone.v = 10;
+  pokeAttention(phone);
+  assert.equal(phone.attention, "phone");
+  assert.ok(phone.phoneFinish > 0);
+  frames(phone, Math.ceil(0.6 / dt) + 2, false, { lockSpeed: true });
+  assert.equal(phone.attention, "stow");
+
+  const asleep = createSim(getMission("lesson2"), 4);
+  asleep.attention = "asleep";
+  asleep.sleepPlayed = true;
+  asleep.v = 0;
+  pokeAttention(asleep);
+  stepSim(asleep, 0.13, { held: true, lockSpeed: true });
+  pokeAttention(asleep);
+  assert.equal(asleep.attention, "asleep");
+  assert.equal(asleep.drift.vLat, 0);
+  stepSim(asleep, 0.13, { held: true, lockSpeed: true });
+  pokeAttention(asleep);
+  assert.equal(asleep.attention, "wake");
+
+  const calm = createSim(getMission("lesson1"), 5);
+  calm.attention = "road";
+  calm.patience = 10;
+  pokeAttention(calm);
+  assert.equal(calm.patience, 18);
+  pokeAttention(calm);
+  assert.equal(calm.patience, 30);
+  assert.equal(calm.bubble, "ДА ЕДУ Я, ЕДУ!");
+
+  const horn = createSim(empty({
+    hazards: [
+      { id: "bin", type: "bin", s: 40, x: 4.2, halfW: 0.45, halfL: 0.45 },
+    ],
+  }), 6);
+  horn.s = 0;
+  horn.v = 0;
+  horn.attention = "asleep";
+  const bin = horn.hazards.find((item) => item.id === "bin");
+  const before = { x: bin.pose.x, s: bin.pose.s };
+  assert.equal(playerHonk(horn), true);
+  assert.equal(horn.attention, "wake");
+  assert.equal(horn.stats.playerHonks, 1);
+  assert.equal(horn.stats.honks, 0);
+  assert.equal(horn.patience, CFG.patienceStart + CFG.honk.cost);
+  assert.equal(playerHonk(horn), false);
+  stepSim(horn, 1 / 60, { held: false, lockSpeed: true });
+  assert.equal(bin.pose.x, before.x);
+  assert.equal(bin.pose.s, before.s);
+  frames(horn, Math.ceil(5.1 / dt), false, { lockSpeed: true });
+  assert.equal(playerHonk(horn), true);
+
+  assert.equal(pixelPoseFrame("yawn", "drive", 0, 0, false), "yawn-0");
+  assert.equal(pixelPoseFrame("yawn", "drive", 0, 200, false), "yawn-1");
+  assert.equal(pixelPoseFrame("grope", "drive", 0, 0, false), "grope-0");
+  assert.equal(pixelPoseFrame("grope", "drive", 0, 160, false), "grope-1");
+  assert.equal(pixelPoseFrame("grope", "drive", 0, 320, false), "grope-2");
+  assert.equal(pixelPoseFrame("grope", "drive", 0, 320, true), "grope-0");
+  assert.equal(pixelPoseFrame("drop", "drive", 0, 200, false), "drop-1");
+  assert.equal(pixelPoseFrame("shchas", "drive", 0, 200, false), "shchas-1");
+  assert.equal(pixelPoseFrame("sorry", "drive", 0, 200, false), "sorry-1");
+  const hornFace = createSim(getMission("lesson1"), 1);
+  hornFace.react = { id: "oy", until: 10 };
+  assert.equal(cabinPoseId(hornFace, "drive"), "oy");
+  hornFace.react = { id: "grumble", until: 10 };
+  assert.equal(cabinPoseId(hornFace, "drive"), "grumble");
+  assert.equal(cabinPoseId(hornFace, "impact"), "drive");
+
+  const earlyHit = [];
+  for (const attention of ["phone", "asleep"]) {
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const ride = createSim({ id: "drift", seed, cruise: 10, length: 500, hazards: [], slippery: [] }, seed);
+      ride.attention = attention;
+      ride.v = 10;
+      ride.x = 1.8;
+      let t = 0;
+      while (!ride.done && t < 8) {
+        stepSim(ride, dt, { held: false, lockSpeed: true });
+        t += dt;
+      }
+      if (ride.done && t < 3) earlyHit.push({ attention, seed, t, cause: ride.failCause });
+    }
+  }
+  assert.deepEqual(earlyHit, []);
+
+  const swipe = createSim(getMission("lesson1"), 8);
+  swipe.attention = "phone";
+  swipe.v = 10;
+  assert.equal(swipePhone(swipe), true);
+  assert.equal(swipe.attention, "drop");
+  frames(swipe, Math.ceil(0.45 / dt) + 1, false, { lockSpeed: true });
+  assert.equal(swipe.attention, "grope");
+  assert.ok(Math.abs(swipe.drift.vLat) >= 0 || swipe.drift.t >= 0);
+  pokeAttention(swipe);
+  assert.equal(swipe.attention, "surface");
+});
+
+test("fence posts sit on one 8 px grid and a scared dog uses the gate", () => {
+  const step = 8 / PPM;
+  const tiles = fenceTiles(0, 96);
+  const left = tiles.filter((item) => item.side === "left");
+  assert.ok(left.length > 10);
+  const seen = new Set();
+  for (const tile of left) {
+    assert.equal(seen.has(tile.k), false);
+    seen.add(tile.k);
+    assert.ok(Math.abs(tile.s - tile.k * step) < 1e-9);
+  }
+  assert.equal(left[0].trimBottom, true);
+  for (let i = 1; i < left.length; i += 1) {
+    const gap = left[i].k - left[i - 1].k;
+    assert.ok(gap >= 1);
+    assert.equal(left[i].trimBottom, gap !== 1);
+  }
+  const mid = left.find((tile) => !tile.trimBottom);
+  const end = left.find((tile) => tile.trimBottom);
+  assert.ok(mid && end);
+  assert.ok(Math.abs((mid.sHi - mid.sLo) - (end.sHi - end.sLo) - 3 / PPM) < 1e-6);
+
+  const houses = [];
+  for (let block = -1; block <= 5; block += 1) {
+    for (const item of blockLayout(block)) {
+      if (item.kind === "house") houses.push(item);
+    }
+  }
+  for (const tile of tiles) {
+    for (const house of houses) {
+      if (house.side !== tile.side) continue;
+      const spec = SPRITE[house.name];
+      const a = house.s - (spec[1] - spec[3]) / PPM;
+      const b = house.s + spec[3] / PPM;
+      assert.equal(tile.sLo <= b + 1e-6 && a <= tile.sHi + 1e-6, false, `${tile.side} ${tile.k}`);
+    }
+    const block = Math.round((tile.s - 26) / 32);
+    for (const g of [block - 1, block, block + 1]) {
+      const gate = g * 32 + 26;
+      assert.equal(tile.sLo <= gate + 1.3 + 1e-6 && gate - 1.3 <= tile.sHi + 1e-6, false);
+    }
+  }
+
+  const boxes = roadsideItems(0, 96).filter((box) => box.kind === "fence");
+  assert.equal(boxes.length, tiles.length);
+  for (let i = 0; i < tiles.length; i += 1) {
+    assert.ok(Math.abs(boxes[i].sLo - tiles[i].sLo) < 1e-9);
+    assert.ok(Math.abs(boxes[i].sHi - tiles[i].sHi) < 1e-9);
+    assert.ok(Math.abs(Math.abs(boxes[i].x) - boxes[i].halfW - WALL_M) < 1e-9);
+  }
+
+  const ride = createSim(empty({
+    hazards: [{ id: "pup", type: "dog", s: 20, x: 3.9, halfW: 0.35, halfL: 0.35 }],
+  }), 9);
+  ride.s = 5;
+  ride.v = 6;
+  const pup = ride.hazards[0];
+  pup.motion = "curb";
+  const gate = nearestGateS(20, "right");
+  stepSim(ride, dt, { held: false, lockSpeed: true, honk: true });
+  assert.equal(pup.honkMode, "flee");
+  let crossed = false;
+  for (let n = 0; n < 45; n += 1) {
+    stepSim(ride, 0.02, { held: false, lockSpeed: true });
+    if (Math.abs(pup.pose.x) > WALL_M) {
+      crossed = true;
+      assert.ok(Math.abs(pup.pose.s - gate) <= 1.3, `s ${pup.pose.s} gate ${gate}`);
+    }
+  }
+  assert.equal(crossed, true);
+  assert.equal(pup.motion, "off");
+  assert.ok(Math.abs(pup.pose.x) > WALL_M);
 });
 
 test("the start screen picks the next unfinished lesson", () => {

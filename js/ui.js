@@ -436,6 +436,8 @@ export function drawPauseScreen(ctx, state, sink) {
   paint(ctx, sink.labels, "ПАУЗА", title.x, title.y, title.w, title.h, 58, INK, true);
   const mark = place(card, 250, 230, 360, 120);
   pauseMark(ctx, mark.x, mark.y, mark.w, mark.h);
+  const keys = place(card, 100, 356, 660, 68);
+  paint(ctx, sink.labels, "F тычок  ·  H гудок  ·  G телефон", keys.x, keys.y, keys.w, keys.h, 24, INK, false);
   const rows = [
     ["resume", "ПРОДОЛЖИТЬ", "teal", 175, 441, 515, 153],
     ["retry", "ЗАНОВО", "orange", 175, 623, 515, 155],

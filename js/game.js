@@ -26,6 +26,7 @@ import {
   onVisibility,
   pauseSession,
   pointerDown,
+  pointerMove,
   releasePointer,
   restartSession,
   resumeSession,
@@ -59,6 +60,10 @@ let hint = true;
 let notice = save.notice;
 let lastHits = 0;
 let lastHonks = 0;
+let lastPlayerHonks = 0;
+let lastCurbs = 0;
+let lastSqueals = 0;
+let lastThuds = 0;
 let lastClears = 0;
 let lastNear = 0;
 let wasDown = false;
@@ -332,6 +337,22 @@ function tick(dt) {
     lastHonks = sim.stats.honks;
     audio.honk();
   }
+  if ((sim.stats.playerHonks || 0) > lastPlayerHonks) {
+    lastPlayerHonks = sim.stats.playerHonks;
+    audio.honk();
+  }
+  if ((sim.stats.curbBumps || 0) > lastCurbs) {
+    lastCurbs = sim.stats.curbBumps;
+    audio.bump();
+  }
+  if ((sim.stats.squeals || 0) > lastSqueals) {
+    lastSqueals = sim.stats.squeals;
+    audio.squeal();
+  }
+  if ((sim.stats.thuds || 0) > lastThuds) {
+    lastThuds = sim.stats.thuds;
+    audio.thud();
+  }
   if (sim.stats.clears > lastClears) {
     lastClears = sim.stats.clears;
     audio.pop();
@@ -345,6 +366,11 @@ function tick(dt) {
 }
 
 function frame(now) {
+  const gesture = session?.gesture;
+  if (gesture && gesture.id === "phone" && !gesture.swiped && performance.now() - gesture.t >= 600) {
+    gesture.swiped = true;
+    session.swipeQueued = true;
+  }
   const frameStart = performance.now();
   const nextMetric = pixelMetric(readMetric());
   if (metricChanged(nextMetric)) {
@@ -400,7 +426,7 @@ function trackPointer(event) {
 }
 
 function finishPress(event, fire) {
-  releasePointer(session, event.pointerId);
+  releasePointer(session, event.pointerId, fire);
   const pressed = uiPointer.pressed;
   uiPointer.pressed = null;
   if (pressed === "skip-impact") {
@@ -415,6 +441,9 @@ function finishPress(event, fire) {
 canvas.addEventListener("pointermove", (event) => {
   if (document.body.classList.contains("is-portrait")) return;
   trackPointer(event);
+  const point = eventPoint(event);
+  pointerMove(session, point, event.pointerId);
+  if (session?.gesture?.id === "phone") event.preventDefault();
 });
 
 function skipImpact() {
@@ -435,10 +464,11 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   audio.unlock();
-  let id = hit(eventPoint(event));
+  const point = eventPoint(event);
+  let id = hit(point);
   if (!id && !session && screen === "title" && readPixelProgress().ready) id = "start";
   uiPointer.over = id;
-  const action = pointerDown(session, id, event.pointerId);
+  const action = pointerDown(session, id, event.pointerId, point);
   if (action === "brake" || action === "wake") {
     try {
       canvas.setPointerCapture?.(event.pointerId);
@@ -767,6 +797,21 @@ window.__anton = {
       cabinReady: cabinReady(),
       attention: session?.sim.attention ?? null,
       pokes: session?.sim.stats.attentionPokes ?? 0,
+      poke: session?.sim.poke ? { count: session.sim.poke.count } : null,
+      drift: session?.sim.drift ? {
+        active: session.sim.drift.active,
+        dir: session.sim.drift.dir,
+        vLat: session.sim.drift.vLat,
+        x: session.sim.x,
+        offroad: session.sim.drift.offroad,
+      } : null,
+      flinch: session?.sim.flinch ? { dir: session.sim.flinch.dir, amp: session.sim.flinch.amp, t: session.sim.flinch.t } : null,
+      honk: session?.sim ? {
+        cd: session.sim.honkCdT,
+        playerHonks: session.sim.stats.playerHonks || 0,
+        rudeHonks: session.sim.stats.rudeHonks || 0,
+      } : null,
+      react: session?.sim.react?.id ?? null,
       brakePointer: session?.pointerId ?? null,
       wakePointer: session?.wakeId ?? null,
       needleDeg: readout.needleDeg,
@@ -881,6 +926,29 @@ window.__anton = {
     session.sim.attention = value || "road";
     if (value === "asleep" || value === "drowsy") session.sim.sleepPlayed = true;
     if (value === "phone") session.sim.phonePlayed = true;
+  },
+  debugPoke() {
+    if (!debug || !session || session.phase !== "drive") return;
+    session.tapQueued = true;
+  },
+  debugDrift(dir) {
+    if (!debug || !session) return;
+    const sim = session.sim;
+    sim.attention = "phone";
+    sim.phonePlayed = true;
+    sim.v = Math.max(sim.v, 10);
+    sim.drift.dir = dir < 0 ? -1 : 1;
+    sim.drift.t = 1;
+    sim.drift.active = true;
+    sim.drift.vLat = sim.drift.dir * 0.32;
+  },
+  debugFlinch() {
+    if (!debug || !session) return;
+    const sim = session.sim;
+    sim.attention = "asleep";
+    sim.flinch = { t: 0, dir: 1, amp: 0.6 };
+    sim.flinchPrev = 0;
+    sim.react = { id: "flinch-r", until: sim.t + 0.35 };
   },
   attractFreeze(on) {
     if (!debug) return;
