@@ -118,7 +118,9 @@ export function expressionId(sim) {
   if (sim.beltT > 0 || sim.cargoFlash > 0) return "belted";
   if (sim.outburstT > 0 || sim.patience >= 100) return "furious";
   if (sim.intent === "lunge") return "angry";
+  if (sim.intent === "aim" || sim.intent === "detour") return "earnest";
   if (sim.patience >= 70) return "angry";
+  if (sim.intent === "hold") return "annoyed";
   if (preening(sim)) return "preen";
   if (sim.patience >= 40) return "annoyed";
   if (sim.intent === "avoid" || sim.intent === "yield") return "focused";

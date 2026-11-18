@@ -1,5 +1,35 @@
+import { CFG } from "./config.js";
+import { detourGap } from "./lat.js";
 import { safeSpeed } from "./physics.js";
 import { nextHazard } from "./sim.js";
+
+function nextOpenHole(sim) {
+  let best = null;
+  for (const h of sim.hazards || []) {
+    if (h.type !== "pothole" || h.resolved) continue;
+    if (h.solid === false || h.category === "decor" || h.kind === "prop") continue;
+    const gap = detourGap(sim, h);
+    if (gap < CFG.detour.minGap) continue;
+    if (!best || gap < best.gap) best = { h, gap };
+  }
+  return best;
+}
+
+/**
+ * Brake to a stop in front of a pothole, then release so Anton can crawl
+ * around it. A dog or a parked car is not this pedal.
+ */
+export function policyStopForHole(sim) {
+  const mode = sim.lat?.mode;
+  if (mode === "approach" || mode === "aim" || mode === "detour") return false;
+  if (sim.attention === "phone" || sim.attention === "asleep") return false;
+  const found = nextOpenHole(sim);
+  if (!found) return false;
+  if (sim.v < CFG.detour.stopV) return false;
+  // Full-press distance plus the pedal ramp. Infinite cruise outgrows the 72 m telegraph.
+  const need = Math.max(20, (sim.v * sim.v) / (2 * 4.2) + sim.v * 0.4 + 8);
+  return found.gap < need;
+}
 
 /** Let Anton drive. Correct on trust hazards, fatal on a person in the lane. */
 export function policyNever() {
@@ -16,6 +46,7 @@ export function policyAlways() {
  * cargo trips so a full press is rare unless speed is still high.
  */
 export function policyCareful(sim) {
+  if (policyStopForHole(sim)) return true;
   const h = nextHazard(sim);
   if (!h || h.trust) return false;
   const safe = safeSpeed(h.type);
@@ -45,6 +76,7 @@ export function policyCareful(sim) {
  * Trust hazards are left to him.
  */
 export function policyYield(sim) {
+  if (policyStopForHole(sim)) return true;
   const h = nextHazard(sim);
   if (!h || h.trust) return false;
   if (h.dist > 40 || h.dist < -1) return false;

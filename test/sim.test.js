@@ -53,7 +53,7 @@ import {
   safeSpeed,
   steerParams,
 } from "../js/physics.js";
-import { policyCareful, policyNever, policyPanic, policyProvoke, policyYield } from "../js/policies.js";
+import { policyCareful, policyNever, policyPanic, policyProvoke, policyStopForHole, policyYield } from "../js/policies.js";
 import { pedPoseKey, dogPoseKey } from "../js/cast.js";
 import { pulse, vibrationPattern } from "../js/haptics.js";
 import { createAudio } from "../js/audio.js";
@@ -257,7 +257,10 @@ test("patience 40+ produces throttle bursts and 70+ steers wider", () => {
   assert.ok(hot.delay > calm.delay);
   assert.ok(burst.overshoot > hot.overshoot);
 
-  const base = trustMission();
+  const base = {
+    ...trustMission(),
+    hazards: [{ id: "dog", type: "dog", s: 250, trust: true, x: 1.8, halfW: 0.55, halfL: 0.8 }],
+  };
   const cool = runSim({ ...base, patienceStart: 12 }, policyNever, { maxTime: 50 });
   const angry = runSim({ ...base, patienceStart: 88 }, policyNever, { maxTime: 50 });
   assert.equal(cool.stats.collisions, 0, dump(cool));
@@ -285,7 +288,10 @@ test("100 triggers one outburst, cooldown holds, then another is allowed", () =>
 });
 
 test("not braking a trust hazard is the better choice", () => {
-  const mission = trustMission();
+  const mission = {
+    ...trustMission(),
+    hazards: [{ id: "dog", type: "dog", s: 250, trust: true, x: 1.8, halfW: 0.55, halfL: 0.8 }],
+  };
   const trusted = runSim(mission, policyNever, { maxTime: 50 });
   assert.equal(trusted.stats.collisions, 0, dump(trusted));
   assert.ok(trusted.stats.trustClears >= 1, dump(trusted));
@@ -296,6 +302,252 @@ test("not braking a trust hazard is the better choice", () => {
   assert.ok(provoked.stats.lunges >= 1, dump(provoked));
   assert.ok(provoked.stats.collisions >= 1, dump(provoked));
   assert.ok(provoked.body < trusted.body, dump(provoked));
+});
+
+test("a full stop in front of a pothole is a detour, and anything else is a hit", () => {
+  assert.equal(getMission("lesson3").blurb[1], "Перед ямой остановись — тогда объедет.");
+
+  function holeRide(hazard = {}) {
+    return createSim(empty({
+      cruise: 10,
+      length: 500,
+      hazards: [{
+        id: "hole",
+        type: "pothole",
+        s: 120,
+        trust: true,
+        x: 1.8,
+        halfW: 0.72,
+        halfL: 1.15,
+        ...hazard,
+      }],
+    }), 3);
+  }
+
+  function place(sim, gap, v) {
+    const h = sim.hazards[0];
+    const hs = h.pose?.s ?? h.s;
+    sim.s = (hs - h.halfL) - CFG.carHalfFront - gap;
+    sim.prevS = sim.s;
+    sim.v = v;
+    sim.x = CFG.defaultX;
+    sim.prevX = sim.x;
+  }
+
+  function overlaps(sim, h) {
+    const hx = h.pose?.x ?? h.x;
+    const hs = h.pose?.s ?? h.s;
+    const lateral = Math.abs(sim.x - hx) < CFG.carHalfW + h.halfW - 0.02;
+    const along = sim.s + CFG.carHalfFront > hs - h.halfL && sim.s - CFG.carHalfBack < hs + h.halfL;
+    return lateral && along;
+  }
+
+  function runDetour(sim) {
+    let sawLine = false;
+    let aimT = null;
+    let detourT = null;
+    let bendT = null;
+    let backT = null;
+    let aside = false;
+    let clipped = false;
+    const xs = [];
+    let guard = 0;
+    while (!sim.hazards[0].resolved && guard < 9000) {
+      stepSim(sim, dt, { held: false });
+      if (sim.bubble === "ОБЪЕДУ") sawLine = true;
+      if (aimT === null && sim.lat.mode === "aim") aimT = sim.t;
+      if (detourT === null && sim.lat.mode === "detour") detourT = sim.t;
+      if (bendT === null && sim.lat.sEnter !== null && sim.s >= sim.lat.sEnter) bendT = sim.t;
+      if (sim.x < 0) aside = true;
+      if (overlaps(sim, sim.hazards[0])) clipped = true;
+      if (backT === null && aside && bendT !== null && Math.abs(sim.x - CFG.defaultX) < 0.1) backT = sim.t;
+      if (sim.lat.mode === "detour" || sim.lat.mode === "aim") xs.push(Number(sim.x.toFixed(4)));
+      guard += 1;
+    }
+    return { sawLine, aimT, detourT, bendT, backT, aside, clipped, xs };
+  }
+
+  const sim = holeRide();
+  place(sim, 6, 2);
+  const planted = { x: sim.hazards[0].pose.x, s: sim.hazards[0].pose.s };
+  while (sim.v >= CFG.detour.stopV) stepSim(sim, dt, { held: true });
+  const first = runDetour(sim);
+  assert.equal(first.sawLine, true, dump(sim));
+  assert.ok(first.aimT !== null && first.detourT - first.aimT >= 0.35 && first.detourT - first.aimT <= 0.5, dump(sim));
+  assert.equal(first.clipped, false, dump(sim));
+  assert.equal(first.aside, true, dump(sim));
+  assert.ok(first.backT - first.bendT <= 4, `${first.backT - first.bendT}`);
+  assert.equal(sim.hazards[0].pose.x, planted.x);
+  assert.equal(sim.hazards[0].pose.s, planted.s);
+  assert.equal(sim.hazards[0].resolved, "clear");
+  assert.ok(sim.events.some((event) => event.kind === "clear" && event.how === "detour"));
+  assert.equal(sim.body, 100);
+  assert.equal(sim.stats.collisions, 0);
+  assert.ok(sim.stats.trustClears >= 1);
+  assert.equal(sim.events.some((event) => event.kind === "avoid" || event.kind === "lunge"), false);
+
+  const again = holeRide();
+  place(again, 6, 2);
+  while (again.v >= CFG.detour.stopV) stepSim(again, dt, { held: true });
+  const second = runDetour(again);
+  assert.deepEqual(second.xs, first.xs);
+
+  const coast = holeRide();
+  coast.v = 10;
+  coast.s = 40;
+  let saidSelf = false;
+  while (!coast.hazards[0].resolved && coast.t < 40) {
+    stepSim(coast, dt, { held: false });
+    if (coast.bubble === "Я САМ!") saidSelf = true;
+  }
+  assert.equal(coast.hazards[0].resolved, "hit");
+  assert.equal(coast.hazards[0].pose.x, planted.x);
+  assert.equal(coast.hazards[0].pose.s, planted.s);
+  assert.ok(coast.body < 100, coast.body);
+  assert.equal(saidSelf, false);
+  assert.equal(coast.events.some((event) => event.kind === "avoid" || event.kind === "lunge"), false);
+
+  const nudged = holeRide();
+  nudged.v = 10;
+  nudged.s = 120 - 50;
+  frames(nudged, 18, true);
+  assert.ok(nudged.v > 2, nudged.v);
+  while (!nudged.hazards[0].resolved && nudged.t < 40) stepSim(nudged, dt, { held: false });
+  assert.equal(nudged.hazards[0].resolved, "hit");
+  assert.equal(nudged.hazards[0].committed, null);
+  assert.equal(nudged.events.some((event) => event.kind === "lunge"), false);
+
+  const far = holeRide();
+  place(far, 14, 1.2);
+  while (far.v >= CFG.detour.stopV) stepSim(far, dt, { held: true });
+  let sawApproach = false;
+  let guard = 0;
+  while (!far.hazards[0].resolved && guard < 9000) {
+    stepSim(far, dt, { held: false });
+    if (far.lat.mode === "approach") sawApproach = true;
+    guard += 1;
+  }
+  assert.equal(sawApproach, true, dump(far));
+  assert.equal(far.stats.collisions, 0, dump(far));
+  assert.equal(far.hazards[0].resolved, "clear");
+
+  const held = holeRide();
+  place(held, 4, 0.1);
+  const before = held.patience;
+  frames(held, Math.round(2 / dt), true);
+  assert.ok(held.v < CFG.detour.stopV, held.v);
+  assert.equal(held.lat.path, null);
+  assert.equal(held.lat.mode, "lane");
+  const emptyStop = createSim(empty({ cruise: 10 }), 3);
+  emptyStop.v = 0.1;
+  emptyStop.patience = before;
+  frames(emptyStop, Math.round(2 / dt), true);
+  assert.ok(held.patience < before + 2, held.patience);
+  assert.ok(emptyStop.patience > held.patience + 6, `${emptyStop.patience} vs ${held.patience}`);
+
+  for (const attention of ["asleep", "phone"]) {
+    const sleepy = holeRide();
+    place(sleepy, 5, 0);
+    sleepy.attention = attention;
+    sleepy.sleepPlayed = true;
+    sleepy.phonePlayed = true;
+    frames(sleepy, 40, false);
+    assert.equal(sleepy.lat.mode, "lane", attention);
+    let steps = 0;
+    while (!sleepy.hazards[0].resolved && steps < 8000) {
+      stepSim(sleepy, dt, { held: false });
+      steps += 1;
+    }
+    assert.equal(sleepy.hazards[0].resolved, "hit", attention);
+    assert.equal(sleepy.events.some((event) => event.how === "detour"), false, attention);
+  }
+
+  const woke = holeRide();
+  woke.s = 120 - 18;
+  woke.v = 10;
+  woke.attention = "asleep";
+  woke.sleepPlayed = true;
+  pokeAttention(woke);
+  let wokeLine = false;
+  while (!woke.hazards[0].resolved && woke.t < 30) {
+    stepSim(woke, dt, { held: false });
+    if (woke.bubble === "Я САМ!") wokeLine = true;
+  }
+  assert.equal(woke.hazards[0].resolved, "hit");
+  assert.equal(woke.hazards[0].committed, null);
+  assert.equal(wokeLine, false);
+
+  const mid = holeRide();
+  place(mid, 5, 1);
+  while (mid.v >= CFG.detour.stopV) stepSim(mid, dt, { held: true });
+  let spun = 0;
+  while (mid.x >= 0 && spun < 8000) {
+    stepSim(mid, dt, { held: false });
+    spun += 1;
+  }
+  const frozen = mid.x;
+  frames(mid, Math.round(0.4 / dt), true);
+  assert.ok(mid.v < 0.05, mid.v);
+  assert.ok(Math.abs(mid.x - frozen) < 0.05, `${mid.x} ${frozen}`);
+  let clipped = false;
+  spun = 0;
+  while (!mid.hazards[0].resolved && spun < 8000) {
+    stepSim(mid, dt, { held: false });
+    if (overlaps(mid, mid.hazards[0])) clipped = true;
+    spun += 1;
+  }
+  assert.equal(clipped, false, dump(mid));
+  assert.equal(mid.stats.collisions, 0);
+
+  const blocked = holeRide();
+  blocked.hazards.push({
+    id: "car",
+    type: "stopped",
+    s: 120,
+    x: -0.32,
+    halfW: 0.95,
+    halfL: 2.1,
+    clearAfter: 30,
+    trust: false,
+    resolved: null,
+  });
+  place(blocked, 5, 1);
+  while (blocked.v >= CFG.detour.stopV) stepSim(blocked, dt, { held: true });
+  frames(blocked, Math.round(1.2 / dt), false);
+  assert.equal(blocked.lat.mode, "aim", blocked.lat.mode);
+  assert.equal(blocked.lat.blocked, true);
+  assert.ok(blocked.v < 0.05, blocked.v);
+  assert.equal(blocked.lat.path !== null, true);
+  blocked.hazards[1].resolved = "clear";
+  frames(blocked, Math.round(1 / dt), false);
+  assert.equal(blocked.lat.mode, "detour");
+
+  const later = holeRide();
+  place(later, 6, 2);
+  while (later.v >= CFG.detour.stopV) stepSim(later, dt, { held: true });
+  let steps = 0;
+  while (!later.hazards[0].resolved && steps < 9000) {
+    stepSim(later, dt, { held: false });
+    steps += 1;
+  }
+  assert.equal(later.hazards[0].resolved, "clear");
+  const after = later.v;
+  frames(later, Math.round(3 / dt), false);
+  assert.ok(later.v > after + 2 && later.v > 6, later.v);
+  assert.equal(later.stats.collisions, 0);
+  assert.equal(later.hazards[0].resolved, "clear");
+
+  const decor = holeRide({ category: "decor", solid: false });
+  place(decor, 4, 0);
+  frames(decor, Math.round(1 / dt), false);
+  assert.equal(decor.lat.mode, "lane");
+  assert.equal(decor.stats.collisions, 0);
+
+  const locked = holeRide();
+  place(locked, 4, 0);
+  frames(locked, 60, false, { lockSpeed: true });
+  assert.equal(locked.lat.mode, "lane");
+  assert.equal(locked.lat.path, null);
 });
 
 test("never braking lesson 1 hits the pedestrian; careful braking clears it", () => {
@@ -882,6 +1134,7 @@ test("infinite mode is seeded, capped near 96 km/h, and stays in the lanes", () 
 });
 
 function brakeOnly(sim) {
+  if (policyStopForHole(sim)) return true;
   const hazard = nextHazard(sim);
   if (!hazard || hazard.trust) return false;
   const dist = hazard.s - sim.s;
@@ -930,7 +1183,7 @@ test("a brake-only player can pass every generated road, and a parked car is tru
 
   for (const seed of [1, 4, 9, 22]) {
     const road = buildInfinite(seed);
-    const trip = driveTo(road, brakeOnly, road.hazards.at(-1).s + 40);
+    const trip = driveTo(road, brakeOnly, road.hazards.at(-1).s + 40, 1400);
     assert.equal(trip.stuck, false, `stuck on seed ${seed} at ${trip.sim.s}`);
     assert.equal(trip.sim.stats.collisions, 0, `hits on seed ${seed}: ${trip.sim.events.filter((e) => e.kind === "hit").map((e) => e.id).join(",")}`);
     assert.ok(trip.sim.body > 99, trip.sim.body);
@@ -1603,6 +1856,7 @@ test("pages bundle lists every runtime script and the shipped fonts", () => {
 });
 
 function brakeOpen(sim) {
+  if (policyStopForHole(sim)) return true;
   const next = sim.hazards.find((h) => !h.resolved && !h.trust);
   if (!next) return false;
   const dist = next.s - sim.s;
@@ -2375,11 +2629,11 @@ test("one tap wakes Anton, the brake does not, and a late hole stays his", () =>
   const nap = asleep.hazards.find((h) => h.id === "nap");
   nap.s = asleep.s + 10;
   stepSim(asleep, dt, { held: true, lockSpeed: true });
-  assert.equal(nap.committed, "asleep");
+  assert.equal(nap.committed, null);
   assert.equal(asleep.attention, "asleep");
   pokeAttention(asleep);
   stepSim(asleep, dt, { held: true, lockSpeed: true });
-  assert.equal(nap.committed, "asleep");
+  assert.equal(nap.committed, null);
   assert.ok(Math.abs(asleep.x) <= 3.35);
 
   const early = createSim(lesson, 22);
@@ -2390,10 +2644,11 @@ test("one tap wakes Anton, the brake does not, and a late hole stays his", () =>
   const far = early.hazards.find((h) => h.id === "nap");
   far.s = early.s + 20;
   stepSim(early, dt, { held: false, lockSpeed: true });
-  assert.equal(far.committed, "asleep");
+  assert.equal(far.committed, null);
   pokeAttention(early);
   stepSim(early, dt, { held: false, lockSpeed: true });
-  assert.equal(far.committed, "avoid");
+  assert.equal(far.committed, null);
+  assert.equal(early.events.some((event) => event.kind === "avoid"), false);
 
   const missed = runSim(getMission("lesson1"), policyCareful, { maxTime: 120, attend: false });
   assert.ok(missed.stats.collisions >= 1, dump(missed));
@@ -2584,18 +2839,21 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
     return sim;
   }
   const onEdge = atDistance(14);
-  assert.equal(onEdge.hazards[0].committed, "asleep");
+  assert.equal(onEdge.hazards[0].committed, null);
+  assert.equal(onEdge.lat.mode, "lane");
   pokeAttention(onEdge);
   stepSim(onEdge, 1 / 60, { held: false, lockSpeed: true });
-  assert.equal(onEdge.hazards[0].committed, "asleep");
+  assert.equal(onEdge.hazards[0].committed, null);
+  assert.notEqual(onEdge.bubble, "Я САМ!");
   const justFar = atDistance(14.25);
   pokeAttention(justFar);
   stepSim(justFar, 1 / 60, { held: false, lockSpeed: true });
-  assert.equal(justFar.hazards[0].committed, "avoid");
+  assert.equal(justFar.hazards[0].committed, null);
+  assert.equal(justFar.events.some((event) => event.kind === "avoid"), false);
   const inside = atDistance(10);
   pokeAttention(inside);
   stepSim(inside, 1 / 60, { held: false, lockSpeed: true });
-  assert.equal(inside.hazards[0].committed, "asleep");
+  assert.equal(inside.hazards[0].committed, null);
 
   const nodding = createSim(lesson2, 22);
   nodding.s = 400;
@@ -2607,8 +2865,9 @@ test("attention fingers, cues and both lessons stay fair at every frame rate", (
   nap.s = nodding.s + 30;
   nap.x = 1.8;
   for (let i = 0; i < 40; i += 1) stepSim(nodding, 1 / 60, { held: false, lockSpeed: true });
-  assert.equal(nap.committed, "avoid");
-  assert.ok(nodding.x < 1.2, nodding.x);
+  assert.equal(nap.committed, null);
+  assert.equal(nodding.events.some((event) => event.kind === "avoid" && event.id === "nap"), false);
+  assert.ok(Math.abs(nodding.x - 1.8) < 0.25, nodding.x);
   assert.equal(nodding.attention, "drowsy");
 
   const dozing = createSim(lesson2, 22);
