@@ -292,6 +292,18 @@ function sideButtons(ctx, sink, state, startY = 96, bottom = 884) {
   });
 }
 
+/** First unlocked lesson that has no best result yet, else the last unlocked one. */
+export function startLesson(save) {
+  const unlocked = save?.unlocked;
+  if (typeof unlocked !== "number" || !Number.isInteger(unlocked) || unlocked < 1 || unlocked > 4) return "lesson1";
+  const best = save.best && typeof save.best === "object" ? save.best : {};
+  for (let n = 1; n <= unlocked; n += 1) {
+    const id = `lesson${n}`;
+    if (!best[id]) return id;
+  }
+  return `lesson${unlocked}`;
+}
+
 export function drawTitleChrome(ctx, sink, state) {
   const plaque = { x: 1084, y: 36, w: 468, h: 132 };
   nineSlice(ctx, IMG.cream, plaque.x, plaque.y, plaque.w, plaque.h, 36, FILL.cream);

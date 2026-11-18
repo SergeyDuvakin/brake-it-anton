@@ -10,13 +10,14 @@ import { expressionId } from "./physics.js";
 import { CFG, SAVE_KEY } from "./config.js";
 import { detourGap } from "./lat.js";
 import { whenCabinReady, cabinReady } from "./cabin.js";
-import { whenPixelReady } from "./pixel-assets.js";
-import { bumperFootGap, render, whenCarsReady } from "./draw.js";
-import { resultKeyAction } from "./ui.js";
+import { classicArtForced, noteExtraProgress, pixelProgress as readPixelProgress, whenPixelReady } from "./pixel-assets.js";
+import { bumperFootGap, carPictureCount, render, whenCarsReady } from "./draw.js";
+import { resultKeyAction, startLesson } from "./ui.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, futureMissions, getMission } from "./missions.js";
 import { POLICIES } from "./policies.js";
 import { applyHazardSnap, createSim, hazardSnap, nextHazard, renderAlpha, renderPose, snapRenderPose } from "./sim.js";
+import { attractFreeze as freezeAttract, holdStartExhaust, reloadStartArt, setLoadCaption as forceLoadCaption, startMoverBoxes, stepAttract, warmStartPixels } from "./pixel-start.js";
 import {
   createSession,
   keyDown,
@@ -185,7 +186,12 @@ function toggle(which) {
 function activate(id) {
   if (!id) return;
   notice = null;
-  if (id === "start") return startMission("lesson1");
+  if (id === "start") {
+    audio.unlock();
+    audio.honk();
+    return startMission(startLesson(save));
+  }
+  if (id === "reload") return reloadStartArt();
   if (id === "garage" || id === "to-garage") {
     audio.stopRadio();
     screen = "garage";
@@ -266,6 +272,7 @@ function activate(id) {
 }
 
 function tick(dt) {
+  if (screen === "title") stepAttract(dt, !!save.settings.reducedMotion);
   if (screen !== "play" || !session) return;
   if (session.phase === "replay") {
     const sample = moment.step();
@@ -401,7 +408,8 @@ function finishPress(event, fire) {
     return;
   }
   if (!fire || !pressed) return;
-  if (hit(eventPoint(event)) === pressed) activate(pressed);
+  const released = hit(eventPoint(event));
+  if (released === pressed || (pressed === "start" && released === null)) activate(pressed);
 }
 
 canvas.addEventListener("pointermove", (event) => {
@@ -427,7 +435,8 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   audio.unlock();
-  const id = hit(eventPoint(event));
+  let id = hit(eventPoint(event));
+  if (!id && !session && screen === "title" && readPixelProgress().ready) id = "start";
   uiPointer.over = id;
   const action = pointerDown(session, id, event.pointerId);
   if (action === "brake" || action === "wake") {
@@ -476,7 +485,12 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.repeat && event.code !== "Space") return;
   if (!session) {
-    if (event.code === "Enter" || event.code === "Space") activate(screen === "garage" ? "go" : "start");
+    if (event.code === "Enter" || event.code === "Space") {
+      const progress = readPixelProgress();
+      const pixelTitle = screen === "title" && !classicArtForced({ save }) && !progress.gaveUp;
+      if (pixelTitle && !progress.ready) return;
+      activate(screen === "garage" ? "go" : "start");
+    }
     return;
   }
   keyDown(session, event.code, { repeat: event.repeat });
@@ -718,6 +732,7 @@ window.__anton = {
     return {
       screen,
       phase: session?.phase ?? null,
+      sound: save.settings.sound !== false,
       countdown: session?.countdown ?? null,
       s: session?.sim.s ?? 0,
       x: session?.sim.x ?? 0,
@@ -867,6 +882,31 @@ window.__anton = {
     if (value === "asleep" || value === "drowsy") session.sim.sleepPlayed = true;
     if (value === "phone") session.sim.phonePlayed = true;
   },
+  attractFreeze(on) {
+    if (!debug) return;
+    freezeAttract(!!on);
+  },
+  setLoadCaption(text) {
+    if (!debug) return;
+    forceLoadCaption(text);
+  },
+  pixelProgress() {
+    return readPixelProgress();
+  },
+  warmStartPixels() {
+    return warmStartPixels();
+  },
+  stepTitle(dt) {
+    if (!debug) return null;
+    return stepAttract(Number(dt) || 0, false);
+  },
+  holdStartExhaust() {
+    if (!debug) return;
+    holdStartExhaust();
+  },
+  startMoverBoxes() {
+    return startMoverBoxes();
+  },
   debugSpeed(value) {
     if (!debug || !session) return;
     session.sim.v = Math.max(0, Number(value) || 0);
@@ -961,7 +1001,38 @@ function gapState() {
   return { world: gap.world, screen: gap.screen };
 }
 
+function wireTelegram() {
+  const agent = navigator.userAgent || "";
+  const inside = !!(window.Telegram?.WebApp || window.TelegramWebviewProxy || /Telegram/i.test(agent));
+  if (!inside) return;
+  const apply = () => {
+    const web = window.Telegram?.WebApp;
+    if (!web) return;
+    web.ready?.();
+    web.expand?.();
+    const box = web.safeAreaInset || {};
+    const content = web.contentSafeAreaInset || {};
+    const root = document.documentElement.style;
+    for (const side of ["top", "right", "bottom", "left"]) {
+      const px = Math.max(Number(box[side]) || 0, Number(content[side]) || 0);
+      root.setProperty(`--tg-safe-area-inset-${side}`, `${px}px`);
+      root.setProperty(`--tg-content-safe-area-inset-${side}`, `${Number(content[side]) || 0}px`);
+    }
+    window.dispatchEvent(new globalThis.Event("resize"));
+  };
+  if (!window.Telegram?.WebApp) {
+    const script = document.createElement("script");
+    script.src = "https://telegram.org/js/telegram-web-app.js";
+    script.onload = apply;
+    document.head.appendChild(script);
+  } else apply();
+  window.Telegram?.WebApp?.onEvent?.("safeAreaChanged", apply);
+  window.Telegram?.WebApp?.onEvent?.("contentSafeAreaChanged", apply);
+}
+
 async function boot() {
+  requestAnimationFrame(frame);
+  wireTelegram();
   try {
     const faces = [
       ["Balsamiq Sans", "BalsamiqSans-Bold.ttf", "700"],
@@ -974,22 +1045,36 @@ async function boot() {
     console.warn("Font load failed, falling back to system faces.", error);
   }
   applyAudio();
+  const cars = carPictureCount();
+  let cabinN = 0;
   try {
-    await whenCarsReady();
+    const cabin = await (await globalThis.fetch(new URL(`../assets/cabin/${"manifest"}.json`, import.meta.url))).json();
+    cabinN = (cabin.poses || []).length;
   } catch {
-    /* A missing picture falls back to flat shapes. The ride still starts. */
+    cabinN = 0;
   }
-  try {
-    await whenCabinReady();
-  } catch {
-    /* The cabin stays a flat panel until the approved stills load. */
-  }
+  noteExtraProgress(0, cars + cabinN);
+  let extraDone = 0;
+  const extraTick = () => {
+    extraDone += 1;
+    noteExtraProgress(extraDone, cars + cabinN);
+  };
   try {
     await whenPixelReady();
   } catch {
     /* The classic renderer stays up if the pixel package fails. */
   }
-  requestAnimationFrame(frame);
+  try {
+    await whenCarsReady(extraTick);
+  } catch {
+    /* A missing picture falls back to flat shapes. The ride still starts. */
+  }
+  try {
+    await whenCabinReady();
+    for (let i = 0; i < cabinN; i += 1) extraTick();
+  } catch {
+    /* The cabin stays a flat panel until the approved stills load. */
+  }
 }
 
 boot();

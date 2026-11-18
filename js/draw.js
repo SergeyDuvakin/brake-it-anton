@@ -6,7 +6,8 @@
 import { CFG, PALETTE as P } from "./config.js";
 import { damageStage } from "./physics.js";
 import { cabinPoseId, drawPassenger, paintCabin } from "./cabin.js";
-import { usePixel } from "./pixel-assets.js";
+import { classicArtForced, pixelProgress, usePixel } from "./pixel-assets.js";
+import { drawAtlasCentered, drawPixelStart } from "./pixel-start.js";
 import { drawPixelCabin, drawPixelLossCard, drawPixelWorld, pixelBumperBodyGap, pixelChrome } from "./pixel-world.js";
 import { CALLOUT, DRIVER_PLATE, NOTICE_BOX } from "./layout.js";
 import {
@@ -149,7 +150,33 @@ function imageReady(img) {
   return !!(img && img.complete && img.naturalWidth);
 }
 
-export function whenCarsReady() {
+export function carPictureCount() {
+  return [
+    YELLOW_STRAIGHT,
+    YELLOW_BRAKE,
+    YELLOW_CRASH,
+    YELLOW_LEFT,
+    YELLOW_RIGHT,
+    YELLOW_SMALL_LEFT,
+    YELLOW_SMALL_RIGHT,
+    MINT_CAR,
+    BLUE_CAR,
+    CORAL_STRAIGHT,
+    ...worldImages(),
+    ...uiImages(),
+  ].filter(Boolean).length;
+}
+
+function imageSettled(img) {
+  if (!img) return Promise.resolve(false);
+  if (img.complete) return Promise.resolve(img.naturalWidth > 0);
+  return new Promise((resolve) => {
+    img.addEventListener("load", () => resolve(img.naturalWidth > 0), { once: true });
+    img.addEventListener("error", () => resolve(false), { once: true });
+  });
+}
+
+export function whenCarsReady(onFile) {
   const imgs = [
     YELLOW_STRAIGHT,
     YELLOW_BRAKE,
@@ -165,7 +192,12 @@ export function whenCarsReady() {
     ...uiImages(),
   ].filter(Boolean);
   if (!imgs.length) return Promise.resolve(false);
-  return Promise.all(imgs.map((img) => (img.decode ? img.decode() : Promise.resolve()))).then(() => true);
+  // decode() can reject or never settle on a second load of a valid file.
+  // The load event is enough: a picture that arrived still draws.
+  return Promise.all(imgs.map((img) => imageSettled(img).then(() => {
+    onFile?.();
+    return true;
+  }))).then(() => true);
 }
 
 /**
@@ -329,14 +361,11 @@ export function render(ctx, state) {
 function drawTitle(ctx, state) {
   const boil = state.save.settings.reducedMotion ? 0 : Math.floor(state.now / 110) % 2;
   const previewState = { ...state, pose: "preen", session: { phase: "drive", sim: state.preview }, alpha: 1 };
-  if (usePixel(state)) {
-    // The title has its own card: no gauge, no pause and no drive callout behind it.
-    drawPixelWorld(ctx, state.preview, previewState, { hud: false });
-    drawPixelCabin(ctx, state.preview, previewState, "preen", { callout: false });
-  } else {
-    drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
-    paintCabin(ctx, state.preview, previewState);
+  if (!classicArtForced(state) && !pixelProgress().gaveUp) {
+    if (drawPixelStart(ctx, state, { spots, labels }) !== false) return;
   }
+  drawWorld(ctx, state.preview, boil, false, 1, !!state.save.settings.reducedMotion);
+  paintCabin(ctx, state.preview, previewState);
   drawTitleChrome(ctx, { spots, labels }, state);
 }
 
@@ -391,7 +420,10 @@ function drawPlay(ctx, state, sink) {
     ctx.fill();
     ink(ctx, 6);
     ctx.stroke();
-    paintCenter(ctx, String(session.countdown || 1), 640, 150, 120, 84, 42, P.INK, true, false);
+    const beat = session.countdown;
+    const label = typeof beat === "string" ? beat : String(beat || 1);
+    if (pixel) drawAtlasCentered(ctx, label, 640, 150, 120, 84, 8);
+    else paintCenter(ctx, String(session.countdown || 1), 640, 150, 120, 84, 42, P.INK, true, false);
   }
   const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
   if (pixel) {
