@@ -367,7 +367,11 @@ function advancePedestrian(h, sim, dt, dist) {
   const t = h.motionT;
   if (t < PED_ENTER) {
     h.motion = "enter";
-    h.pose.x = curb + (lane - curb) * smooth(t / PED_ENTER);
+    const x = curb + (lane - curb) * smooth(t / PED_ENTER);
+    // A real pedestrian does not step into a car already alongside them.
+    // They wait where they stand until the car body has passed.
+    if (carInTheWay(sim, h, x)) h.motionT -= dt;
+    else h.pose.x = x;
   } else if (t < PED_ENTER + PED_LINGER) {
     h.motion = "linger";
     h.pose.x = lane;
@@ -382,6 +386,16 @@ function advancePedestrian(h, sim, dt, dist) {
   const dur = h.crossDur || PED_TOTAL;
   h.crossT = h.motion === "off" ? dur : (t / PED_TOTAL) * dur;
   if (sim.v < 3 && h.playerBraked) h.yielded = true;
+}
+
+/** The car body already covers this crossing line and the next step would walk into its side. */
+function carInTheWay(sim, h, nextX) {
+  const along = frontOf(sim.s) > h.s - h.halfL && sim.s - CFG.carHalfBack < h.s + h.halfL;
+  if (!along) return false;
+  // Full body widths, no hit margin: the drawn bodies must not touch either.
+  const reach = CFG.carHalfW + h.halfW;
+  if (Math.abs(sim.x - h.pose.x) < reach) return false;
+  return Math.abs(sim.x - nextX) < reach;
 }
 
 function advanceAnimal(h, sim, dt, dist) {
