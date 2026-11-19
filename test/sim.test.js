@@ -1657,6 +1657,7 @@ test("early brake keeps a visible bumper-to-feet gap and the crossing runs at ze
   const sim = createSim(getMission("lesson1"), 11);
   sim.v = 10;
   let minWorld = Infinity;
+  let maxWorld = -Infinity;
   let minScreen = Infinity;
   let sawStop = false;
   let crossWhileStopped = null;
@@ -1669,6 +1670,7 @@ test("early brake keeps a visible bumper-to-feet gap and the crossing runs at ze
         const gap = bumperFootGap(sim, ped);
         if (Math.abs(sim.x - hazardWorldX(ped, sim)) < CFG.carHalfW + ped.halfW + 0.2) {
           minWorld = Math.min(minWorld, gap.world);
+          maxWorld = Math.max(maxWorld, gap.world);
           minScreen = Math.min(minScreen, gap.screen);
         }
         if (crossWhileStopped === null) crossWhileStopped = ped.crossT;
@@ -1682,7 +1684,8 @@ test("early brake keeps a visible bumper-to-feet gap and the crossing runs at ze
   assert.ok(ped.crossT > crossWhileStopped + 0.9, "pedestrian froze while the car was stopped");
   assert.equal(sim.stats.collisions, 0);
   assert.ok(minWorld > 2, `world gap ${minWorld}`);
-  assert.ok(minWorld <= CFG.yieldStandoff + 0.05, `stop drifted past the standoff ${minWorld}`);
+  // The stop stays where the brake left it: no creep forward, no snap back.
+  assert.ok(maxWorld - minWorld < 1e-9, `stopped car moved ${minWorld}..${maxWorld}`);
   assert.ok(minScreen > 48, `screen gap ${minScreen}px does not show daylight between bumper and feet`);
 
   const bumper = project(CFG.carHalfFront, sim.x);
@@ -1915,6 +1918,141 @@ test("brake timing: early stop leaves a gap, late speed is a hit, crawl is not",
 
   const kinds = new Set(early.events.map((e) => e.kind + ":" + (e.id || "")));
   assert.ok([...kinds].some((name) => name.includes("lid") || name.includes("roller") || early.events.some((e) => e.id === "lid")));
+});
+
+function seededRandom(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function crossingRide(brakeAt) {
+  const sim = createSim(empty({
+    hazards: [{ id: "p", type: "pedestrian", s: 160, x: 1.8, halfW: 0.42, halfL: 0.55 }],
+  }), 1);
+  const ped = sim.hazards[0];
+  let back = 0;
+  let stopGap = null;
+  let stopPx = null;
+  for (let i = 0; i < 3000 && !sim.done; i++) {
+    const gap = ped.s - ped.halfL - (sim.s + CFG.carHalfFront);
+    const before = sim.s;
+    const crossed = ped.crossDur > 0 && ped.crossT >= ped.crossDur;
+    stepSim(sim, dt, { held: gap < brakeAt && !crossed && !ped.resolved });
+    back = Math.max(back, before - sim.s);
+    if (stopGap === null && sim.v === 0 && !ped.resolved) {
+      stopGap = ped.s - ped.halfL - (sim.s + CFG.carHalfFront);
+      stopPx = pixelBumperBodyGap(sim, ped).native;
+    }
+  }
+  return { sim, ped, back, stopGap, stopPx };
+}
+
+test("braking close to a crossing pedestrian never throws the car backwards", () => {
+  // Sergey's video: the car slowed a few metres short of the zebra and was
+  // pulled back to the 8.4 m standoff. Every brake point must keep s rising.
+  let closeStops = 0;
+  for (let brakeAt = 17; brakeAt <= 27.5; brakeAt += 0.5) {
+    const { sim, ped, back, stopGap, stopPx } = crossingRide(brakeAt);
+    assert.equal(back, 0, `brake at ${brakeAt} m threw the car back ${back} m`);
+    assert.equal(sim.stats.collisions, 0, `brake at ${brakeAt} m hit the pedestrian`);
+    assert.ok(stopGap !== null && stopGap >= 0, `brake at ${brakeAt} m stopped at ${stopGap}`);
+    assert.ok(stopPx > 0, `brake at ${brakeAt} m: bumper drawn on the pedestrian (${stopPx}px)`);
+    assert.equal(ped.resolved, "clear");
+    if (stopGap < CFG.yieldStandoff - 1) closeStops += 1;
+  }
+  assert.ok(closeStops >= 5, `only ${closeStops} close stops were exercised`);
+  // A 3 m stop is a legitimate stop: the car stays 3 m short, it is not moved.
+  const near = crossingRide(20);
+  assert.ok(near.stopGap > 2 && near.stopGap < 4, `near stop ${near.stopGap}`);
+  assert.ok(near.stopPx > 12, `near stop shows ${near.stopPx}px of road`);
+});
+
+test("a slow touch is held at the body, never pushed back past where the step began", () => {
+  // Contact branch: a slow car meets a trusted pedestrian in the lane.
+  const sim = createSim(empty({
+    hazards: [{ id: "h", type: "pedestrian", s: 60, x: 1.8, halfW: 0.42, halfL: 0.55, trust: true }],
+  }), 1);
+  const h = sim.hazards[0];
+  stepSim(sim, dt, { held: false, lockSpeed: true });
+  h.motion = "lane";
+  sim.s = h.s - h.halfL - CFG.carHalfFront - 1;
+  sim.prevS = sim.s;
+  sim.v = 2;
+  for (let i = 0; i < 60; i++) {
+    sim.x = 1.8;
+    sim.prevX = 1.8;
+    h.pose.x = 1.8;
+    const before = sim.s;
+    stepSim(sim, dt, { held: false, lockSpeed: true });
+    assert.ok(sim.s >= before, `contact threw the car back ${before - sim.s} m`);
+  }
+  const gap = h.s - h.halfL - CFG.carHalfFront - sim.s;
+  assert.ok(Math.abs(gap) < 1e-9, `held at ${gap} m, not on the touch line`);
+  assert.equal(sim.v, 0);
+  assert.equal(sim.stats.collisions, 0);
+  assert.equal(h.yielded, true);
+
+  // Hold branch: the bumper already crept past the kerb line when the
+  // pedestrian steps into the lane. The car stops there; it is not yanked back.
+  const late = createSim(empty({
+    hazards: [{ id: "p", type: "pedestrian", s: 60, x: 1.8, halfW: 0.5, halfL: 0.6 }],
+  }), 1);
+  const p = late.hazards[0];
+  stepSim(late, dt, { held: false, lockSpeed: true });
+  p.pose.x = 1.8;
+  p.x = 1.8;
+  p.motion = "lane";
+  p.crossT = p.crossDur * 0.5;
+  late.s = p.s - p.halfL - CFG.carHalfFront - 0.05;
+  late.prevS = late.s;
+  late.x = 1.8;
+  late.prevX = 1.8;
+  late.v = 2;
+  let held = false;
+  for (let i = 0; i < 40; i++) {
+    const before = late.s;
+    stepSim(late, dt, { held: false, lockSpeed: true });
+    assert.ok(late.s >= before, `step ${i}: car went back ${before - late.s} m`);
+    held ||= p.yielded === true;
+  }
+  assert.ok(held, "the pedestrian never held the car");
+  assert.equal(late.v, 0);
+  assert.equal(late.stats.collisions, 0);
+});
+
+test("property: seeded rides with random brake timing never move the car backwards", () => {
+  const missions = [...LESSONS.map((m) => getMission(m.id)), buildInfinite(3), buildInfinite(17), buildInfinite(41)];
+  let rides = 0;
+  let worst = 0;
+  for (const mission of missions) {
+    for (let seed = 1; seed <= 6; seed++) {
+      const rnd = seededRandom(seed * 7919 + rides);
+      const sim = createSim(mission, seed);
+      let held = false;
+      let flip = 0;
+      for (let i = 0; i < 2400 && !sim.done; i++) {
+        if (i >= flip) {
+          held = rnd() < 0.45;
+          flip = i + 6 + Math.floor(rnd() * 90);
+        }
+        const needsTap = sim.attention === "phone" || sim.attention === "drowsy" || sim.attention === "asleep";
+        const before = sim.s;
+        stepSim(sim, dt, { held, tap: needsTap && rnd() < 0.05 });
+        worst = Math.max(worst, before - sim.s);
+        assert.ok(sim.s >= before, `${mission.id} seed ${seed} step ${i}: s ${before} -> ${sim.s}`);
+        assert.ok(sim.v >= 0, `${mission.id} seed ${seed} step ${i}: v ${sim.v}`);
+      }
+      rides += 1;
+    }
+  }
+  assert.equal(worst, 0);
+  assert.ok(rides >= 30, `${rides} rides`);
 });
 
 test("orientation follows matchMedia, and the home hint stays out of standalone", () => {
