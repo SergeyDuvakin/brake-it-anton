@@ -12,7 +12,6 @@ let failed = false;
 let logged = false;
 let lastSmoothing = true;
 let progress = { done: 0, total: 0, broken: [], tries: {}, gaveUp: false };
-let extra = { done: 0, total: 0 };
 let packReady = false;
 let startFiles = [];
 let startSeen = false;
@@ -93,15 +92,16 @@ export function usePixel(state) {
   return pixelReady() && !classicArtForced(state);
 }
 
-export function noteExtraProgress(done, total) {
-  extra = { done, total };
-}
-
+/**
+ * The start button waits only for the pixel pack and its font. The ride is
+ * drawn from that pack. The classic pictures keep loading in the background
+ * and every classic draw already skips a picture that has not arrived.
+ */
 export function pixelProgress() {
   return {
-    done: progress.done + extra.done,
-    total: progress.total + extra.total,
-    ready: pixelReady() && extra.done >= extra.total,
+    done: progress.done,
+    total: progress.total,
+    ready: pixelReady(),
     error: progress.broken.length > 0 && !pixelReady(),
     gaveUp: progress.gaveUp,
     broken: progress.broken.slice(),

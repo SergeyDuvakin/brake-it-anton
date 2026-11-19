@@ -150,23 +150,6 @@ function imageReady(img) {
   return !!(img && img.complete && img.naturalWidth);
 }
 
-export function carPictureCount() {
-  return [
-    YELLOW_STRAIGHT,
-    YELLOW_BRAKE,
-    YELLOW_CRASH,
-    YELLOW_LEFT,
-    YELLOW_RIGHT,
-    YELLOW_SMALL_LEFT,
-    YELLOW_SMALL_RIGHT,
-    MINT_CAR,
-    BLUE_CAR,
-    CORAL_STRAIGHT,
-    ...worldImages(),
-    ...uiImages(),
-  ].filter(Boolean).length;
-}
-
 function imageSettled(img) {
   if (!img) return Promise.resolve(false);
   if (img.complete) return Promise.resolve(img.naturalWidth > 0);
