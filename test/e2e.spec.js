@@ -2871,6 +2871,93 @@ test("the load bar grows and the start button waits until the pack is ready", as
   expect(await page.evaluate(() => window.__anton.hotspots().some((spot) => spot.id === "start"))).toBe(true);
 });
 
+test("the start street and Anton appear as soon as their pictures land, before the pack is ready", async () => {
+  test.setTimeout(90000);
+  // A phone on a slow link: the start pictures arrive after the first frames, the classic cars much later.
+  async function check(browserType, name) {
+    const browser = await browserType.launch();
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    try {
+      const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+      const errors = watchErrors(page);
+      await page.route("**/assets/cars/**", async (route) => {
+        await held;
+        await route.continue().catch(() => {});
+      });
+      await page.route("**/assets/pixel/**/*.png", async (route) => {
+        if (route.request().resourceType() === "image") await new Promise((resolve) => setTimeout(resolve, 1200));
+        await route.continue().catch(() => {});
+      });
+      // The held cars keep the load event from firing.
+      await page.goto(gameURL("e2e=1"), { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(() => window.__anton?.labels?.().some((item) => item.text === "Brake It, Anton"));
+      await expect
+        .poll(() => page.evaluate(async () => (await import(new URL("js/pixel-assets.js", location.href).href)).pixelStartReady()), { timeout: 30000 })
+        .toBe(true);
+      await page.evaluate(() => {
+        window.__anton.holdStartExhaust();
+        window.__anton.setTimeScale(0);
+      });
+      await page.evaluate(() => window.__anton.warmStartPixels());
+      await page.waitForTimeout(150);
+      const compare = (freeze) => page.evaluate(async (still) => {
+        window.__anton.attractFreeze(still);
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const canvas = document.querySelector("canvas");
+        const mock = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("mockup"));
+          img.src = "docs/stage4/ref/start-mockup-native-400x225.png";
+        });
+        const native = document.createElement("canvas");
+        native.width = 400;
+        native.height = 225;
+        const nctx = native.getContext("2d");
+        nctx.imageSmoothingEnabled = false;
+        nctx.drawImage(canvas, 0, 0, 1600, 900, 0, 0, 400, 225);
+        const got = nctx.getImageData(0, 0, 400, 225).data;
+        const refc = document.createElement("canvas");
+        refc.width = 400;
+        refc.height = 225;
+        refc.getContext("2d").drawImage(mock, 0, 0);
+        const ref = refc.getContext("2d").getImageData(0, 0, 400, 225).data;
+        const boxes = still ? [] : window.__anton.startMoverBoxes();
+        const inside = (px, py) => boxes.some((box) => px >= box.x && px < box.x + box.w && py >= box.y && py < box.y + box.h);
+        let bad = 0;
+        let first = null;
+        // Above the button row: the street, the title card and the cabin with Anton.
+        for (let y = 0; y < 176; y += 1) {
+          for (let x = 0; x < 400; x += 1) {
+            if (inside(x, y)) continue;
+            const i = (y * 400 + x) * 4;
+            if (got[i] !== ref[i] || got[i + 1] !== ref[i + 1] || got[i + 2] !== ref[i + 2]) {
+              bad += 1;
+              if (!first) first = { x, y, got: [got[i], got[i + 1], got[i + 2]], ref: [ref[i], ref[i + 1], ref[i + 2]] };
+            }
+          }
+        }
+        return { bad, first, ready: window.__anton.pixelProgress().ready };
+      }, freeze);
+      const moving = await compare(false);
+      expect(moving.ready, `${name}: the pack must still be loading`).toBe(false);
+      expect(moving.bad, `${name} moving: ${JSON.stringify(moving.first)}`).toBe(0);
+      const still = await compare(true);
+      expect(still.ready, `${name}: the pack must still be loading`).toBe(false);
+      expect(still.bad, `${name} still: ${JSON.stringify(still.first)}`).toBe(0);
+      expect(errors).toEqual([]);
+    } finally {
+      release();
+      await browser.close();
+    }
+  }
+  await check(chromium, "chromium");
+  await check(webkit, "webkit");
+});
+
 test("a failed picture can be retried, then the classic title remains", async ({ page }) => {
   const file = "**/cabin/poses/drive.png";
   let hits = 0;

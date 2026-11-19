@@ -1101,18 +1101,8 @@ function wireTelegram() {
 async function boot() {
   requestAnimationFrame(frame);
   wireTelegram();
-  try {
-    const faces = [
-      ["Balsamiq Sans", "BalsamiqSans-Bold.ttf", "700"],
-      ["Balsamiq Sans", "BalsamiqSans-Regular.ttf", "400"],
-      ["Rubik Mono One", "RubikMonoOne-Regular.ttf", "400"],
-    ].map(([family, file, weight]) => new FontFace(family, `url(${new URL(`../assets/fonts/${file}`, import.meta.url)})`, { weight }));
-    await Promise.all(faces.map((face) => face.load()));
-    for (const face of faces) document.fonts.add(face);
-  } catch (error) {
-    console.warn("Font load failed, falling back to system faces.", error);
-  }
-  applyAudio();
+  // The pixel start screen must not wait behind the classic fonts. Same promise as below.
+  const pixelLoad = whenPixelReady();
   const cars = carPictureCount();
   let cabinN = 0;
   try {
@@ -1128,7 +1118,19 @@ async function boot() {
     noteExtraProgress(extraDone, cars + cabinN);
   };
   try {
-    await whenPixelReady();
+    const faces = [
+      ["Balsamiq Sans", "BalsamiqSans-Bold.ttf", "700"],
+      ["Balsamiq Sans", "BalsamiqSans-Regular.ttf", "400"],
+      ["Rubik Mono One", "RubikMonoOne-Regular.ttf", "400"],
+    ].map(([family, file, weight]) => new FontFace(family, `url(${new URL(`../assets/fonts/${file}`, import.meta.url)})`, { weight }));
+    await Promise.all(faces.map((face) => face.load()));
+    for (const face of faces) document.fonts.add(face);
+  } catch (error) {
+    console.warn("Font load failed, falling back to system faces.", error);
+  }
+  applyAudio();
+  try {
+    await pixelLoad;
   } catch {
     /* The classic renderer stays up if the pixel package fails. */
   }

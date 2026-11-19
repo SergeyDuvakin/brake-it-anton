@@ -6,7 +6,7 @@
  */
 
 import { mulberry32 } from "./rng.js";
-import { notePixelSmoothing, pixelImage, pixelProgress, retryPixelLoad } from "./pixel-assets.js";
+import { notePixelSmoothing, pixelImage, pixelProgress, pixelStartReady, retryPixelLoad } from "./pixel-assets.js";
 
 async function readJson(url) {
   if (url.protocol === "file:") {
@@ -622,8 +622,10 @@ function drawFast(ctx, state) {
   const progress = pixelProgress();
   const ready = progress.ready || !!captionOverride;
   const soundOff = state.save?.settings?.sound === false;
-  if (!fastBake || fastBake.ready !== ready || fastBake.soundOff !== soundOff) {
-    fastBake = buildFastBake(ready, soundOff);
+  // The street and Anton are plain images. A bake made before they land would keep them out.
+  const art = pixelStartReady();
+  if (!fastBake || fastBake.ready !== ready || fastBake.soundOff !== soundOff || fastBake.art !== art) {
+    fastBake = { ...buildFastBake(ready, soundOff), art };
   }
   ctx.imageSmoothingEnabled = false;
   notePixelSmoothing(false);
@@ -652,7 +654,7 @@ function drawExactCached(ctx, state) {
   const soundOff = state.save?.settings?.sound === false;
   const caption = loadCaption(progress);
   const exhaustOn = attract.frozen || !!state.save?.settings?.reducedMotion || Math.floor(attract.t / 0.4) % 2 === 0;
-  const key = `${ready}|${soundOff}|${caption}|${exhaustOn}`;
+  const key = `${ready}|${soundOff}|${caption}|${exhaustOn}|${pixelStartReady()}`;
   if (!exactCache || exactCache.key !== key) {
     const canvas = document.createElement("canvas");
     canvas.width = 1600;

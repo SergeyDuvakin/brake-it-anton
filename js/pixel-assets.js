@@ -14,6 +14,8 @@ let lastSmoothing = true;
 let progress = { done: 0, total: 0, broken: [], tries: {}, gaveUp: false };
 let extra = { done: 0, total: 0 };
 let packReady = false;
+let startFiles = [];
+let startSeen = false;
 
 function collectList(value, out = new Set()) {
   collectPngs(value, out);
@@ -32,6 +34,8 @@ function collectPngs(value, out) {
 
 function loadImage(file) {
   const img = new globalThis.Image();
+  // The pixel pack is small. Ask for it ahead of the classic pictures.
+  img.fetchPriority = "high";
   img.src = assetURL(file);
   return img;
 }
@@ -59,6 +63,16 @@ function everyImageReady() {
 export function pixelReady() {
   // The start group lands first. The world stays classic until the whole pack is in.
   return packReady && !failed && everyImageReady();
+}
+
+/** Every picture the start screen bakes is in. The bake waits on this, not on the whole pack. */
+export function pixelStartReady() {
+  if (startSeen) return true;
+  startSeen = startFiles.length > 0 && startFiles.every((file) => {
+    const img = images.get(file);
+    return !!img && img.complete && img.naturalWidth > 0;
+  });
+  return startSeen;
 }
 
 export function notePixelSmoothing(value) {
@@ -118,6 +132,7 @@ export function whenPixelReady(onProgress) {
       manifest = await response.json();
       const all = collectList(manifest);
       const start = collectList(manifest.start || {});
+      startFiles = start;
       progress.total = all.length + 1;
       progress.done = 0;
       progress.broken = [];
