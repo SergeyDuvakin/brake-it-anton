@@ -960,11 +960,15 @@ function resolveHit(sim, h) {
   log(sim, { kind: "hit", id: h.id, hitId, type: h.type, impact: round3(impact), bodyLoss: round3(bodyLoss), cargoLoss });
 }
 
-function pinShort(sim, h) {
-  // Hold the bumper this far short of the body. Drawing places the nose
-  // on that bumper, so the standoff is physical and visible together.
-  const stopAt = h.s - h.halfL - CFG.carHalfFront - CFG.yieldStandoff;
-  if (sim.s > stopAt) sim.s = stopAt;
+function pinShort(sim, h, prevS) {
+  // Hold the car where the brake left it. The bumper never goes past the
+  // body, and the car never goes back behind where this step began:
+  // braking must not throw the car backwards. The gap the player sees is
+  // the gap the player left by braking early. Once held, it stays put.
+  const from = prevS ?? sim.s;
+  const touch = (h.pose?.s ?? h.s) - h.halfL - CFG.carHalfFront;
+  const want = h.yielded ? from : sim.s;
+  sim.s = Math.max(from, Math.min(want, touch));
   sim.v = 0;
   h.yielded = true;
 }
@@ -974,7 +978,7 @@ function pinShort(sim, h) {
  * A car already down to a safe speed is held in front of them.
  * It does not drive through the body, and it is not punished for having braked.
  */
-function holdYield(sim, h) {
+function holdYield(sim, h, prevS) {
   if (h.resolved || h.trust) return false;
   if (h.type !== "pedestrian" && h.type !== "cutin") return false;
   if (h.crossT < 0) return false;
@@ -982,7 +986,7 @@ function holdYield(sim, h) {
   const gap = h.s - h.halfL - frontOf(sim.s);
   if (gap > 11 || gap < -0.35) return false;
   if (sim.v > safeSpeed(h.type) + 1.1) return false;
-  pinShort(sim, h);
+  pinShort(sim, h, prevS);
   return true;
 }
 
@@ -990,10 +994,10 @@ function collide(sim, prevS) {
   for (const h of sim.hazards) {
     if (h.resolved) continue;
     if (!isSolidHazard(h)) continue;
-    if (holdYield(sim, h)) continue;
+    if (holdYield(sim, h, prevS)) continue;
 
     if (!contactDuringStep(sim, h, prevS)) continue;
-    resolveContact(sim, h);
+    resolveContact(sim, h, prevS);
   }
 
   for (const h of sim.hazards) {
@@ -1045,7 +1049,7 @@ function softTouch(sim, h) {
   markClear(sim, h, "touch");
 }
 
-function resolveContact(sim, h) {
+function resolveContact(sim, h, prevS) {
   const near = (h.pose?.s ?? h.s) - h.halfL;
   const gap = near - frontOf(sim.s);
   const geometric = isGeometric(h.type);
@@ -1068,7 +1072,7 @@ function resolveContact(sim, h) {
   if (!geometric && sim.v <= limit && gap >= -0.45) {
     if (!h.yielded) log(sim, { kind: "yield", id: h.id });
     sim.stats.yields += h.yielded ? 0 : 1;
-    pinShort(sim, h);
+    pinShort(sim, h, prevS);
     return;
   }
   if (!geometric && sim.v <= limit) {
