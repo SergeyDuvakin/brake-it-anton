@@ -1998,18 +1998,19 @@ test("a slow touch is held at the body, never pushed back past where the step be
   assert.equal(sim.stats.collisions, 0);
   assert.equal(h.yielded, true);
 
-  // Hold branch: the bumper already crept past the kerb line when the
-  // pedestrian steps into the lane. The car stops there; it is not yanked back.
+  // Hold branch: a pedestrian already standing in the lane meets a bumper
+  // that is a hair past their edge. The car stops there; it is not yanked back.
+  // (A pedestrian still on the kerb waits instead: see the next test.)
   const late = createSim(empty({
     hazards: [{ id: "p", type: "pedestrian", s: 60, x: 1.8, halfW: 0.5, halfL: 0.6 }],
   }), 1);
   const p = late.hazards[0];
   stepSim(late, dt, { held: false, lockSpeed: true });
+  p.motion = "linger";
+  p.motionT = 0.5;
   p.pose.x = 1.8;
-  p.x = 1.8;
-  p.motion = "lane";
-  p.crossT = p.crossDur * 0.5;
-  late.s = p.s - p.halfL - CFG.carHalfFront - 0.05;
+  p.crossT = p.crossDur * 0.15;
+  late.s = p.s - p.halfL - CFG.carHalfFront + 0.05;
   late.prevS = late.s;
   late.x = 1.8;
   late.prevX = 1.8;
@@ -2024,6 +2025,44 @@ test("a slow touch is held at the body, never pushed back past where the step be
   assert.ok(held, "the pedestrian never held the car");
   assert.equal(late.v, 0);
   assert.equal(late.stats.collisions, 0);
+});
+
+test("a pedestrian waits at the kerb while the car body already covers the crossing line", () => {
+  // The nose is already past the pedestrian's edge when they start to step off.
+  // They must not walk into the car's side (overlapping sprites, or a shove);
+  // they wait, the car rolls on, and they cross behind it.
+  for (const startGap of [-0.05, -0.2, -0.35]) {
+    const sim = createSim(empty({
+      hazards: [{ id: "p", type: "pedestrian", s: 60, x: 1.8, halfW: 0.42, halfL: 0.55 }],
+    }), 1);
+    const p = sim.hazards[0];
+    stepSim(sim, dt, { held: false, lockSpeed: true });
+    p.motion = "enter";
+    p.motionT = 0;
+    p.crossT = 0;
+    sim.s = p.s - p.halfL - CFG.carHalfFront - startGap;
+    sim.prevS = sim.s;
+    sim.x = 1.8;
+    sim.prevX = 1.8;
+    sim.v = 2;
+    let waited = false;
+    for (let i = 0; i < 400 && !p.resolved; i++) {
+      const before = sim.s;
+      stepSim(sim, dt, { held: false, lockSpeed: true });
+      assert.ok(sim.s >= before, `${startGap}: car went back ${before - sim.s} m`);
+      const along = sim.s + CFG.carHalfFront > p.s - p.halfL && sim.s - CFG.carHalfBack < p.s + p.halfL;
+      if (!along) continue;
+      waited = true;
+      const lateral = Math.abs(sim.x - hazardWorldX(p, sim));
+      assert.ok(lateral >= CFG.carHalfW + p.halfW, `${startGap}: pedestrian walked into the car side (${lateral} m)`);
+    }
+    assert.ok(waited, `${startGap}: the car never covered the crossing line`);
+    assert.notEqual(p.hopped, true, `${startGap}: pedestrian was shoved instead of waiting`);
+    assert.equal(p.resolved, "clear");
+    assert.ok(p.crossT >= p.crossDur, `${startGap}: pedestrian never finished crossing`);
+    assert.equal(sim.stats.collisions, 0);
+    assert.ok(sim.v > 0, `${startGap}: car was stopped by a pedestrian who never stepped in front`);
+  }
 });
 
 test("property: seeded rides with random brake timing never move the car backwards", () => {
