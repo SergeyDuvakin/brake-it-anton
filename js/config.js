@@ -82,9 +82,10 @@ export const CFG = {
    */
   roadHalf: 3.25,
   /**
-   * Metres kept between the bumper and a yielding body.
-   * The sprite nose is drawn on the bumper and the pedestrian's feet on
-   * the ground point, so this standoff is the gap the player sees.
+   * Reference gap between the bumper and a yielding body after an early
+   * brake. The sim never moves the car back to reach it: a stopped car
+   * stays where the brake left it. The sprite nose is drawn on the bumper
+   * and the pedestrian's feet on the ground point, so the gap is visible.
    */
   yieldStandoff: 8.4,
   defaultX: 1.8,
