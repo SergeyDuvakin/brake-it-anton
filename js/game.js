@@ -749,6 +749,12 @@ if (homeHintEl && typeof window.ResizeObserver === "function") {
     fitCanvas();
   }).observe(homeHintEl);
 }
+// iOS settles the safe-area insets after the turn, sometimes with no resize
+// event left to come. The wrap's own box is the final word on the free space.
+const wrapEl = document.getElementById("wrap");
+if (wrapEl && typeof window.ResizeObserver === "function") {
+  new window.ResizeObserver(() => fitCanvas()).observe(wrapEl);
+}
 document.fonts?.ready?.then?.(() => {
   syncHomeHint();
   fitCanvas();
