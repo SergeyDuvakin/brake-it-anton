@@ -3124,3 +3124,60 @@ test("a phone turned to landscape starts the ride while the classic pictures are
     await browser.close();
   }
 });
+
+test("turning an iPhone back and forth fits the game the same way every time", async () => {
+  test.setTimeout(90000);
+  const browser = await webkit.launch();
+  try {
+    const context = await browser.newContext({ viewport: { width: 414, height: 896 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2, userAgent: IPHONE_UA });
+    const page = await context.newPage();
+    const errors = watchErrors(page);
+    await page.goto(gameURL("e2e=1"));
+    await page.waitForFunction(() => window.__anton?.hotspots().length > 0);
+    // iOS must not enlarge the home-screen line after a turn: its height moves the game.
+    // This WebKit build does not autosize text, so the rule itself is checked.
+    const adjust = await page.evaluate(async () => {
+      const css = await (await fetch("style.css")).text();
+      const html = css.match(/(^|\n)html\s*\{([^}]*)\}/);
+      return html ? html[2] : "";
+    });
+    expect(adjust).toMatch(/-webkit-text-size-adjust:\s*100%/);
+    expect(adjust).toMatch(/(^|[^-])text-size-adjust:\s*100%/);
+    const box = () => page.evaluate(() => {
+      const rect = document.querySelector("canvas").getBoundingClientRect();
+      return [rect.left, rect.top, rect.width, rect.height].map((value) => Math.round(value));
+    });
+    const seen = [];
+    for (let turn = 0; turn < 4; turn += 1) {
+      await page.setViewportSize({ width: 896, height: 414 });
+      await page.waitForFunction(() => !document.body.classList.contains("is-portrait"));
+      await page.waitForTimeout(1200);
+      seen.push(await box());
+      await page.setViewportSize({ width: 414, height: 896 });
+      await page.waitForFunction(() => document.body.classList.contains("is-portrait"));
+      await page.waitForTimeout(300);
+    }
+    await page.setViewportSize({ width: 896, height: 414 });
+    await page.waitForTimeout(1200);
+    const hint = await page.evaluate(() => !document.getElementById("home-hint").hidden);
+    expect(hint).toBe(true);
+    for (const rect of seen) expect(rect).toEqual(seen[0]);
+    expect(seen[0][3]).toBeGreaterThan(300);
+
+    // A safe-area inset that lands late, with no resize event, still refits the game.
+    const before = await box();
+    await page.evaluate(() => {
+      document.getElementById("wrap").style.paddingBottom = "60px";
+    });
+    await expect.poll(box).not.toEqual(before);
+    const squeezed = await box();
+    expect(squeezed[1] + squeezed[3]).toBeLessThanOrEqual(414 - 60 + 1);
+    await page.evaluate(() => {
+      document.getElementById("wrap").style.paddingBottom = "";
+    });
+    await expect.poll(box).toEqual(before);
+    expect(errors).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});

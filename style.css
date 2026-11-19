@@ -19,6 +19,13 @@
   font-display: swap;
 }
 
+html {
+  /* iOS Safari enlarges text after a turn to landscape. The home-screen line
+     then grows, and the game under it shrinks by a different amount each turn. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 html, body {
   margin: 0;
   height: 100%;
