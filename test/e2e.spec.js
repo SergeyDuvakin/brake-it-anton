@@ -2851,10 +2851,12 @@ test("the load bar grows and the start button waits until the pack is ready", as
   await page.route("**/*.png", async (route) => {
     const i = n;
     n += 1;
-    await new Promise((resolve) => setTimeout(resolve, 8 + (i % 5) * 25));
+    // Staggered, so the pixel pack alone visibly fills the bar.
+    await new Promise((resolve) => setTimeout(resolve, 8 + Math.min(i, 160) * 12));
     await route.continue();
   });
-  await page.goto(gameURL("e2e=1"));
+  // The load event waits for every picture. Watch the bar from the first frame.
+  await page.goto(gameURL("e2e=1"), { waitUntil: "domcontentloaded" });
   const seen = [];
   const started = Date.now();
   while (Date.now() - started < 20000) {
@@ -2884,6 +2886,11 @@ test("the start street and Anton appear as soon as their pictures land, before t
       const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
       const errors = watchErrors(page);
       await page.route("**/assets/cars/**", async (route) => {
+        await held;
+        await route.continue().catch(() => {});
+      });
+      // The pack is not ready without its font. Holding it keeps ПОЕХАЛИ waiting.
+      await page.route("**/assets/pixel/fonts/**", async (route) => {
         await held;
         await route.continue().catch(() => {});
       });
@@ -3079,4 +3086,41 @@ test("static start scenery does not move while actors may", async ({ page }) => 
   const first = await read();
   await page.waitForTimeout(2000);
   expect(await read()).toBe(first);
+});
+
+test("a phone turned to landscape starts the ride while the classic pictures are still loading", async () => {
+  test.setTimeout(90000);
+  // iPhone 11 in Safari: opened upright, turned sideways, ПОЕХАЛИ tapped.
+  // The classic pictures never arrive here. The pixel ride must not wait for them.
+  const browser = await webkit.launch();
+  try {
+    const context = await browser.newContext({ viewport: { width: 414, height: 896 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    const page = await context.newPage();
+    const errors = watchErrors(page);
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    for (const glob of ["**/assets/cars/**", "**/assets/world/**", "**/assets/ui/**", "**/assets/cabin/**", "**/assets/fonts/**"]) {
+      await page.route(glob, async (route) => {
+        await held;
+        await route.continue().catch(() => {});
+      });
+    }
+    await page.goto(gameURL("e2e=1"), { waitUntil: "domcontentloaded" });
+    expect(await page.evaluate(() => document.body.classList.contains("is-portrait"))).toBe(true);
+    await page.setViewportSize({ width: 896, height: 414 });
+    await page.waitForFunction(() => !document.body.classList.contains("is-portrait"));
+    await page.waitForFunction(() => window.__anton?.pixelProgress?.().ready, null, { timeout: 30000 });
+    await page.waitForFunction(() => window.__anton.hotspots().some((spot) => spot.id === "start"));
+    expect(await page.evaluate(() => window.__anton.cabinReady())).toBe(false);
+    await clickId(page, "start", "touch");
+    await page.waitForFunction(() => window.__anton.getState().phase === "drive", null, { timeout: 20000 });
+    await page.waitForTimeout(500);
+    expect(await page.evaluate(() => window.__anton.getState().v)).toBeGreaterThan(0);
+    release();
+    expect(errors).toEqual([]);
+  } finally {
+    await browser.close();
+  }
 });

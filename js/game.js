@@ -10,8 +10,8 @@ import { expressionId } from "./physics.js";
 import { CFG, SAVE_KEY } from "./config.js";
 import { detourGap } from "./lat.js";
 import { whenCabinReady, cabinReady } from "./cabin.js";
-import { classicArtForced, noteExtraProgress, pixelProgress as readPixelProgress, whenPixelReady } from "./pixel-assets.js";
-import { bumperFootGap, carPictureCount, render, whenCarsReady } from "./draw.js";
+import { classicArtForced, pixelProgress as readPixelProgress, whenPixelReady } from "./pixel-assets.js";
+import { bumperFootGap, render, whenCarsReady } from "./draw.js";
 import { resultKeyAction, startLesson } from "./ui.js";
 import { logicalPoint, pointInRect } from "./geom.js";
 import { LESSONS, futureMissions, getMission } from "./missions.js";
@@ -1101,22 +1101,10 @@ function wireTelegram() {
 async function boot() {
   requestAnimationFrame(frame);
   wireTelegram();
+  // Saved sound settings apply before ПОЕХАЛИ can be pressed, not after the classic fonts.
+  applyAudio();
   // The pixel start screen must not wait behind the classic fonts. Same promise as below.
   const pixelLoad = whenPixelReady();
-  const cars = carPictureCount();
-  let cabinN = 0;
-  try {
-    const cabin = await (await globalThis.fetch(new URL(`../assets/cabin/${"manifest"}.json`, import.meta.url))).json();
-    cabinN = (cabin.poses || []).length;
-  } catch {
-    cabinN = 0;
-  }
-  noteExtraProgress(0, cars + cabinN);
-  let extraDone = 0;
-  const extraTick = () => {
-    extraDone += 1;
-    noteExtraProgress(extraDone, cars + cabinN);
-  };
   try {
     const faces = [
       ["Balsamiq Sans", "BalsamiqSans-Bold.ttf", "700"],
@@ -1128,20 +1116,18 @@ async function boot() {
   } catch (error) {
     console.warn("Font load failed, falling back to system faces.", error);
   }
-  applyAudio();
   try {
     await pixelLoad;
   } catch {
     /* The classic renderer stays up if the pixel package fails. */
   }
   try {
-    await whenCarsReady(extraTick);
+    await whenCarsReady();
   } catch {
     /* A missing picture falls back to flat shapes. The ride still starts. */
   }
   try {
     await whenCabinReady();
-    for (let i = 0; i < cabinN; i += 1) extraTick();
   } catch {
     /* The cabin stays a flat panel until the approved stills load. */
   }
